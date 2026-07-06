@@ -7,13 +7,23 @@
   "bin": {
     "agentic-sdlc-mcp": "dist/index.js"
   },
+  "files": [
+    "dist",
+    "README.md",
+    ".env.example"
+  ],
   "scripts": {
     "start": "node dist/index.js",
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "clean": "rimraf dist",
-    "prebuild": "npm run clean"
+    "prebuild": "npm run clean",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "smoke": "node dist/index.js --smoke",
+    "prepublishOnly": "npm run build && npm run typecheck && npm run test && npm run smoke"
   },
   "engines": {
     "node": ">=18"
@@ -30,16 +40,28 @@
   ],
   "author": "",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/SakuraCianna/agentic-sdlc-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/SakuraCianna/agentic-sdlc-mcp/issues"
+  },
+  "homepage": "https://github.com/SakuraCianna/agentic-sdlc-mcp#readme",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.6.1",
     "@octokit/rest": "^21.0.2",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2",
     "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",
     "@types/node": "^22.10.0",
+    "@vitest/coverage-v8": "^2.1.8",
     "rimraf": "^6.0.1",
     "tsx": "^4.19.2",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
   }
 }

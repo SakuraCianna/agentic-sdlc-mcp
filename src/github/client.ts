@@ -38,6 +38,33 @@ export function resolveRepo(owner?: string, repo?: string): RepoRef {
 }
 
 /**
+ * Simple page-based pagination helper.
+ *
+ * Calls `fn(page)` repeatedly (pages start at 1) until a page returns fewer
+ * items than `perPage` (indicating the last page), or `maxItems` is reached.
+ *
+ * @param fn      - Function that takes a page number and returns a Promise<T[]>
+ * @param perPage - Items per page to request (max 100 for GitHub API)
+ * @param maxItems - Hard cap to avoid token-explosion on huge repos
+ */
+export async function paginateAll<T>(
+  fn: (page: number, perPage: number) => Promise<T[]>,
+  maxItems = 300,
+  perPage = 100
+): Promise<T[]> {
+  const all: T[] = [];
+  let page = 1;
+  while (all.length < maxItems) {
+    const items = await fn(page, perPage);
+    all.push(...items);
+    // Last page is shorter than requested — stop
+    if (items.length < perPage) break;
+    page++;
+  }
+  return all.slice(0, maxItems);
+}
+
+/**
  * Centralised GitHub API error handler — translates HTTP status codes into
  * actionable error messages.
  */

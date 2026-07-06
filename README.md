@@ -2,6 +2,9 @@
 
 An MCP (Model Context Protocol) Server that acts as an **Agentic SDLC Control Plane** — helping AI coding agents plan, create, test, review, secure, and release software following GitHub Agentic AI best practices.
 
+- GitHub: [SakuraCianna/agentic-sdlc-mcp](https://github.com/SakuraCianna/agentic-sdlc-mcp)
+- Issues: [github.com/SakuraCianna/agentic-sdlc-mcp/issues](https://github.com/SakuraCianna/agentic-sdlc-mcp/issues)
+
 ---
 
 ## What Is This?
@@ -9,20 +12,8 @@ An MCP (Model Context Protocol) Server that acts as an **Agentic SDLC Control Pl
 `agentic-sdlc-mcp` is not a simple GitHub API wrapper. It is a **SDLC orchestration layer** that exposes structured, agent-friendly tools aligned to the full software development lifecycle:
 
 ```
-Plan → Create → Test → Review → Optimize → Secure
+Plan -> Create -> Test -> Review -> Optimize -> Secure
 ```
-
-It is designed to be used by AI coding agents (Claude, GPT-4, Codex, etc.) to:
-
-- Read repository context before starting work
-- Generate structured SDLC plans
-- Create tracked issue sets
-- Prepare agent-ready work briefs
-- Monitor CI/quality gate status
-- Summarise and review pull requests
-- Triage security alerts
-- Run pre-release readiness checks
-- Generate handoff packets between agents
 
 **Safety first:** All write operations default to `dryRun: true`. Destructive or irreversible operations are never silently executed.
 
@@ -30,8 +21,9 @@ It is designed to be used by AI coding agents (Claude, GPT-4, Codex, etc.) to:
 
 ## Installation
 
-```bash
-# Clone or copy the project
+```powershell
+# Clone the repository
+git clone https://github.com/SakuraCianna/agentic-sdlc-mcp.git
 cd agentic-sdlc-mcp
 
 # Install dependencies
@@ -47,43 +39,52 @@ npm run build
 
 Copy `.env.example` to `.env` and fill in your values:
 
-```bash
-cp .env.example .env
+```powershell
+Copy-Item .env.example .env
+```
+
+Then edit `.env` — it is loaded automatically by `dotenv` when the server starts.
+
+Alternatively, set variables inline in PowerShell:
+
+```powershell
+$env:GITHUB_TOKEN = "ghp_your_token_here"
+$env:GITHUB_OWNER = "your-org"
+$env:GITHUB_REPO  = "your-repo"
 ```
 
 | Variable | Required | Description |
 |---|---|---|
-| `GITHUB_TOKEN` | ✅ Yes | GitHub PAT or App token |
+| `GITHUB_TOKEN` | Yes | GitHub PAT or App token |
 | `GITHUB_OWNER` | Optional | Default owner (org or user) |
 | `GITHUB_REPO` | Optional | Default repository name |
 | `SDLC_DEFAULT_BRANCH` | Optional | Default branch (default: `main`) |
 | `TRANSPORT` | Optional | `stdio` (default) or `http` |
-| `PORT` | Optional | HTTP port when `TRANSPORT=http` (default: `3000`) |
+| `PORT` | Optional | HTTP port (default: `3000`) |
 
 ### Required GitHub Token Scopes
 
 | Scope | Purpose |
 |---|---|
 | `repo` | Read/write issues, PRs, file contents |
-| `read:org` | Read org membership (optional) |
 | `security_events` | Code Scanning alerts |
 | `vulnerability_alerts` | Dependabot alerts |
 | `secret_scanning_alerts` | Secret Scanning alerts |
-
-For read-only workflows, `repo:read` is sufficient for most tools.
 
 ---
 
 ## MCP Client Configuration
 
-### Claude Desktop (`claude_desktop_config.json`)
+### Claude Desktop / Kiro / Cursor
+
+Add to your MCP client config (`claude_desktop_config.json` or equivalent):
 
 ```json
 {
   "mcpServers": {
     "agentic-sdlc": {
       "command": "node",
-      "args": ["/absolute/path/to/agentic-sdlc-mcp/dist/index.js"],
+      "args": ["E:/CodeHome/agentic-sdlc-mcp/dist/index.js"],
       "env": {
         "GITHUB_TOKEN": "ghp_your_token",
         "GITHUB_OWNER": "your-org",
@@ -94,39 +95,60 @@ For read-only workflows, `repo:read` is sufficient for most tools.
 }
 ```
 
-### Cursor (`~/.cursor/mcp.json`)
+Use forward slashes or escaped backslashes for Windows paths.
 
-```json
-{
-  "mcpServers": {
-    "agentic-sdlc": {
-      "command": "node",
-      "args": ["/absolute/path/to/agentic-sdlc-mcp/dist/index.js"],
-      "env": {
-        "GITHUB_TOKEN": "ghp_your_token",
-        "GITHUB_OWNER": "your-org",
-        "GITHUB_REPO": "your-repo"
-      }
-    }
-  }
-}
+---
+
+## Running the Server
+
+### stdio mode (default — for MCP clients)
+
+```powershell
+$env:GITHUB_TOKEN = "ghp_your_token"
+node dist/index.js
 ```
 
-### Kiro CLI / Other MCP Clients
+### HTTP mode (for remote / multi-client use)
 
-```json
-{
-  "mcpServers": {
-    "agentic-sdlc": {
-      "command": "node",
-      "args": ["dist/index.js"],
-      "cwd": "/absolute/path/to/agentic-sdlc-mcp",
-      "env": {
-        "GITHUB_TOKEN": "ghp_your_token"
-      }
-    }
-  }
-}
+```powershell
+$env:TRANSPORT = "http"
+$env:PORT      = "3000"
+$env:GITHUB_TOKEN = "ghp_your_token"
+node dist/index.js
+# Server listens at http://localhost:3000/mcp
+```
+
+### Smoke test (no real token required)
+
+Verifies the module loads cleanly and all tools register without error:
+
+```powershell
+npm run smoke
+# Output: [agentic-sdlc-mcp] SMOKE OK — all tools and resources registered successfully.
+```
+
+---
+
+## npm Scripts
+
+| Script | Description |
+|---|---|
+| `npm run build` | Compile TypeScript to `dist/` |
+| `npm run typecheck` | Type-check without emitting |
+| `npm run test` | Run the Vitest test suite |
+| `npm run test:watch` | Watch mode for TDD |
+| `npm run test:coverage` | Coverage report (lcov + text) |
+| `npm run smoke` | Smoke-test: load + register, no real token needed |
+| `npm run dev` | Watch mode with tsx (development) |
+| `npm start` | Run the compiled server |
+
+---
+
+## MCP Inspector (smoke test / exploration)
+
+```powershell
+$env:GITHUB_TOKEN = "ghp_your_token"
+npx @modelcontextprotocol/inspector node dist/index.js
 ```
 
 ---
@@ -134,35 +156,36 @@ For read-only workflows, `repo:read` is sufficient for most tools.
 ## Tools Reference
 
 ### `repo_context`
-Read repository metadata, README, package.json, open issues, and open PRs.  
-**Use at the start of every workflow.**
+Read repository metadata, README, package.json, open issues, and open PRs.
+Use at the start of every workflow.
 
 ### `plan_from_context`
-Generate a phase-by-phase SDLC plan (Plan→Create→Test→Review→Optimize→Secure) from a goal and repo context. Template-based — no LLM call needed.
+Generate a phase-by-phase SDLC plan (Plan→Create→Test→Review→Optimize→Secure).
+Template-based — no LLM call needed.
 
 ### `create_issue_set`
-Batch-create GitHub issues from a plan.  
-⚠️ **dryRun defaults to `true`** — pass `dryRun: false` to actually create issues.
+Batch-create GitHub issues from a plan.
+⚠️ `dryRun` defaults to `true` — pass `dryRun: false` to write to GitHub.
 
 ### `prepare_work_item`
-Generate an agent-ready brief for a specific issue: goals, non-goals, acceptance criteria, risks, recommended commands, and a handoff prompt.
+Generate an agent-ready brief for a specific issue: goals, non-goals, acceptance criteria, risks, and a handoff prompt.
 
 ### `quality_gate_status`
-Read check run and commit status results for a PR or git ref.  
+Read check-run results for a PR or git ref.
 Use to verify CI before merging or releasing.
 
 ### `create_pr_summary`
-Generate a structured PR summary: change overview, affected files, test coverage signals, risks, review checklist, and release notes draft.
+Generate a structured PR summary: change overview, file categories, test coverage signals, risks, review checklist, and release notes draft.
 
 ### `review_pr_against_standard`
-Review a PR against SDLC standards (`basic` / `strict` / `security-focused`).  
-Returns sorted findings, missing tests, security concerns, and a conclusion.
+Review a PR against SDLC standards (`basic` / `strict` / `security-focused`).
+`security-focused` mode scans actual patch lines for secret patterns, `.env` files, lockfile changes, and dist files.
 
 ### `security_triage`
-Read Code Scanning, Dependabot, and Secret Scanning alerts, triage them by severity, and recommend fix order.
+Read Code Scanning, Dependabot, and Secret Scanning alerts, triage by severity, recommend fix order.
 
 ### `release_readiness_check`
-Pre-release assessment: CI status, open bugs, CHANGELOG, and a release checklist + rollback template.
+Pre-release assessment: CI status, open bugs, CHANGELOG, release checklist, rollback template.
 
 ### `agent_handoff_packet`
 Generate a compact handoff packet so another agent can continue work without losing context.
@@ -183,63 +206,61 @@ Generate a compact handoff packet so another agent can continue work without los
 
 ## dryRun Safety Model
 
-All tools that write to GitHub implement a `dryRun` parameter:
+All write tools implement `dryRun`:
 
-| dryRun | Effect |
+| `dryRun` | Effect |
 |---|---|
-| `true` (default) | **Preview mode** — returns what would be created/changed, makes no GitHub API writes |
-| `false` | **Live mode** — actually writes to GitHub |
+| `true` (default) | Preview mode — no GitHub API writes |
+| `false` | Live mode — actually writes to GitHub |
 
-**The default is always `dryRun: true`.** Agents must explicitly pass `dryRun: false` to trigger writes. This prevents accidental mutations during exploration or planning phases.
+The default is always `dryRun: true`. Agents must explicitly pass `dryRun: false`.
 
 ---
 
-## Usage Examples
+## Workflow Examples
 
 ### 1. Start a new feature
 
 ```
-1. Call repo_context to understand the codebase
-2. Call plan_from_context with your feature goal
-3. Call create_issue_set (dryRun: true) to preview issues
-4. Review the preview, then call create_issue_set (dryRun: false)
-5. Call prepare_work_item for each issue before implementation
+1. repo_context                  # understand the codebase
+2. plan_from_context (goal=...)  # generate SDLC plan
+3. create_issue_set (dryRun:true) # preview issues
+4. create_issue_set (dryRun:false) # create issues
+5. prepare_work_item (issueNumber=N) # get agent brief
 ```
 
 ### 2. Review a pull request
 
 ```
-1. Call create_pr_summary to get a diff overview
-2. Call quality_gate_status to check CI
-3. Call review_pr_against_standard with standard: "strict"
-4. Address findings, then re-check quality_gate_status
+1. create_pr_summary (pullNumber=N)             # diff overview
+2. quality_gate_status (pullNumber=N)            # CI check
+3. review_pr_against_standard (standard:strict)  # findings
 ```
 
 ### 3. Pre-release check
 
 ```
-1. Call security_triage to check for open alerts
-2. Call release_readiness_check on the release branch
-3. Fix blocking issues
-4. Get human approval before tagging the release
+1. security_triage                # check alerts
+2. release_readiness_check        # full readiness
+3. (fix blocking issues)
+4. Human approval before tagging release
 ```
 
 ---
 
-## Security Considerations
+## Security
 
-- **Never commit your `GITHUB_TOKEN`** — use environment variables only
-- All tokens are read at startup; the server never logs them
-- dryRun defaults protect against accidental writes
-- No auto-merge, no force-push, no branch deletion — ever
-- Secret scanning alerts are always rated `critical` severity
+- Never commit your `GITHUB_TOKEN` — use `.env` or PowerShell `$env:` variables
+- `dryRun: true` by default prevents accidental writes
+- No auto-merge, no force-push, no branch deletion
+- Secret scanning alerts are always rated `critical`
 - The server does not make outbound requests beyond the GitHub API
 
 ---
 
 ## Development
 
-```bash
+```powershell
 # Type check
 npm run typecheck
 
@@ -248,12 +269,12 @@ npm run dev
 
 # Build
 npm run build
-```
 
-### Smoke Test with MCP Inspector
+# Test
+npm run test
 
-```bash
-GITHUB_TOKEN=ghp_xxx npx @modelcontextprotocol/inspector node dist/index.js
+# Smoke test (no token needed)
+npm run smoke
 ```
 
 ---

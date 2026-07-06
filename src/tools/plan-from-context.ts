@@ -1,8 +1,7 @@
 /**
  * Tool: plan_from_context
  *
- * Generates a structured Agentic SDLC plan from a user goal and optional
- * repo context. Does NOT call an LLM — purely template-based orchestration.
+ * Handler extracted as `buildPlan` and `handlePlanFromContext` for testing.
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -11,24 +10,63 @@ import { resolveRepo, handleGitHubError } from "../github/client.js";
 import { fetchRepoContext } from "../github/context.js";
 import type { SdlcPhase, SdlcPlanPhase } from "../types.js";
 
-const PlanFromContextInputSchema = z.object({
-  goal: z
-    .string()
-    .min(5, "goal must be at least 5 characters")
-    .describe("The user goal or feature request to plan around."),
+// ---------------------------------------------------------------------------
+// Schema
+// ---------------------------------------------------------------------------
+
+export const PlanFromContextInputSchema = z.object({
+  goal: z.string().min(5).describe("The user goal or feature request to plan around."),
   owner: z.string().optional().describe("GitHub owner. Falls back to GITHUB_OWNER."),
   repo: z.string().optional().describe("GitHub repo. Falls back to GITHUB_REPO."),
-  constraints: z
-    .array(z.string())
-    .optional()
-    .describe("List of constraints to consider (e.g., 'must not break existing API')."),
-  acceptanceCriteria: z
-    .array(z.string())
-    .optional()
-    .describe("List of acceptance criteria the implementation must satisfy."),
+  constraints: z.array(z.string()).optional()
+    .describe("Technical or business constraints."),
+  acceptanceCriteria: z.array(z.string()).optional()
+    .describe("Acceptance criteria the implementation must satisfy."),
 });
 
-type PlanFromContextInput = z.infer<typeof PlanFromContextInputSchema>;
+export type PlanFromContextInput = z.infer<typeof PlanFromContextInputSchema>;
+
+// ---------------------------------------------------------------------------
+// Output schema
+// ---------------------------------------------------------------------------
+
+export const PlanFromContextOutputSchema = {
+  goal: z.string(),
+  repo: z.string(),
+  defaultBranch: z.string(),
+  language: z.string().nullable(),
+  constraints: z.array(z.string()),
+  acceptanceCriteria: z.array(z.string()),
+  phases: z.array(
+    z.object({
+      phase: z.string(),
+      summary: z.string(),
+      tasks: z.array(z.string()),
+    })
+  ),
+  suggestedIssues: z.array(z.string()),
+  risks: z.array(z.string()),
+};
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+export interface PlanFromContextResult {
+  goal: string;
+  repo: string;
+  defaultBranch: string;
+  language: string | null;
+  constraints: string[];
+  acceptanceCriteria: string[];
+  phases: SdlcPlanPhase[];
+  suggestedIssues: string[];
+  risks: string[];
+}
+
+// ---------------------------------------------------------------------------
+// Phase templates (pure data)
+// ---------------------------------------------------------------------------
 
 const PHASE_TEMPLATES: Record<SdlcPhase, { tasks: string[] }> = {
   plan: {
@@ -81,7 +119,12 @@ const PHASE_TEMPLATES: Record<SdlcPhase, { tasks: string[] }> = {
   },
 };
 
-function buildPlan(goal: string, repoName: string, constraints: string[], acceptance: string[]): SdlcPlanPhase[] {
+// ---------------------------------------------------------------------------
+// Pure helpers (exported for testing)
+// ---------------------------------------------------------------------------
+
+/** Build the phase-by-phase plan. Pure — no I/O. */
+export function buildPlan(goal: string, repoName: string): SdlcPlanPhase[] {
   return (Object.keys(PHASE_TEMPLATES) as SdlcPhase[]).map((phase) => ({
     phase,
     summary: `${phase.charAt(0).toUpperCase() + phase.slice(1)} phase for: ${goal} (${repoName})`,
@@ -89,23 +132,119 @@ function buildPlan(goal: string, repoName: string, constraints: string[], accept
   }));
 }
 
+// ---------------------------------------------------------------------------
+// Core handler (exported for testing)
+// ---------------------------------------------------------------------------
+
+export async function handlePlanFromContext(
+  params: PlanFromContextInput,
+  fetchContext: typeof fetchRepoContext
+): Promise<{ text: string; structured: PlanFromContextResult }> {
+  const constraints = params.constraints ?? [];
+  const acceptance = params.acceptanceCriteria ?? [];
+
+  const ref = resolveRepo(params.owner, params.repo);
+  const ctx = await fetchContext({ ...ref });
+  const plan = buildPlan(params.goal, ctx.fullName);
+
+  const suggestedIssues = [
+    `[Plan] Define acceptance criteria and technical approach for: ${params.goal}`,
+    `[Create] Implement: ${params.goal}`,
+    `[Test] Add tests for: ${params.goal}`,
+    `[Secure] Security review for: ${params.goal}`,
+  ];
+
+  const risks = [
+    "Unknown scope may expand during implementation",
+    "Existing tests may need updating",
+    "Review latency may block the cycle",
+  ];
+
+  const structured: PlanFromContextResult = {
+    goal: params.goal,
+    repo: ctx.fullName,
+    defaultBranch: ctx.defaultBranch,
+    language: ctx.language ?? null,
+    constraints,
+    acceptanceCriteria: acceptance,
+    phases: plan,
+    suggestedIssues,
+    risks,
+  };
+
+  const lines: string[] = [
+    `# SDLC Plan: ${params.goal}`,
+    "",
+    `**Repository:** ${ctx.fullName}`,
+    `**Default branch:** \`${ctx.defaultBranch}\``,
+    `**Language:** ${ctx.language ?? "unknown"}`,
+    "",
+    "## Background",
+    `Goal: **${params.goal}**`,
+  ];
+
+  if (constraints.length > 0) {
+    lines.push("", "### Constraints");
+    constraints.forEach((c) => lines.push(`- ${c}`));
+  }
+
+  if (acceptance.length > 0) {
+    lines.push("", "### Acceptance Criteria");
+    acceptance.forEach((a) => lines.push(`- ${a}`));
+  }
+
+  lines.push("", "## Phase-by-Phase Plan");
+  for (const phase of plan) {
+    lines.push(
+      "",
+      `### ${phase.phase.charAt(0).toUpperCase() + phase.phase.slice(1)}`,
+      `*${phase.summary}*`,
+      ""
+    );
+    phase.tasks.forEach((t) => lines.push(`- [ ] ${t}`));
+  }
+
+  lines.push(
+    "",
+    "## Suggested Issues to Create",
+    "",
+    "Use `create_issue_set` with these suggested issues:",
+    ...suggestedIssues.map((s) => `- ${s}`),
+    "",
+    "## Risks",
+    ...risks.map((r) => `- ${r}`),
+    "",
+    "## Human Approval Gates",
+    "- PR review must be approved before merge",
+    "- Security review required for auth/data-handling changes",
+    "- Release checklist must pass before deployment"
+  );
+
+  return { text: lines.join("\n"), structured };
+}
+
+// ---------------------------------------------------------------------------
+// Registration
+// ---------------------------------------------------------------------------
+
 export function registerPlanFromContextTool(server: McpServer): void {
   server.registerTool(
     "plan_from_context",
     {
       title: "Generate SDLC Plan from Context",
-      description: `Generate a structured Agentic SDLC plan (Plan→Create→Test→Review→Optimize→Secure) from a goal and optional repo context.
+      description: `Generate a structured Agentic SDLC plan (Plan->Create->Test->Review->Optimize->Secure) from a goal and repo context.
 
-This tool is purely template-based — it does not call an LLM. It reads basic repo metadata to enrich the plan with context.
+Template-based — no LLM call needed. Reads basic repo metadata to enrich the plan.
 
 Args:
   - goal (string): The user's goal or feature description (required).
-  - owner, repo (string?): Repo coordinates, fall back to env vars.
+  - owner, repo: Repo coordinates (fall back to env vars).
   - constraints (string[]?): Technical or business constraints.
   - acceptanceCriteria (string[]?): Explicit acceptance criteria.
 
-Returns: A phase-by-phase SDLC plan with suggested issues and risk summary.`,
+Returns: Phase-by-phase SDLC plan + structured output.`,
       inputSchema: PlanFromContextInputSchema,
+      outputSchema: PlanFromContextOutputSchema,
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -115,72 +254,10 @@ Returns: A phase-by-phase SDLC plan with suggested issues and risk summary.`,
     },
     async (params: PlanFromContextInput) => {
       try {
-        const ref = resolveRepo(params.owner, params.repo);
-
-        // Fetch lightweight repo context (no readme/issues to keep it fast)
-        const ctx = await fetchRepoContext({ ...ref });
-
-        const constraints = params.constraints ?? [];
-        const acceptance = params.acceptanceCriteria ?? [];
-
-        const plan = buildPlan(params.goal, ctx.fullName, constraints, acceptance);
-
-        const lines: string[] = [
-          `# SDLC Plan: ${params.goal}`,
-          "",
-          `**Repository:** ${ctx.fullName}`,
-          `**Default branch:** \`${ctx.defaultBranch}\``,
-          `**Language:** ${ctx.language ?? "unknown"}`,
-          "",
-          "## Background",
-          `Goal: **${params.goal}**`,
-        ];
-
-        if (constraints.length > 0) {
-          lines.push("", "### Constraints");
-          constraints.forEach((c) => lines.push(`- ${c}`));
-        }
-
-        if (acceptance.length > 0) {
-          lines.push("", "### Acceptance Criteria");
-          acceptance.forEach((a) => lines.push(`- ${a}`));
-        }
-
-        lines.push("", "## Phase-by-Phase Plan");
-
-        for (const phase of plan) {
-          lines.push(
-            "",
-            `### ${phase.phase.charAt(0).toUpperCase() + phase.phase.slice(1)}`,
-            `*${phase.summary}*`,
-            ""
-          );
-          phase.tasks.forEach((t) => lines.push(`- [ ] ${t}`));
-        }
-
-        lines.push(
-          "",
-          "## Suggested Issues to Create",
-          "",
-          "Use `create_issue_set` with these suggested issues:",
-          `- [Plan] Define acceptance criteria and technical approach for: ${params.goal}`,
-          `- [Create] Implement: ${params.goal}`,
-          `- [Test] Add tests for: ${params.goal}`,
-          `- [Secure] Security review for: ${params.goal}`,
-          "",
-          "## Risks",
-          "- Unknown scope may expand during implementation",
-          "- Existing tests may need updating",
-          "- Review latency may block the cycle",
-          "",
-          "## Human Approval Gates",
-          "- ✋ PR review must be approved before merge",
-          "- ✋ Security review is required for auth/data-handling changes",
-          "- ✋ Release checklist must pass before deployment"
-        );
-
+        const { text, structured } = await handlePlanFromContext(params, fetchRepoContext);
         return {
-          content: [{ type: "text", text: lines.join("\n") }],
+          content: [{ type: "text", text }],
+          structuredContent: structured as unknown as Record<string, unknown>,
         };
       } catch (error) {
         return {

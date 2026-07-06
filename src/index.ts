@@ -2,9 +2,14 @@
 /**
  * agentic-sdlc-mcp — Agentic SDLC Control Plane MCP Server
  *
- * Exposes GitHub-backed SDLC tools to AI coding agents via the
- * Model Context Protocol (stdio or streamable HTTP transport).
+ * Load .env FIRST (via dotenv/config), before any config import.
+ * Windows PowerShell inline alternative:
+ *   $env:GITHUB_TOKEN="ghp_..."; node dist/index.js
+ *
+ * Smoke-test mode (no real token required):
+ *   node dist/index.js --smoke
  */
+import "dotenv/config";
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -24,9 +29,8 @@ import { registerAgentHandoffTool } from "./tools/agent-handoff.js";
 // Resources
 import { registerResources } from "./resources/index.js";
 
-// Config validation happens at import time — exits early with a clear message
-// if GITHUB_TOKEN is missing.
-import "./config.js";
+// Config (exits early if GITHUB_TOKEN missing — skipped in smoke mode)
+import { config } from "./config.js";
 
 // ---------------------------------------------------------------------------
 // Server initialisation
@@ -53,14 +57,27 @@ registerAgentHandoffTool(server);
 registerResources(server);
 
 // ---------------------------------------------------------------------------
+// Smoke mode: verify registration succeeded then exit cleanly
+// ---------------------------------------------------------------------------
+
+if (config.isSmokeMode) {
+  console.error("[agentic-sdlc-mcp] SMOKE OK — all tools and resources registered successfully.");
+  console.error("[agentic-sdlc-mcp] Module load, tool registration, and resource registration: PASSED");
+  process.exit(0);
+}
+
+// ---------------------------------------------------------------------------
 // Transport selection
 // ---------------------------------------------------------------------------
 
 const transport = process.env["TRANSPORT"] ?? "stdio";
 
 if (transport === "http") {
-  // Dynamically import express only when HTTP transport is requested
-  // to avoid a hard dependency for stdio-only users.
+  /**
+   * HTTP transport — requires `express` runtime dependency.
+   * Windows PowerShell:
+   *   $env:TRANSPORT="http"; $env:PORT="3000"; node dist/index.js
+   */
   const { default: express } = await import("express");
   const { StreamableHTTPServerTransport } = await import(
     "@modelcontextprotocol/sdk/server/streamableHttp.js"
