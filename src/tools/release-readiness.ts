@@ -121,8 +121,8 @@ export async function handleReleaseReadiness(
       ciStatus = "passing";
       ciSummary = `[PASS] All ${allRuns.length} check(s) passing`;
     }
-  } catch {
-    ciSummary = "[WARN] Could not fetch CI status (check token permissions)";
+  } catch (err) {
+    ciSummary = `[WARN] Could not fetch CI status: ${handleGitHubError(err)} -- ensure your token has the \`repo\` scope (or \`public_repo\` for public-only repos) to read check runs and refs.`;
   }
 
   // --- Open bug issues (paginated, capped at MAX_BUG_ISSUES) ---
@@ -254,6 +254,9 @@ export function registerReleaseReadinessTool(server: McpServer): void {
     {
       title: "Release Readiness Check",
       description: `Pre-release assessment: CI status, open bugs, CHANGELOG, release checklist, rollback template.
+
+Required token scopes:
+  - repo, or public_repo for public-only repos (checks, issues, and file contents access)
 
 Args:
   - owner, repo: Repository coordinates.

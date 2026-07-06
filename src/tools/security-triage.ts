@@ -136,7 +136,7 @@ export async function handleSecurityTriage(
       }
     } catch (err) {
       errors.push(
-        `Code Scanning: ${handleGitHubError(err)} -- ensure your token has the \`security_events\` scope.`
+        `Code Scanning: ${handleGitHubError(err)} -- ensure your token has the \`security_events\` scope (or \`public_repo\` for public-only repos).`
       );
     }
   }
@@ -165,7 +165,7 @@ export async function handleSecurityTriage(
       }
     } catch (err) {
       errors.push(
-        `Dependabot: ${handleGitHubError(err)} -- ensure your token has the \`vulnerability_alerts\` scope or Dependabot is enabled.`
+        `Dependabot: ${handleGitHubError(err)} -- ensure your token has the \`security_events\` scope (or \`public_repo\` for public-only repos) and that Dependabot alerts are enabled for this repo.`
       );
     }
   }
@@ -191,7 +191,7 @@ export async function handleSecurityTriage(
       }
     } catch (err) {
       errors.push(
-        `Secret Scanning: ${handleGitHubError(err)} -- ensure your token has the \`secret_scanning_alerts\` scope.`
+        `Secret Scanning: ${handleGitHubError(err)} -- ensure your token has the \`repo\` or \`security_events\` scope.`
       );
     }
   }
@@ -283,9 +283,9 @@ export function registerSecurityTriageTool(server: McpServer): void {
       description: `Read GitHub security alerts (code scanning, Dependabot, secret scanning) and produce a triage report.
 
 Required token scopes:
-  - security_events (Code Scanning)
-  - vulnerability_alerts or repo (Dependabot)
-  - secret_scanning_alerts (Secret Scanning)
+  - security_events, or public_repo for public-only repos (Code Scanning)
+  - security_events, or public_repo for public-only repos (Dependabot)
+  - repo or security_events (Secret Scanning)
 
 Args:
   - owner, repo: Repository coordinates.

@@ -10,6 +10,10 @@ export interface RepoContextOptions extends RepoRef {
   includePackageJson?: boolean;
   includeOpenIssues?: boolean;
   includeOpenPRs?: boolean;
+  /** Max number of open issues to fetch. Default: 20. */
+  issueLimit?: number;
+  /** Max number of open PRs to fetch. Default: 20. */
+  prLimit?: number;
 }
 
 export interface RepoContextResult {
@@ -109,7 +113,7 @@ export async function fetchRepoContext(
       owner,
       repo,
       state: "open",
-      per_page: 20,
+      per_page: opts.issueLimit ?? 20,
       sort: "updated",
     });
     result.openIssues = issuesData
@@ -129,7 +133,7 @@ export async function fetchRepoContext(
       owner,
       repo,
       state: "open",
-      per_page: 20,
+      per_page: opts.prLimit ?? 20,
       sort: "updated",
     });
     result.openPRs = prsData.map((pr) => ({

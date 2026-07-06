@@ -1,5 +1,7 @@
 # agentic-sdlc-mcp
 
+[![CI](https://github.com/SakuraCianna/agentic-sdlc-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/SakuraCianna/agentic-sdlc-mcp/actions/workflows/ci.yml)
+
 一个 MCP (Model Context Protocol) 服务器，充当 **Agentic SDLC（软件开发生命周期）控制平面** —— 旨在帮助 AI 编程智能体遵循 GitHub Agentic AI 最佳实践，以标准的流程完成软件的计划、创建、测试、审查、安全检查及发布。
 
 - 英文原版: [README.md](./README.md)
@@ -21,6 +23,8 @@ Plan (计划) -> Create (创建) -> Test (测试) -> Review (审查) -> Optimize
 ---
 
 ## 安装与部署
+
+**环境要求：** Node.js >= 24 (参见 `package.json` 中的 `engines` 字段；CI 运行在 Node 24 上)。
 
 ```powershell
 # 克隆仓库
@@ -67,10 +71,11 @@ $env:GITHUB_REPO  = "你的_仓库名"
 
 | 权限范围 (Scope) | 作用目的 |
 |---|---|
-| `repo` | 读写 Issues、Pull Requests 及文件内容 |
-| `security_events` | 读取 Code Scanning (代码扫描) 警报 |
-| `vulnerability_alerts` | 读取 Dependabot (依赖漏洞) 警报 |
-| `secret_scanning_alerts` | 读取 Secret Scanning (密钥扫描) 警报 |
+| `repo` | 读写 Issues、Pull Requests、文件内容及 Checks (仅公开仓库可用 `public_repo` 代替) |
+| `security_events` | 读取 Code Scanning (代码扫描) 与 Dependabot (依赖漏洞) 警报 (仅公开仓库可用 `public_repo` 代替) |
+| `repo` 或 `security_events` | 读取 Secret Scanning (密钥扫描) 警报 |
+
+> 以上权限范围已对照 GitHub REST API 官方文档 (Dependabot alerts、Code Scanning alerts、Secret Scanning alerts、Checks 相关接口) 核实, GitHub 的权限要求可能会调整, 如果工具返回的权限错误与此表不一致, 请以 [REST API 文档](https://docs.github.com/en/rest) 为准
 
 ---
 
@@ -150,6 +155,7 @@ npm run smoke
 ### `repo_context`
 读取仓库的元数据、README、package.json、未解决的 Issues 和打开的 PRs。
 **使用场景**：在开始任何工作流时了解全局代码库背景。
+- `issueLimit` / `prLimit` (数字, 默认: `20`, 上限: `100`)：限制拉取的 Issues/PRs 数量, 避免大型仓库返回内容占用过多 Token。
 
 ### `plan_from_context`
 基于提供的目标生成分阶段的 SDLC 计划 (Plan→Create→Test→Review→Optimize→Secure)。
@@ -161,6 +167,8 @@ npm run smoke
 
 ### `prepare_work_item`
 为特定的 Issue 生成 Agent 友好的工作简报（Brief），包括目标、非目标、验收标准、潜在风险，并附带接力提示词。
+- `includeRelatedFiles` (布尔值, 默认: `false`)：启发式地从 Issue 正文中提取相关文件路径。
+- `includeRecentPRs` (布尔值, 默认: `false`)：扫描最近更新的最多 20 个已关闭 PR, 返回其中最多 5 个改动过相关文件提示的已合并 PR (需要 `includeRelatedFiles` 先提取出文件提示, 否则直接返回空列表)。对应输出字段：`recentPRs`。
 
 ### `quality_gate_status`
 读取 PR 或特定 Git Ref 的质量检查（Check runs）结果。
@@ -270,6 +278,49 @@ npm run test
 # 冒烟测试 (不需要提供真实的 GitHub Token)
 npm run smoke
 ```
+
+---
+
+## 发布指南 (维护者专用)
+
+本包通过 **Trusted Publishing (OIDC 可信发布)** 方式发布到 npm —— 仓库中不存储任何长期有效的 `NPM_TOKEN` 密钥。发布流程由 `.github/workflows/publish.yml` 负责执行。
+
+### npm 官网一次性配置步骤
+
+1. 登录 [npmjs.com](https://www.npmjs.com)，进入该包的 **Settings -> Publishing access** 页面。
+2. 添加一个 **Trusted Publisher (可信发布者)**，填写：
+   - Provider (提供方): `GitHub Actions`
+   - Repository (仓库): `SakuraCianna/agentic-sdlc-mcp`
+   - Workflow filename (工作流文件名): `publish.yml`
+3. 保存。此后 `publish.yml` 即可在不使用任何 npm token 的情况下完成发布 —— GitHub 会签发一个短期有效的 OIDC token，npm 用它换取发布凭证，并自动生成 provenance (来源证明)。
+
+> **首次发布例外**：如果该包名在 npm 上尚不存在，则无法预先绑定 Trusted Publisher (必须先有包才能配置)。此时需要先在本地用经典 token 手动执行一次 `npm publish`，之后的所有发布再切换为 Trusted Publishing。`publish.yml` 工作流本身始终使用 OIDC 方式，不会退回到 token 方式。
+
+### 如何触发一次发布
+
+- **推荐方式**：在 GitHub 上创建一个 Release (打 Tag 后点击 "Publish release")，这会触发 `release: published` 事件，自动运行 `publish.yml`。
+- **手动方式**：进入 **Actions -> Publish to npm -> Run workflow** 手动触发 (`workflow_dispatch`)。
+
+### 发布前本地检查清单
+
+```powershell
+npm run typecheck
+npm run build
+npm run test
+npm run smoke
+npm run test:coverage
+npm pack --dry-run
+```
+
+`npm pack --dry-run` 会列出即将打包进发布压缩包的所有文件，但不会真正生成压缩包。请确认其中只包含 `dist/`、`README.md` 和 `.env.example` —— 测试文件和 `package-lock.json` 不应出现在其中 (这由 `tsconfig.build.json` 保证，它在编译用于发布的 `dist/` 输出时排除了 `src/__tests__/**`)。
+
+### GitHub Actions 工作流说明
+
+| 工作流 | 触发条件 | 作用 |
+|---|---|---|
+| `.github/workflows/ci.yml` | `pull_request`、推送到 `main` | 在 Node 24 上运行类型检查、构建、测试、冒烟测试和覆盖率检查 |
+| `.github/workflows/publish.yml` | GitHub Release 发布、或手动触发 | 通过 OIDC Trusted Publishing 方式发布到 npm |
+| `.github/dependabot.yml` | 每周定时 | 自动提交 npm 依赖与 GitHub Actions 依赖的更新 PR (打上 `dependencies` 标签) |
 
 ---
 

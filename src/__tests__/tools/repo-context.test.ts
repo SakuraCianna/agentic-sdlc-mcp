@@ -34,6 +34,7 @@ vi.mock("../../github/context.js", () => ({
 }));
 
 const { registerRepoContextTool } = await import("../../tools/repo-context.js");
+const { fetchRepoContext } = await import("../../github/context.js");
 
 describe("registerRepoContextTool", () => {
   it("registers without error", () => {
@@ -51,6 +52,33 @@ describe("registerRepoContextTool", () => {
         outputSchema: expect.anything(),
       }),
       expect.any(Function)
+    );
+  });
+
+  it("passes issueLimit and prLimit through to fetchRepoContext", async () => {
+    let handler: (params: any) => Promise<unknown> = async () => undefined;
+    const mockServer = {
+      registerTool: vi.fn((_name: string, _config: unknown, fn: (params: any) => Promise<unknown>) => {
+        handler = fn;
+      }),
+    };
+
+    registerRepoContextTool(mockServer as any);
+    (fetchRepoContext as ReturnType<typeof vi.fn>).mockClear();
+
+    await handler({
+      owner: "test-org",
+      repo: "test-repo",
+      includeReadme: true,
+      includePackageJson: false,
+      includeOpenIssues: true,
+      includeOpenPRs: true,
+      issueLimit: 5,
+      prLimit: 50,
+    });
+
+    expect(fetchRepoContext).toHaveBeenCalledWith(
+      expect.objectContaining({ issueLimit: 5, prLimit: 50 })
     );
   });
 });
