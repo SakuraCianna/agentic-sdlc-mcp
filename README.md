@@ -203,6 +203,11 @@ Generate a compact handoff packet so another agent can continue work without los
 Read classic branch protection AND repository rulesets for a branch (defaults to the repo's default branch).
 Flags missing required reviews, missing required status checks, allowed force pushes/deletions, and CODEOWNERS reviews not being enforced.
 
+### `workflow_permissions_audit`
+Scan `.github/workflows/*.yml` (and `.yaml`) for `permissions` declarations (top-level and per-job) and flag least-privilege gaps.
+- `owner` / `repo` (string, optional): Repository coordinates. Falls back to GITHUB_OWNER / GITHUB_REPO.
+- `ref` (string, optional): Branch, tag, or SHA to read workflow files from. Falls back to the repository's default branch.
+
 ---
 
 ## Resources

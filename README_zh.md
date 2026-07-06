@@ -190,6 +190,15 @@ npm run smoke
 ### `agent_handoff_packet`
 生成一份紧凑的工作交接包（Handoff packet），以便下一个智能体（如专门负责 Review 或 Security 的 Agent）能够不丢失上下文地继续工作。
 
+### `branch_protection_status`
+读取分支的经典分支保护规则 (Branch protection) 以及仓库规则集 (Repository rulesets)（默认读取仓库的默认分支）。
+**检测项**：可检测是否安全（如缺失必填的 PR 评审、是否缺失必填的状态检查、是否允许强制推送或删除分支，以及是否强制启用了 CODEOWNERS 评审）。
+
+### `workflow_permissions_audit`
+扫描 `.github/workflows/*.yml` (及 `.yaml`) 文件中的 `permissions` 声明（包含工作流顶级声明和各个 job 级别的声明），并指出未遵循“最小权限原则”的配置缺陷。
+- `owner` / `repo` (字符串, 可选)：仓库的拥有者与名称。默认回退至 GITHUB_OWNER 和 GITHUB_REPO。
+- `ref` (字符串, 可选)：读取工作流文件所使用的分支、Tag 或 Commit SHA。默认回退至仓库的默认分支。
+
 ---
 
 ## 参考资源 (Resources)
