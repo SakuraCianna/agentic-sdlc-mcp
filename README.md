@@ -263,6 +263,7 @@ The default is always `dryRun: true`. Agents must explicitly pass `dryRun: false
 - No auto-merge, no force-push, no branch deletion
 - Secret scanning alerts are always rated `critical`
 - The server does not make outbound requests beyond the GitHub API
+- `.github/CODEOWNERS` routes review of high-risk paths (`.github/`, `src/github/`, `src/tools/`) to the maintainer
 
 ---
 

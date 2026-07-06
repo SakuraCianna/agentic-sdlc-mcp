@@ -1,0 +1,18 @@
+# CODEOWNERS
+#
+# 定义各路径变更需要路由给谁审阅。
+# 参考: https://docs.github.com/articles/about-codeowners
+#
+# 规则从上到下匹配，后面的规则优先级更高（与 .gitignore 相同）。
+
+# 默认所有者：仓库内所有文件
+* @SakuraCianna
+
+# 高风险路径：CI/CD 与发布流程变更需要重点审阅
+/.github/ @SakuraCianna
+
+# GitHub API 交互层：权限、分页、错误处理等核心逻辑
+/src/github/ @SakuraCianna
+
+# 工具的写操作与 dryRun 安全模型
+/src/tools/ @SakuraCianna
