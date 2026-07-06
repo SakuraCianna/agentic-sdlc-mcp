@@ -38,6 +38,20 @@ const RepoContextInputSchema = z.object({
     .boolean()
     .default(false)
     .describe("Include a list of open pull requests (up to 20)."),
+  issueLimit: z
+    .number()
+    .int()
+    .min(1)
+    .max(100)
+    .default(20)
+    .describe("Max number of open issues to fetch when includeOpenIssues is true. Default: 20, max: 100."),
+  prLimit: z
+    .number()
+    .int()
+    .min(1)
+    .max(100)
+    .default(20)
+    .describe("Max number of open PRs to fetch when includeOpenPRs is true. Default: 20, max: 100."),
 });
 
 type RepoContextInput = z.infer<typeof RepoContextInputSchema>;
@@ -93,6 +107,8 @@ Args:
   - includePackageJson (boolean): Include package.json summary. Default: false.
   - includeOpenIssues (boolean): Include recent open issues. Default: false.
   - includeOpenPRs (boolean): Include open pull requests. Default: false.
+  - issueLimit (number): Max open issues to fetch. Default: 20, max: 100.
+  - prLimit (number): Max open PRs to fetch. Default: 20, max: 100.
 
 Returns: Markdown summary of the repository context, plus structured content.`,
       inputSchema: RepoContextInputSchema,
@@ -113,6 +129,8 @@ Returns: Markdown summary of the repository context, plus structured content.`,
           includePackageJson: params.includePackageJson,
           includeOpenIssues: params.includeOpenIssues,
           includeOpenPRs: params.includeOpenPRs,
+          issueLimit: params.issueLimit,
+          prLimit: params.prLimit,
         });
 
         const lines: string[] = [

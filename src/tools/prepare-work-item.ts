@@ -34,6 +34,14 @@ export type PrepareWorkItemInput = z.infer<typeof PrepareWorkItemInputSchema>;
 // Output schema
 // ---------------------------------------------------------------------------
 
+const RecentPrMatchShape = z.object({
+  number: z.number().int(),
+  title: z.string(),
+  url: z.string(),
+  mergedAt: z.string().nullable(),
+  matchedFiles: z.array(z.string()),
+});
+
 export const PrepareWorkItemOutputSchema = {
   issueNumber: z.number().int(),
   title: z.string(),
@@ -42,12 +50,21 @@ export const PrepareWorkItemOutputSchema = {
   labels: z.array(z.string()),
   assignees: z.array(z.string()),
   relatedFileHints: z.array(z.string()),
+  recentPRs: z.array(RecentPrMatchShape),
   handoffPrompt: z.string(),
 };
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
+
+export interface RecentPrMatch {
+  number: number;
+  title: string;
+  url: string;
+  mergedAt: string | null;
+  matchedFiles: string[];
+}
 
 export interface WorkItemResult {
   issueNumber: number;
@@ -57,12 +74,79 @@ export interface WorkItemResult {
   labels: string[];
   assignees: string[];
   relatedFileHints: string[];
+  recentPRs: RecentPrMatch[];
   handoffPrompt: string;
+}
+
+/** Bounds for the includeRecentPRs heuristic — keeps API calls and token usage predictable. */
+const RECENT_PRS_TO_SCAN = 20;
+const MAX_RECENT_PR_MATCHES = 5;
+
+/** True if a changed-file path and a heuristic file hint plausibly refer to the same file. */
+export function fileMatchesHint(filename: string, hint: string): boolean {
+  return (
+    filename === hint ||
+    filename.endsWith("/" + hint) ||
+    hint.endsWith("/" + filename) ||
+    filename.endsWith(hint) ||
+    hint.endsWith(filename)
+  );
 }
 
 // ---------------------------------------------------------------------------
 // Core handler (exported for testing)
 // ---------------------------------------------------------------------------
+
+/**
+ * Heuristically find recent merged PRs that touched any of `fileHints`.
+ * Scans at most RECENT_PRS_TO_SCAN recently-updated closed PRs and stops
+ * early once MAX_RECENT_PR_MATCHES matches are found, to bound API calls.
+ */
+export async function findRecentPRsForFileHints(
+  octokit: Octokit,
+  ref: RepoRef,
+  fileHints: string[]
+): Promise<RecentPrMatch[]> {
+  if (fileHints.length === 0) return [];
+
+  const { data: candidates } = await octokit.pulls.list({
+    owner: ref.owner,
+    repo: ref.repo,
+    state: "closed",
+    sort: "updated",
+    direction: "desc",
+    per_page: RECENT_PRS_TO_SCAN,
+  });
+
+  const matches: RecentPrMatch[] = [];
+  for (const pr of candidates) {
+    if (!pr.merged_at) continue; // skip closed-without-merge PRs
+    if (matches.length >= MAX_RECENT_PR_MATCHES) break;
+
+    const { data: files } = await octokit.pulls.listFiles({
+      owner: ref.owner,
+      repo: ref.repo,
+      pull_number: pr.number,
+      per_page: 100,
+    });
+
+    const matchedFiles = files
+      .filter((f) => fileHints.some((hint) => fileMatchesHint(f.filename, hint)))
+      .map((f) => f.filename);
+
+    if (matchedFiles.length > 0) {
+      matches.push({
+        number: pr.number,
+        title: pr.title,
+        url: pr.html_url,
+        mergedAt: pr.merged_at,
+        matchedFiles,
+      });
+    }
+  }
+
+  return matches;
+}
 
 export async function handlePrepareWorkItem(
   params: PrepareWorkItemInput,
@@ -103,6 +187,10 @@ export async function handlePrepareWorkItem(
     fileHints.push(...filtered);
   }
 
+  const recentPRs: RecentPrMatch[] = params.includeRecentPRs
+    ? await findRecentPRsForFileHints(octokit, ref, fileHints)
+    : [];
+
   const handoffPrompt = [
     `You are working on issue #${issue.number}: "${issue.title}" in ${ref.owner}/${ref.repo}.`,
     `The full issue description is provided below. Your task is to implement the required changes,`,
@@ -118,6 +206,7 @@ export async function handlePrepareWorkItem(
     labels,
     assignees,
     relatedFileHints: fileHints,
+    recentPRs,
     handoffPrompt,
   };
 
@@ -171,6 +260,23 @@ export async function handlePrepareWorkItem(
     fileHints.forEach((f) => lines.push(`- \`${f}\``));
   }
 
+  if (params.includeRecentPRs) {
+    lines.push("", "## Recent Related PRs (heuristic)");
+    if (recentPRs.length > 0) {
+      recentPRs.forEach((pr) =>
+        lines.push(
+          `- #${pr.number} ${pr.title} -> ${pr.url} (merged ${pr.mergedAt ?? "unknown"}; touched ${pr.matchedFiles.join(", ")})`
+        )
+      );
+    } else {
+      lines.push(
+        fileHints.length === 0
+          ? "(no related file hints available — enable includeRelatedFiles to find matching PRs)"
+          : "(no recent merged PRs found touching the related files)"
+      );
+    }
+  }
+
   lines.push(
     "",
     "## Recommended Verification Commands",
@@ -210,7 +316,9 @@ Args:
   - owner, repo: Repository coordinates.
   - issueNumber (number): The issue to prepare.
   - includeRelatedFiles (boolean): Heuristically list related file paths. Default: false.
-  - includeRecentPRs (boolean): List recent PRs on related files. Default: false.
+  - includeRecentPRs (boolean): Scan recent merged PRs (up to 20) for ones that touched the
+    related file hints and return up to 5 matches. Requires includeRelatedFiles to find hints
+    to match against — if no hints exist, returns an empty list. Default: false.
 
 Returns: Structured markdown brief ready to paste into an agent prompt.`,
       inputSchema: PrepareWorkItemInputSchema,

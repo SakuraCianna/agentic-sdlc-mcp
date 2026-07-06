@@ -126,6 +126,21 @@ describe("handleReleaseReadiness", () => {
     expect(text).toContain("Release Checklist");
   });
 
+  it("reports a specific permission hint when CI status fetch fails", async () => {
+    const octokit = makeMockOctokit();
+    (octokit.checks.listForRef as unknown as ReturnType<typeof vi.fn>).mockRejectedValue({
+      status: 403,
+      response: { data: { message: "Resource not accessible" } },
+    });
+
+    const params: ReleaseReadinessInput = { headRef: "main" };
+    const { structured } = await handleReleaseReadiness(params, REF, octokit);
+
+    expect(structured.ciStatus).toBe("unknown");
+    expect(structured.ciSummary).toContain("permission denied");
+    expect(structured.ciSummary).toContain("repo");
+  });
+
   it("reports pending CI status correctly", async () => {
     const octokit = makeMockOctokit({
       checks: [{ name: "Build", status: "in_progress", conclusion: null }],

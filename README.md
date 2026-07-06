@@ -1,5 +1,7 @@
 # agentic-sdlc-mcp
 
+[![CI](https://github.com/SakuraCianna/agentic-sdlc-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/SakuraCianna/agentic-sdlc-mcp/actions/workflows/ci.yml)
+
 An MCP (Model Context Protocol) Server that acts as an **Agentic SDLC Control Plane** — helping AI coding agents plan, create, test, review, secure, and release software following GitHub Agentic AI best practices.
 
 - GitHub: [SakuraCianna/agentic-sdlc-mcp](https://github.com/SakuraCianna/agentic-sdlc-mcp)
@@ -20,6 +22,8 @@ Plan -> Create -> Test -> Review -> Optimize -> Secure
 ---
 
 ## Installation
+
+**Requirements:** Node.js >= 24 (see `engines` in `package.json`; CI runs on Node 24).
 
 ```powershell
 # Clone the repository
@@ -66,10 +70,11 @@ $env:GITHUB_REPO  = "your-repo"
 
 | Scope | Purpose |
 |---|---|
-| `repo` | Read/write issues, PRs, file contents |
-| `security_events` | Code Scanning alerts |
-| `vulnerability_alerts` | Dependabot alerts |
-| `secret_scanning_alerts` | Secret Scanning alerts |
+| `repo` | Read/write issues, PRs, file contents, checks (or `public_repo` for public-only repos) |
+| `security_events` | Code Scanning and Dependabot alerts (or `public_repo` for public-only repos) |
+| `repo` or `security_events` | Secret Scanning alerts |
+
+> Verified against GitHub's REST API reference (Dependabot alerts, Code Scanning alerts, Secret Scanning alerts, Checks endpoints) as of this writing. GitHub's scope requirements can change — see the [REST API docs](https://docs.github.com/en/rest) if a tool reports a permission error that doesn't match this table.
 
 ---
 
@@ -158,6 +163,7 @@ npx @modelcontextprotocol/inspector node dist/index.js
 ### `repo_context`
 Read repository metadata, README, package.json, open issues, and open PRs.
 Use at the start of every workflow.
+- `issueLimit` / `prLimit` (number, default: `20`, max: `100`): cap how many open issues/PRs are fetched, to avoid token-heavy responses on large repos.
 
 ### `plan_from_context`
 Generate a phase-by-phase SDLC plan (Plan→Create→Test→Review→Optimize→Secure).
@@ -169,6 +175,8 @@ Batch-create GitHub issues from a plan.
 
 ### `prepare_work_item`
 Generate an agent-ready brief for a specific issue: goals, non-goals, acceptance criteria, risks, and a handoff prompt.
+- `includeRelatedFiles` (boolean, default: `false`): heuristically extract file paths mentioned in the issue body.
+- `includeRecentPRs` (boolean, default: `false`): scan up to 20 recently-updated closed PRs and return up to 5 merged ones that touched the related file hints (requires `includeRelatedFiles` to have found hints — returns an empty list otherwise). Output field: `recentPRs`.
 
 ### `quality_gate_status`
 Read check-run results for a PR or git ref.
@@ -276,6 +284,49 @@ npm run test
 # Smoke test (no token needed)
 npm run smoke
 ```
+
+---
+
+## Publishing (Maintainers)
+
+This package is published to npm using **Trusted Publishing (OIDC)** — no long-lived `NPM_TOKEN` secret is stored in the repo. Publishing is handled by `.github/workflows/publish.yml`.
+
+### One-time setup on npmjs.com
+
+1. Sign in to [npmjs.com](https://www.npmjs.com) and open the package's **Settings -> Publishing access**.
+2. Add a **Trusted Publisher** with:
+   - Provider: `GitHub Actions`
+   - Repository: `SakuraCianna/agentic-sdlc-mcp`
+   - Workflow filename: `publish.yml`
+3. Save. From then on, `publish.yml` publishes without any npm token — GitHub issues a short-lived OIDC token that npm exchanges for a publish credential, and provenance is generated automatically.
+
+> First publish only: if the package name doesn't exist on npm yet, Trusted Publisher can't be linked until the package exists. In that case, do one manual `npm publish` from your machine with a classic token first, then configure Trusted Publishing for all subsequent releases. The `publish.yml` workflow itself always uses OIDC — it never falls back to a token.
+
+### Triggering a publish
+
+- **Preferred:** create a GitHub Release (tag it, then "Publish release") — this fires `release: published` and runs `publish.yml` automatically.
+- **Manual:** go to **Actions -> Publish to npm -> Run workflow** (`workflow_dispatch`).
+
+### Pre-publish checklist (run locally before tagging a release)
+
+```powershell
+npm run typecheck
+npm run build
+npm run test
+npm run smoke
+npm run test:coverage
+npm pack --dry-run
+```
+
+`npm pack --dry-run` prints exactly which files would ship in the published tarball, without creating one. Confirm only `dist/`, `README.md`, and `.env.example` are included — test files and `package-lock.json` must NOT appear (enforced by `tsconfig.build.json`, which excludes `src/__tests__/**` from the compiled `dist/` output used for publishing).
+
+### GitHub Actions workflows
+
+| Workflow | Trigger | Purpose |
+|---|---|---|
+| `.github/workflows/ci.yml` | `pull_request`, `push` to `main` | Runs typecheck, build, test, smoke, and coverage on Node 24 |
+| `.github/workflows/publish.yml` | GitHub Release published, or manual dispatch | Publishes to npm via OIDC Trusted Publishing |
+| `.github/dependabot.yml` | Weekly schedule | Opens PRs for npm and GitHub Actions dependency updates (labelled `dependencies`) |
 
 ---
 
