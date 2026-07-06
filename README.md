@@ -198,6 +198,10 @@ Pre-release assessment: CI status, open bugs, CHANGELOG, release checklist, roll
 ### `agent_handoff_packet`
 Generate a compact handoff packet so another agent can continue work without losing context.
 
+### `branch_protection_status`
+Read classic branch protection AND repository rulesets for a branch (defaults to the repo's default branch).
+Flags missing required reviews, missing required status checks, allowed force pushes/deletions, and CODEOWNERS reviews not being enforced.
+
 ---
 
 ## Resources
