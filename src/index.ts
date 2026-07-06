@@ -25,6 +25,7 @@ import { registerReviewPrTool } from "./tools/review-pr.js";
 import { registerSecurityTriageTool } from "./tools/security-triage.js";
 import { registerReleaseReadinessTool } from "./tools/release-readiness.js";
 import { registerAgentHandoffTool } from "./tools/agent-handoff.js";
+import { registerBranchProtectionStatusTool } from "./tools/branch-protection-status.js";
 
 // Resources
 import { registerResources } from "./resources/index.js";
@@ -38,7 +39,7 @@ import { config } from "./config.js";
 
 const server = new McpServer({
   name: "agentic-sdlc-mcp",
-  version: "1.0.0",
+  version: "1.1.0",
 });
 
 // Register all tools
@@ -52,6 +53,7 @@ registerReviewPrTool(server);
 registerSecurityTriageTool(server);
 registerReleaseReadinessTool(server);
 registerAgentHandoffTool(server);
+registerBranchProtectionStatusTool(server);
 
 // Register all resources
 registerResources(server);
