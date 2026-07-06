@@ -39,7 +39,7 @@ import { config } from "./config.js";
 
 const server = new McpServer({
   name: "agentic-sdlc-mcp",
-  version: "1.1.0",
+  version: "1.2.0",
 });
 
 // Register all tools
