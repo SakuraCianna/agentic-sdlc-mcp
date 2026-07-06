@@ -188,6 +188,7 @@ Generate a structured PR summary: change overview, file categories, test coverag
 ### `review_pr_against_standard`
 Review a PR against SDLC standards (`basic` / `strict` / `security-focused`).
 `security-focused` mode scans actual patch lines for secret patterns, `.env` files, lockfile changes, and dist files.
+- `checkOwnership` (boolean, default: `true`): match changed files against `.github/CODEOWNERS` (or `CODEOWNERS` / `docs/CODEOWNERS`) and flag any matched owner who is neither the PR author, a requested reviewer, nor an actual reviewer. No finding is raised if no CODEOWNERS file exists — see the `codeownersFound` output field.
 
 ### `security_triage`
 Read Code Scanning, Dependabot, and Secret Scanning alerts, triage by severity, recommend fix order.

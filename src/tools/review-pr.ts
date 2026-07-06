@@ -23,6 +23,12 @@ export const ReviewPrInputSchema = z.object({
     .enum(["basic", "strict", "security-focused"])
     .default("basic")
     .describe("Review standard: 'basic', 'strict', or 'security-focused'."),
+  checkOwnership: z
+    .boolean()
+    .default(true)
+    .describe(
+      "Check changed files against .github/CODEOWNERS and flag owners who were neither requested nor have reviewed. Requires read access to repo contents and PR reviewers/reviews."
+    ),
 });
 
 export type ReviewPrInput = z.infer<typeof ReviewPrInputSchema>;
@@ -33,6 +39,7 @@ export type ReviewPrInput = z.infer<typeof ReviewPrInputSchema>;
 
 export const ReviewPrOutputSchema = {
   pullNumber: z.number().int(),
+  title: z.string(),
   standard: z.string(),
   conclusion: z.enum(["pass", "needs_changes", "risky_but_acceptable"]),
   findings: z.array(
@@ -43,10 +50,10 @@ export const ReviewPrOutputSchema = {
       suggestion: z.string().optional(),
     })
   ),
-  missingTests: z.array(z.string()),
-  securityConcerns: z.array(z.string()),
-  docsImpact: z.string(),
-  releaseRisk: z.string(),
+  hasTests: z.boolean(),
+  totalChangedLines: z.number().int(),
+  codeownersFound: z.boolean(),
+  errors: z.array(z.string()),
 };
 
 // ---------------------------------------------------------------------------
@@ -61,6 +68,8 @@ export interface ReviewPrResult {
   findings: Finding[];
   hasTests: boolean;
   totalChangedLines: number;
+  codeownersFound: boolean;
+  errors: string[];
 }
 
 /** Minimal shape from octokit pulls.listFiles we care about */
@@ -79,6 +88,13 @@ export interface PrMeta {
   body: string | null;
   draft: boolean;
   commits: number;
+  author: string;
+}
+
+/** A single CODEOWNERS rule: a gitignore-style pattern and its owners. */
+export interface CodeownersRule {
+  pattern: string;
+  owners: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -351,6 +367,209 @@ export function generateFindings(
 }
 
 // ---------------------------------------------------------------------------
+// CODEOWNERS parsing and ownership findings (pure, exported for testing)
+// ---------------------------------------------------------------------------
+
+/** Parse a CODEOWNERS file's contents into ordered rules (file order matters -- last match wins). */
+export function parseCodeowners(content: string): CodeownersRule[] {
+  const rules: CodeownersRule[] = [];
+  for (const rawLine of content.split("\n")) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) continue;
+    const [pattern, ...owners] = line.split(/\s+/);
+    if (!pattern || owners.length === 0) continue; // patterns with no owners unset ownership; not tracked here
+    rules.push({ pattern, owners });
+  }
+  return rules;
+}
+
+/**
+ * Match a single path segment against a pattern segment containing `*` (any run of chars)
+ * and/or `?` (exactly one char). Implemented as a rolling dynamic-programming pass rather
+ * than a compiled RegExp so adjacent wildcards (e.g. many `*a*a*a...` segments) can never
+ * trigger catastrophic backtracking -- this is always O(pattern.length * text.length).
+ */
+function segmentMatches(pattern: string, text: string): boolean {
+  const m = pattern.length;
+  const n = text.length;
+  let prevRow = new Array<boolean>(n + 1).fill(false);
+  prevRow[0] = true;
+
+  for (let i = 1; i <= m; i++) {
+    const currRow = new Array<boolean>(n + 1).fill(false);
+    const c = pattern[i - 1];
+    currRow[0] = c === "*" && prevRow[0];
+    for (let j = 1; j <= n; j++) {
+      if (c === "*") {
+        currRow[j] = prevRow[j] || currRow[j - 1];
+      } else if (c === "?" || c === text[j - 1]) {
+        currRow[j] = prevRow[j - 1];
+      }
+    }
+    prevRow = currRow;
+  }
+  return prevRow[n];
+}
+
+/**
+ * Match a full path (split into `/`-separated segments) against pattern segments, where a
+ * `**` segment matches zero or more whole path segments (including zero, per gitignore semantics).
+ * Memoized on (pi, si): without this, patterns with many `**` segments against a repetitive path
+ * cause the same subproblems to be recomputed exponentially -- the recursion re-derives the
+ * classic ReDoS blowup in hand-rolled form even though no RegExp is involved. Memoizing keeps this
+ * at O(patternSegs.length * pathSegs.length) subproblems, each doing at most O(pathSegs.length) work.
+ */
+function matchSegments(
+  patternSegs: string[],
+  pathSegs: string[],
+  pi = 0,
+  si = 0,
+  memo: Map<number, boolean> = new Map()
+): boolean {
+  const key = pi * (pathSegs.length + 1) + si;
+  const cached = memo.get(key);
+  if (cached !== undefined) return cached;
+
+  let result: boolean;
+  if (pi >= patternSegs.length) {
+    result = si === pathSegs.length;
+  } else if (patternSegs[pi] === "**") {
+    if (pi === patternSegs.length - 1) {
+      result = true;
+    } else {
+      result = false;
+      for (let k = si; k <= pathSegs.length; k++) {
+        if (matchSegments(patternSegs, pathSegs, pi + 1, k, memo)) {
+          result = true;
+          break;
+        }
+      }
+    }
+  } else if (si >= pathSegs.length || !segmentMatches(patternSegs[pi], pathSegs[si])) {
+    result = false;
+  } else {
+    result = matchSegments(patternSegs, pathSegs, pi + 1, si + 1, memo);
+  }
+
+  memo.set(key, result);
+  return result;
+}
+
+/** A pattern matches a path either exactly, or as a directory prefix (everything nested below it). */
+function matchesAnchored(patternSegs: string[], pathSegs: string[]): boolean {
+  if (matchSegments(patternSegs, pathSegs)) return true;
+  return (
+    pathSegs.length > patternSegs.length &&
+    patternSegs[patternSegs.length - 1] !== "**" &&
+    matchSegments(patternSegs, pathSegs.slice(0, patternSegs.length))
+  );
+}
+
+/**
+ * Match a repo-relative file path against a single CODEOWNERS/gitignore-style pattern.
+ * Handles rooted (`/path/`) vs unrooted patterns, `*`/`?`/`**` wildcards, and directory-prefix
+ * matching (a pattern matching a directory also matches everything nested under it).
+ */
+export function codeownersPatternMatches(pattern: string, filePath: string): boolean {
+  let p = pattern.trim();
+  if (p.endsWith("/")) p = p.slice(0, -1);
+
+  const anchored = p.includes("/");
+  if (p.startsWith("/")) p = p.slice(1);
+
+  const patternSegs = p.split("/");
+  const pathSegs = filePath.split("/");
+
+  if (anchored) return matchesAnchored(patternSegs, pathSegs);
+
+  for (let start = 0; start < pathSegs.length; start++) {
+    if (matchesAnchored(patternSegs, pathSegs.slice(start))) return true;
+  }
+  return false;
+}
+
+/** Owners for a file, per CODEOWNERS semantics: rules are evaluated in order, last match wins. */
+export function ownersForFile(filePath: string, rules: CodeownersRule[]): string[] {
+  let matched: string[] = [];
+  for (const rule of rules) {
+    if (codeownersPatternMatches(rule.pattern, filePath)) {
+      matched = rule.owners;
+    }
+  }
+  return matched;
+}
+
+/**
+ * Flag CODEOWNERS owners whose files changed but who were neither requested as reviewers,
+ * nor have already reviewed, nor are the PR author. Pure function -- no I/O.
+ */
+export function generateOwnershipFindings(
+  files: PrFile[],
+  rules: CodeownersRule[],
+  requestedUsers: string[],
+  requestedTeams: string[],
+  reviewedUsers: string[],
+  prAuthor: string
+): Finding[] {
+  if (rules.length === 0) return [];
+
+  const satisfied = new Set(
+    [...requestedUsers, ...requestedTeams, ...reviewedUsers, prAuthor].map((u) => u.toLowerCase())
+  );
+
+  const missingOwnerFiles = new Map<string, string[]>();
+  for (const file of files) {
+    for (const owner of ownersForFile(file.filename, rules)) {
+      const normalized = owner.replace(/^@/, "").toLowerCase();
+      if (satisfied.has(normalized)) continue;
+      const list = missingOwnerFiles.get(owner) ?? [];
+      list.push(file.filename);
+      missingOwnerFiles.set(owner, list);
+    }
+  }
+
+  const findings: Finding[] = [];
+  for (const [owner, filenames] of missingOwnerFiles) {
+    findings.push({
+      severity: "medium",
+      category: "Ownership",
+      description: `CODEOWNERS owner ${owner} was not requested as a reviewer and has not reviewed changes to: ${filenames.join(", ")}.`,
+      suggestion: `Request a review from ${owner}, or confirm CODEOWNERS routing is still correct for these paths.`,
+    });
+  }
+  return findings;
+}
+
+/**
+ * Fetch and parse the repo's CODEOWNERS file, trying the conventional candidate paths in order.
+ * A 404 on a candidate is normal (file lives elsewhere or doesn't exist) and tries the next path;
+ * any other error (e.g. permissions) short-circuits and is reported back to the caller.
+ */
+export async function fetchCodeownersRules(
+  ref: RepoRef,
+  octokit: Octokit
+): Promise<{ rules: CodeownersRule[]; error: string | null }> {
+  const candidatePaths = [".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS"];
+  let lastError: string | null = null;
+
+  for (const path of candidatePaths) {
+    try {
+      const { data } = await octokit.repos.getContent({ owner: ref.owner, repo: ref.repo, path });
+      if (!Array.isArray(data) && data.type === "file" && data.content) {
+        const content = Buffer.from(data.content, "base64").toString("utf-8");
+        return { rules: parseCodeowners(content), error: null };
+      }
+    } catch (err) {
+      const message = handleGitHubError(err);
+      if (!message.toLowerCase().includes("not found")) {
+        lastError = message;
+      }
+    }
+  }
+  return { rules: [], error: lastError };
+}
+
+// ---------------------------------------------------------------------------
 // Core handler (exported for testing)
 // ---------------------------------------------------------------------------
 
@@ -393,9 +612,67 @@ export async function handleReviewPr(
     body: pr.body ?? null,
     draft: pr.draft ?? false,
     commits: pr.commits,
+    author: pr.user?.login ?? "",
   };
 
-  const rawFindings = generateFindings(prMeta, files, params.standard);
+  const errors: string[] = [];
+  let codeownersFound = false;
+  let ownershipFindings: Finding[] = [];
+
+  if (params.checkOwnership) {
+    const { rules, error: codeownersError } = await fetchCodeownersRules(ref, octokit);
+    if (codeownersError) errors.push(`CODEOWNERS: ${codeownersError}`);
+    codeownersFound = rules.length > 0;
+
+    if (rules.length > 0) {
+      let requestedUsers: string[] = [];
+      let requestedTeams: string[] = [];
+      try {
+        const { data: reviewers } = await octokit.pulls.listRequestedReviewers({
+          owner: ref.owner,
+          repo: ref.repo,
+          pull_number: params.pullNumber,
+        });
+        requestedUsers = reviewers.users?.map((u) => u.login) ?? [];
+        requestedTeams = reviewers.teams?.map((t) => `${ref.owner}/${t.slug}`) ?? [];
+      } catch (err) {
+        errors.push(`Requested reviewers: ${handleGitHubError(err)}`);
+      }
+
+      let reviewedUsers: string[] = [];
+      try {
+        const rawReviews = await paginateAll(
+          (page, perPage) =>
+            octokit.pulls
+              .listReviews({
+                owner: ref.owner,
+                repo: ref.repo,
+                pull_number: params.pullNumber,
+                per_page: perPage,
+                page,
+              })
+              .then((r) => r.data),
+          300
+        );
+        reviewedUsers = rawReviews
+          .map((r) => r.user?.login)
+          .filter((login): login is string => Boolean(login));
+      } catch (err) {
+        errors.push(`Reviews: ${handleGitHubError(err)}`);
+      }
+
+      ownershipFindings = generateOwnershipFindings(
+        files,
+        rules,
+        requestedUsers,
+        requestedTeams,
+        reviewedUsers,
+        prMeta.author
+      );
+    }
+  }
+
+  const rawFindings = [...generateFindings(prMeta, files, params.standard), ...ownershipFindings];
   const sorted = sortFindings(rawFindings);
 
   const hasTests = files.some(
@@ -433,6 +710,8 @@ export async function handleReviewPr(
     findings: sorted,
     hasTests,
     totalChangedLines: totalLines,
+    codeownersFound,
+    errors,
   };
 
   const lines: string[] = [
@@ -441,9 +720,17 @@ export async function handleReviewPr(
     `**Standard:** ${params.standard}`,
     `**Conclusion:** ${conclusionLabel}`,
     `**Findings:** ${sorted.length} total (${critical.length} critical, ${high.length} high, ${medium.length} medium)`,
+    `**CODEOWNERS:** ${params.checkOwnership ? (codeownersFound ? "found, ownership checked" : "not found -- ownership not checked") : "checkOwnership disabled"}`,
     "",
-    "## Findings",
   ];
+
+  if (errors.length > 0) {
+    lines.push("## Notes", "");
+    errors.forEach((e) => lines.push(`- ${e}`));
+    lines.push("");
+  }
+
+  lines.push("## Findings");
 
   if (sorted.length === 0) {
     lines.push("", "No findings -- looks good!");
@@ -492,12 +779,17 @@ Standards:
   - strict: basic + large diff detection, missing docs
   - security-focused: strict + patch scanning for secret patterns, .env files, lockfile changes, dist files
 
+Ownership check (independent of standard, runs when checkOwnership is true and a CODEOWNERS file exists):
+  Matches changed files against .github/CODEOWNERS (or CODEOWNERS / docs/CODEOWNERS), and flags any
+  matched owner who is neither the PR author, a requested reviewer, nor an actual reviewer.
+
 Args:
   - owner, repo: Repository coordinates.
   - pullNumber (number): The PR to review.
   - standard: "basic" | "strict" | "security-focused". Default: "basic".
+  - checkOwnership (boolean, default: true): Enable the CODEOWNERS ownership check.
 
-Returns: Sorted findings by severity, test coverage signal, release risk, and conclusion.`,
+Returns: Sorted findings by severity, test coverage signal, ownership routing gaps, release risk, and conclusion.`,
       inputSchema: ReviewPrInputSchema,
       outputSchema: ReviewPrOutputSchema,
       annotations: {
