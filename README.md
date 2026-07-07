@@ -81,71 +81,100 @@ sequenceDiagram
 
 ---
 
+## 📋 Prerequisites
+
+Before running the server, ensure you have:
+1. **Node.js >= 24** installed on your system.
+2. **GitHub Personal Access Token (PAT)**:
+   * **Scopes required**:
+     * `repo` (Full control of private/public repositories, issues, PRs, and checks).
+     * `security_events` (To query Code Scanning and Dependabot alerts).
+     * Note: Make sure to verify token permissions against [GitHub REST API Documentation](https://docs.github.com/en/rest) if security endpoints fail.
+
+---
+
 ## ⚡ Quick Start
 
-### 1. Installation
-
-Requires **Node.js >= 24**.
-
+### 1. Instant Run via npx (Recommended)
+You do not need to download or clone the repository. Run the server directly inside your MCP client environment:
 ```bash
-# Clone the repository
+npx -y agentic-sdlc-mcp
+```
+
+### 2. Global Installation
+Or install the package globally on your system:
+```bash
+npm install -g agentic-sdlc-mcp
+# Start using the global command
+agentic-sdlc-mcp
+```
+
+### 3. Local Development (From Source)
+If you want to run or extend the server locally from the source code:
+```bash
 git clone https://github.com/SakuraCianna/agentic-sdlc-mcp.git
 cd agentic-sdlc-mcp
-
-# Install dependencies and build
 npm install
 npm run build
+node dist/index.js
 ```
-
-### 2. Configure Environment
-
-Copy `.env.example` to `.env` and fill in your details:
-```bash
-cp .env.example .env
-```
-Key configuration values:
-* `GITHUB_TOKEN`: Your GitHub Personal Access Token (PAT) with appropriate scopes.
-* `GITHUB_OWNER` / `GITHUB_REPO`: Default target repository coordinates.
 
 ---
 
 ## ⚙️ MCP Client Configuration
 
-Add this server to your client settings (`claude_desktop_config.json` or your Cursor settings page):
+Add this server configuration to your MCP client setting files (e.g., `claude_desktop_config.json`, Cursor, or Windsurf settings):
 
-### Claude Desktop / Cursor
+### Claude Desktop / Cursor / Windsurf (Using npm package)
 ```json
 {
   "mcpServers": {
     "agentic-sdlc": {
-      "command": "node",
-      "args": ["E:/CodeHome/agentic-sdlc-mcp/dist/index.js"],
+      "command": "npx",
+      "args": ["-y", "agentic-sdlc-mcp"],
       "env": {
         "GITHUB_TOKEN": "ghp_your_token",
-        "GITHUB_OWNER": "your-org",
-        "GITHUB_REPO": "your-repo"
+        "GITHUB_OWNER": "your-github-username-or-org",
+        "GITHUB_REPO": "your-target-repository"
       }
     }
   }
 }
 ```
 
-### Windsurf
-```json
-{
-  "mcpServers": {
-    "agentic-sdlc": {
-      "command": "node",
-      "args": ["E:/CodeHome/agentic-sdlc-mcp/dist/index.js"],
-      "env": {
-        "GITHUB_TOKEN": "ghp_your_token",
-        "GITHUB_OWNER": "your-org",
-        "GITHUB_REPO": "your-repo"
-      }
-    }
-  }
-}
+### Global Environment Variables (Optional fallback)
+If your client doesn't support setting environment variables directly via config, you can define them in your shell (`PowerShell` for Windows or `bash` for macOS/Linux):
+```powershell
+# Windows PowerShell
+$env:GITHUB_TOKEN = "ghp_your_token"
+$env:GITHUB_OWNER = "your-org"
+$env:GITHUB_REPO  = "your-repo"
 ```
+
+---
+
+## 🎯 Typical Scenarios & Best Practices
+
+AI agents should not run commands blindly or write code without structure. This control plane enforces software engineering discipline. Below are the recommended agent-collaboration patterns:
+
+### Scenario 1: Bootstrapping a Feature / Fix
+When an agent starts a task, it must follow this checklist to prevent "blind coding":
+1. **Gather Context**: Call [`repo_context`](#repo_context) to check current issues, PRs, and branch states.
+2. **Design a Plan**: Call [`plan_from_context`](#plan_from_context) with the task goal. This will outline structured issues corresponding to SDLC phases (Plan, Create, Test, Review, Optimize, Secure).
+3. **Write Issues**: Call [`create_issue_set`](#create_issue_set) with `dryRun: false` to publish the checklist directly to GitHub.
+4. **Acquire Work Brief**: Call [`prepare_work_item`](#prepare_work_item) on the active issue to retrieve precise guidelines, scope definitions, and related files.
+
+### Scenario 2: Guarding the Pull Request Gate
+Before submitting a PR for human review, the agent must verify its own quality:
+1. **Generate PR Summary**: Call [`create_pr_summary`](#create_pr_summary) to auto-generate structured, professional release notes and file diff changes.
+2. **Audit CI Status**: Call [`quality_gate_status`](#quality_gate_status) to ensure all GitHub Actions tests and linting check runs are passing green.
+3. **Execute Static Audit**: Call [`review_pr_against_standard`](#review_pr_against_standard) with `standard: "strict"` or `"security-focused"` to scan diffs for key leaks, verify `.env` safety, and ensure `.github/CODEOWNERS` reviewers are correctly assigned.
+
+### Scenario 3: Release Readiness Check
+When preparation is complete and a release is requested:
+1. **Vulnerability Check**: Call [`security_triage`](#security_triage) to audit Code Scanning (SAST), Dependabot, and Secret Scanning. Ensure no critical alerts block the release.
+2. **Release Readiness**: Call [`release_readiness_check`](#release_readiness_check) to generate a rollback plan template, verify there are no open release-blocking issues, and ensure CHANGELOG.md is up to date.
+3. **Handoff**: If transferring deployment duties to another agent, call [`agent_handoff_packet`](#agent_handoff_packet) to pass along the complete audit log.
 
 ---
 

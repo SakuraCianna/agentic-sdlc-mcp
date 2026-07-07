@@ -83,69 +83,100 @@ sequenceDiagram
 
 ## ⚡ 快速入门
 
-### 1. 本地安装
+## 📋 使用前提
 
-运行本项目需要 **Node.js >= 24**。
+运行此服务器前，请确认你已准备好：
+1. 本地系统已安装 **Node.js >= 24**。
+2. **GitHub 个人访问令牌 (PAT)**：
+   * **必备权限范围 (Scopes)**：
+     * `repo` (读写 Issues、Pull Requests、文件内容及 Checks 状态门禁)。
+     * `security_events` (读取 Code Scanning 和 Dependabot 警报)。
+     * 注意：如果部分安全端点因权限报错，请以 [GitHub REST API 官方文档](https://docs.github.com/en/rest) 为准核实 Token 权限。
 
+---
+
+## ⚡ 快速入门
+
+### 1. 使用 npx 免安装运行（推荐）
+你不需要下载或克隆本仓库。直接在 MCP 客户端配置中通过 npx 运行即可，开箱即用：
 ```bash
-# 克隆仓库
+npx -y agentic-sdlc-mcp
+```
+
+### 2. 全局安装
+你也可以将本包作为全局 CLI 工具安装到系统：
+```bash
+npm install -g agentic-sdlc-mcp
+# 使用全局命令直接启动
+agentic-sdlc-mcp
+```
+
+### 3. 本地源码运行（用于开发与扩展）
+如果你想要修改项目源码或在本地进行功能扩展：
+```bash
 git clone https://github.com/SakuraCianna/agentic-sdlc-mcp.git
 cd agentic-sdlc-mcp
-
-# 安装依赖并编译代码
 npm install
 npm run build
+node dist/index.js
 ```
-
-### 2. 环境变量配置
-
-复制环境变量配置文件模板 `.env.example` 并填入必要信息：
-```bash
-cp .env.example .env
-```
-核心变量配置项：
-* `GITHUB_TOKEN`：你的 GitHub 个人访问令牌（PAT），需具备读取仓库和安全警报的权限。
-* `GITHUB_OWNER` / `GITHUB_REPO`：默认关联 of GitHub 仓库所有者与名称。
 
 ---
 
 ## ⚙️ 客户端接入配置
 
-将本项目注册进你的 MCP 客户端配置文件（例如 `claude_desktop_config.json` 或 Cursor、Windsurf 的配置页面）：
+将本服务器注册进你的 MCP 客户端配置文件（例如 `claude_desktop_config.json` 或 Cursor、Windsurf 的配置页面）：
 
-### Claude Desktop / Cursor
+### Claude Desktop / Cursor / Windsurf (使用 npm 官方包运行)
 ```json
 {
   "mcpServers": {
     "agentic-sdlc": {
-      "command": "node",
-      "args": ["E:/CodeHome/agentic-sdlc-mcp/dist/index.js"],
+      "command": "npx",
+      "args": ["-y", "agentic-sdlc-mcp"],
       "env": {
-        "GITHUB_TOKEN": "ghp_your_token",
-        "GITHUB_OWNER": "your-org",
-        "GITHUB_REPO": "your-repo"
+        "GITHUB_TOKEN": "ghp_你的_token",
+        "GITHUB_OWNER": "你的_github_用户名或组织名",
+        "GITHUB_REPO": "你的_目标仓库名"
       }
     }
   }
 }
 ```
 
-### Windsurf
-```json
-{
-  "mcpServers": {
-    "agentic-sdlc": {
-      "command": "node",
-      "args": ["E:/CodeHome/agentic-sdlc-mcp/dist/index.js"],
-      "env": {
-        "GITHUB_TOKEN": "ghp_your_token",
-        "GITHUB_OWNER": "your-org",
-        "GITHUB_REPO": "your-repo"
-      }
-    }
-  }
-}
+### 环境变量全局配置 (可选备用)
+如果你的 MCP 客户端不支持在 JSON 配置中直接指定环境变量，你可以在当前系统的 Shell 中设定全局环境变量（Windows 环境下使用 `PowerShell`，macOS/Linux 下使用 `bash`）：
+```powershell
+# Windows PowerShell
+$env:GITHUB_TOKEN = "ghp_你的_token"
+$env:GITHUB_OWNER = "你的组织或用户名"
+$env:GITHUB_REPO  = "你的仓库名"
 ```
+
+---
+
+## 🎯 最佳实践与合理使用情景
+
+AI 编码智能体不应当在没有任何工程纪律约束下盲目地编写代码和提交。本控制平面旨在帮助 AI 规范研发流程。以下是推荐的智能体协作最佳实践：
+
+### 情景 1：启动新功能开发 / 漏洞修复 (Bootstrapping)
+智能体在接受到研发指令时，应依次执行以下工具以获取扎实的背景，避免“盲目写码”反模式：
+1. **收集背景**：调用 [`repo_context`](#repo_context) 全面核查当前 Issues、PR 状态及分支结构。
+2. **制定计划**：调用 [`plan_from_context`](#plan_from_context) 录入研发目标，自动梳理出涵盖 Plan、Create、Test、Review、Optimize、Secure 完整周期的分阶段计划。
+3. **建立 Issues 清单**：调用 [`create_issue_set`](#create_issue_set)（指定 `dryRun: false`）将计划批量创建为 GitHub 上的看板 Issue，供人类和智能体追踪进度。
+4. **获取任务简报**：针对当前正要执行的子 Issue，调用 [`prepare_work_item`](#prepare_work_item) 自动提取出目标、非目标、验收标准与核心技术风险。
+
+### 情景 2：Pull Request 提审前的质量把关
+在将代码提交给人类进行 PR 评审前，智能体需要执行自检，确信代码符合门禁标准：
+1. **生成 PR 变更简要**：调用 [`create_pr_summary`](#create_pr_summary) 自动化输出一份结构化、规范化的 Diff 变更概述与 Release Notes 草案。
+2. **核查 CI 门禁**：调用 [`quality_gate_status`](#quality_gate_status) 确保关联的 GitHub Actions 测试与静态检查全部绿灯通过。
+3. **代码安全扫描**：调用 [`review_pr_against_standard`](#review_pr_against_standard)（指定 `standard: "strict"` 或 `"security-focused"`）审计提交的差异，防止意外引入 `.env` 敏感密钥，并校验 `.github/CODEOWNERS` 指定的归属人是否已审阅。
+
+### 情景 3：版本发布前就绪度核验 (Pre-release)
+当人类主导版本合并并准备正式对外发布包时：
+1. **漏洞分级筛选**：调用 [`security_triage`](#security_triage) 检索 Code Scanning (SAST) 静态扫描报告、Dependabot 依赖警告以及 Secret Scanning 泄露警报，排除阻碍发布的致命隐患。
+2. **发版就绪度审计**：调用 [`release_readiness_check`](#release_readiness_check) 确认无残留 Bug Issues、确认 CHANGELOG.md 已更新，并自动化出具发版清单与紧急回滚方案模板。
+3. **无损交接**：若需要把后续的部署或测试移交给另一个 Agent，调用 [`agent_handoff_packet`](#agent_handoff_packet) 整合当前全部的审计状态进行打包交接。
 
 ---
 
