@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/modelcontextprotocol/specification/main/assets/mcp-logo.png" alt="MCP Logo" width="100"/>
+  <img src="assets/logo.svg" alt="MCP Logo" width="120"/>
 </p>
 
-# Agentic SDLC Control Plane (agentic-sdlc-mcp)
+<h1 align="center">Agentic SDLC Control Plane (agentic-sdlc-mcp)</h1>
 
 <p align="center">
   <b>Expose professional, structured SDLC workflows as MCP tools to guide AI coding agents (Claude, Cursor, etc.) through safe, auditable development lifecycles.</b>
