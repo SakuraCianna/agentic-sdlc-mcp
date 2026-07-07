@@ -1,90 +1,119 @@
-# agentic-sdlc-mcp
+<p align="center">
+  <img src="https://raw.githubusercontent.com/modelcontextprotocol/specification/main/assets/mcp-logo.png" alt="MCP Logo" width="100"/>
+</p>
 
-[![CI](https://github.com/SakuraCianna/agentic-sdlc-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/SakuraCianna/agentic-sdlc-mcp/actions/workflows/ci.yml)
+# Agentic SDLC Control Plane (agentic-sdlc-mcp)
 
-一个 MCP (Model Context Protocol) 服务器，充当 **Agentic SDLC（软件开发生命周期）控制平面** —— 旨在帮助 AI 编程智能体遵循 GitHub Agentic AI 最佳实践，以标准的流程完成软件的计划、创建、测试、审查、安全检查及发布。
+<p align="center">
+  <b>将专业、结构化的 SDLC 工作流封装为 MCP 工具，引导 AI 编码智能体（如 Claude、Cursor 等）在安全、可追溯且防失控的研生命周期中进行协作。</b>
+</p>
 
-- 英文原版: [README.md](./README.md)
-- GitHub 仓库: [SakuraCianna/agentic-sdlc-mcp](https://github.com/SakuraCianna/agentic-sdlc-mcp)
-- 提交问题 (Issues): [github.com/SakuraCianna/agentic-sdlc-mcp/issues](https://github.com/SakuraCianna/agentic-sdlc-mcp/issues)
+<p align="center">
+  <a href="https://www.npmjs.com/package/agentic-sdlc-mcp"><img src="https://img.shields.io/npm/v/agentic-sdlc-mcp.svg?style=flat-square&color=blue" alt="npm version"></a>
+  <a href="https://github.com/SakuraCianna/agentic-sdlc-mcp/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/SakuraCianna/agentic-sdlc-mcp/ci.yml?branch=main&style=flat-square" alt="CI status"></a>
+  <a href="https://www.npmjs.com/package/agentic-sdlc-mcp"><img src="https://img.shields.io/npm/dm/agentic-sdlc-mcp.svg?style=flat-square&color=green" alt="downloads"></a>
+  <a href="https://github.com/SakuraCianna/agentic-sdlc-mcp/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/agentic-sdlc-mcp.svg?style=flat-square&color=orange" alt="license"></a>
+  <a href="https://modelcontextprotocol.io"><img src="https://img.shields.io/badge/MCP-Compatible-blue?style=flat-square" alt="MCP Compatible"></a>
+</p>
 
 ---
 
-## 这是一个什么项目？
+## 💡 项目背景与核心理念
 
-`agentic-sdlc-mcp` 并不是一个简单的 GitHub API 封装。它是一个 **SDLC 编排层**，暴露了一系列结构化、对智能体友好的工具，这些工具严格遵循软件开发的完整生命周期：
+传统的 AI 智能体能够快速生成代码，但常常缺乏软件工程纪律与合规约束。它们可能会在没有测试的情况下直接强推主分支、绕过 PR 评审、无意中泄露密钥，或者未运行 CI 检查就合并代码。
 
-```text
-Plan (计划) -> Create (创建) -> Test (测试) -> Review (审查) -> Optimize (优化) -> Secure (安全)
+`agentic-sdlc-mcp` 是基于 **Model Context Protocol (MCP)** 构建的 **SDLC 智能编排层与控制平面**。它将 GitHub API 提炼成高层次、富有软件工程纪律的工具，为 AI 编码智能体建立可追溯性、强制性的人类审批关卡、代码质量门禁以及安全性校验。
+
+### 代理式 SDLC 研发闭环
+```mermaid
+graph TD
+    A[第一阶段：计划 Plan] -->|输出下发上下文与开发简报| B[第二阶段：开发 Create]
+    B -->|规范化的关联提交| C[第三阶段：测试 Test]
+    C -->|收集本地测试报告| D[第四阶段：评审 Review]
+    D -->|人类审批与合并关卡| E[第五阶段：优化 Optimize]
+    E -->|局部重构与精简代码| F[第六阶段：安全 Secure]
+    F -->|密钥与权限审计 | G[发版就绪度检查 & 人类 Release 审批]
+    G -->|发布 Release & Deploy| A
 ```
 
-**安全第一：** 所有写入操作均默认开启 `dryRun: true` (空跑模式/预览模式)。绝不会在未授权的情况下静默执行具有破坏性或不可逆的操作。
+---
+
+## 🛠️ 工具能力分类
+
+本项目并不是对 GitHub API 的简单扁平包装，而是围绕 SDLC 阶段构建的 **12 款专业工具**：
+
+| 分类模块 | 包含工具 | 描述说明 |
+|---|---|---|
+| **💡 规划与上下文** | [`repo_context`](#repo_context)<br>[`plan_from_context`](#plan_from_context)<br>[`prepare_work_item`](#prepare_work_item) | 检索仓库现状、根据上下文自动拟定 SDLC 阶段计划，并生成可读的智能体开发简报。 |
+| **🚀 任务拆解与写入** | [`create_issue_set`](#create_issue_set) | 依据 SDLC 计划在 GitHub 上批量创建对应的 Issues。 |
+| **🔍 质量保障与评审** | [`quality_gate_status`](#quality_gate_status)<br>[`create_pr_summary`](#create_pr_summary)<br>[`review_pr_against_standard`](#review_pr_against_standard) | 读取 CI 质量门禁状态、自动生成 PR 的精炼变更摘要，并依据标准等级检查 PR 改动的代码质量。 |
+| **🛡️ 治理与安全保障** | [`branch_protection_status`](#branch_protection_status)<br>[`workflow_permissions_audit`](#workflow_permissions_audit)<br>[`security_triage`](#security_triage)<br>[`release_readiness_check`](#release_readiness_check) | 审计主分支保护规则与规则集、审计 Action 工作流权限泄露隐患、收集分析安全漏洞警报并进行发布就绪度核验。 |
+| **🤝 智能体交接** | [`agent_handoff_packet`](#agent_handoff_packet) | 汇总当前任务进度和残留事项，打包交接，确保上下文无缝传递。 |
 
 ---
 
-## 安装与部署
+## 🗺️ 系统时序架构
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Developer as 人类 Owner (项目主管)
+    participant Agent as AI 编码智能体 (Cursor/Claude)
+    participant MCP as agentic-sdlc-mcp (控制平面)
+    participant GitHub as GitHub API
+    participant npm as npm 官方源
 
-**环境要求：** Node.js >= 24 (参见 `package.json` 中的 `engines` 字段；CI 运行在 Node 24 上)。
+    Developer->>Agent: "帮我实现仓库 X 的一个新功能"
+    Agent->>MCP: 调用 repo_context / plan_from_context
+    MCP->>GitHub: 获取仓库当前 Issues/文件树/元数据
+    GitHub-->>MCP: 仓库当前状态数据
+    MCP-->>Agent: 结构化的 SDLC 计划与开发简报
+    Note over Agent: 智能体在隔离分支编写代码...
+    Agent->>MCP: 调用 review_pr_against_standard / quality_gate_status
+    MCP->>GitHub: 审计 PR 文件所有权 (CODEOWNERS) 与 CI 工作流状态
+    GitHub-->>MCP: CI 运行结果、CODEOWNERS 评审缺失报告
+    MCP-->>Agent: 自动化评审意见与缺陷修复建议
+    Note over Developer,Agent: 人类评审关卡：审核并手动合并 PR
+    Developer->>MCP: Trigger gh release create v1.3.0
+    MCP->>GitHub: 创建 Release 标签 (Tag)
+    GitHub->>GitHub: 自动执行 publish.yml (OIDC)
+    GitHub->>npm: 发布并签署具有 Provenance 的安全 npm 包
+```
 
-```powershell
+---
+
+## ⚡ 快速入门
+
+### 1. 本地安装
+
+运行本项目需要 **Node.js >= 24**。
+
+```bash
 # 克隆仓库
 git clone https://github.com/SakuraCianna/agentic-sdlc-mcp.git
 cd agentic-sdlc-mcp
 
-# 安装依赖项
+# 安装依赖并编译代码
 npm install
-
-# 编译构建
 npm run build
 ```
 
----
+### 2. 环境变量配置
 
-## 环境变量配置
-
-请将 `.env.example` 复制为 `.env` 文件，并填写你的配置值：
-
-```powershell
-Copy-Item .env.example .env
+复制环境变量配置文件模板 `.env.example` 并填入必要信息：
+```bash
+cp .env.example .env
 ```
-
-然后编辑 `.env` 文件 —— 在服务器启动时，`dotenv` 会自动加载它。
-
-或者，你也可以在 PowerShell 中直接设置临时环境变量：
-
-```powershell
-$env:GITHUB_TOKEN = "ghp_你的_token_填写在这里"
-$env:GITHUB_OWNER = "你的_github_用户名或组织名"
-$env:GITHUB_REPO  = "你的_仓库名"
-```
-
-| 变量名 | 是否必填 | 描述说明 |
-|---|---|---|
-| `GITHUB_TOKEN` | 是 | GitHub PAT 或 App Token |
-| `GITHUB_OWNER` | 否 | 默认所有者 (组织名或用户名) |
-| `GITHUB_REPO` | 否 | 默认仓库名称 |
-| `SDLC_DEFAULT_BRANCH` | 否 | 默认主分支名称 (默认: `main`) |
-| `TRANSPORT` | 否 | 传输协议：`stdio` (默认) 或 `http` |
-| `PORT` | 否 | HTTP 端口号 (默认: `3000`) |
-
-### GitHub Token 权限要求
-
-| 权限范围 (Scope) | 作用目的 |
-|---|---|
-| `repo` | 读写 Issues、Pull Requests、文件内容及 Checks (仅公开仓库可用 `public_repo` 代替) |
-| `security_events` | 读取 Code Scanning (代码扫描) 与 Dependabot (依赖漏洞) 警报 (仅公开仓库可用 `public_repo` 代替) |
-| `repo` 或 `security_events` | 读取 Secret Scanning (密钥扫描) 警报 |
-
-> 以上权限范围已对照 GitHub REST API 官方文档 (Dependabot alerts、Code Scanning alerts、Secret Scanning alerts、Checks 相关接口) 核实, GitHub 的权限要求可能会调整, 如果工具返回的权限错误与此表不一致, 请以 [REST API 文档](https://docs.github.com/en/rest) 为准
+核心变量配置项：
+* `GITHUB_TOKEN`：你的 GitHub 个人访问令牌（PAT），需具备读取仓库和安全警报的权限。
+* `GITHUB_OWNER` / `GITHUB_REPO`：默认关联 of GitHub 仓库所有者与名称。
 
 ---
 
-## MCP 客户端配置
+## ⚙️ 客户端接入配置
 
-### Claude Desktop / Cursor / Cline 等
+将本项目注册进你的 MCP 客户端配置文件（例如 `claude_desktop_config.json` 或 Cursor、Windsurf 的配置页面）：
 
-在你的 MCP 客户端配置文件（如 `claude_desktop_config.json`）中添加以下内容：
-
+### Claude Desktop / Cursor
 ```json
 {
   "mcpServers": {
@@ -92,7 +121,7 @@ $env:GITHUB_REPO  = "你的_仓库名"
       "command": "node",
       "args": ["E:/CodeHome/agentic-sdlc-mcp/dist/index.js"],
       "env": {
-        "GITHUB_TOKEN": "ghp_你的_token",
+        "GITHUB_TOKEN": "ghp_your_token",
         "GITHUB_OWNER": "your-org",
         "GITHUB_REPO": "your-repo"
       }
@@ -101,122 +130,96 @@ $env:GITHUB_REPO  = "你的_仓库名"
 }
 ```
 
-注意：在 Windows 中请使用正斜杠 `/` 或转义的反斜杠 `\\` 来填写路径。如果你是通过 npm 发布并使用，可以直接将 command 设置为 `npx`，args 设置为 `["-y", "agentic-sdlc-mcp"]`。
-
----
-
-## 运行服务器
-
-### stdio 模式 (默认模式 —— 供 MCP 客户端直接使用)
-
-```powershell
-$env:GITHUB_TOKEN = "ghp_your_token"
-node dist/index.js
-```
-
-### HTTP 模式 (供远程调用或多客户端连接)
-
-```powershell
-$env:TRANSPORT = "http"
-$env:PORT      = "3000"
-$env:GITHUB_TOKEN = "ghp_your_token"
-node dist/index.js
-# 服务器将监听在 http://localhost:3000/mcp
-```
-
-### 冒烟测试 (Smoke test，无需配置真实的 Token)
-
-用于验证模块能否正常加载以及所有工具能否无报错注册：
-
-```powershell
-npm run smoke
-# 输出示例: [agentic-sdlc-mcp] SMOKE OK — all tools and resources registered successfully.
+### Windsurf
+```json
+{
+  "mcpServers": {
+    "agentic-sdlc": {
+      "command": "node",
+      "args": ["E:/CodeHome/agentic-sdlc-mcp/dist/index.js"],
+      "env": {
+        "GITHUB_TOKEN": "ghp_your_token",
+        "GITHUB_OWNER": "your-org",
+        "GITHUB_REPO": "your-repo"
+      }
+    }
+  }
+}
 ```
 
 ---
 
-## npm 脚本命令参考
+## 📖 工具使用参考 (Tools Reference)
 
-| 脚本命令 | 描述说明 |
-|---|---|
-| `npm run build` | 编译 TypeScript 代码到 `dist/` 目录 |
-| `npm run typecheck` | 仅执行类型检查（不生成文件） |
-| `npm run test` | 运行 Vitest 测试套件 |
-| `npm run test:watch` | 开启测试监听模式 (用于 TDD) |
-| `npm run test:coverage` | 生成测试覆盖率报告 (lcov + text) |
-| `npm run smoke` | 冒烟测试: 加载并注册工具，无需真实 token |
-| `npm run dev` | 使用 tsx 开启开发监听模式 |
-| `npm start` | 运行编译后的服务器代码 |
-
----
-
-## 工具集参考 (Tools Reference)
+服务器向 AI 客户端暴露的详细工具 API 规范说明：
 
 ### `repo_context`
-读取仓库的元数据、README、package.json、未解决的 Issues 和打开的 PRs。
-**使用场景**：在开始任何工作流时了解全局代码库背景。
-- `issueLimit` / `prLimit` (数字, 默认: `20`, 上限: `100`)：限制拉取的 Issues/PRs 数量, 避免大型仓库返回内容占用过多 Token。
+读取仓库元数据、README、package.json 以及未解决的 Issues 和 PR。用于智能体快速熟悉项目上下文。
+* **输入参数**：
+  * `owner` (字符串, 可选)：GitHub 所有者。
+  * `repo` (字符串, 可选)：GitHub 仓库名。
+  * `issueLimit` / `prLimit` (数字, 默认 `20`, 最大 `100`)：拉取的最长条目数限制。
 
 ### `plan_from_context`
-基于提供的目标生成分阶段的 SDLC 计划 (Plan→Create→Test→Review→Optimize→Secure)。
-**机制**：纯模板驱动 —— 无需消耗 LLM 调用。
+根据给定的研发目标生成符合 SDLC 标准阶段的阶段性规划。
+* **输入参数**：
+  * `owner` / `repo` (字符串, 可选)：仓库坐标。
+  * `goal` (字符串, 必填)：要达成的开发目标或修复描述。
 
 ### `create_issue_set`
-将计划批量创建为 GitHub Issues。
-**⚠️ 警告**：`dryRun` 默认设为 `true`（仅预览）。必须显式传入 `dryRun: false` 才能真正写入 GitHub。
+在 GitHub 仓库中根据规划一键批量创建 Issues。
+* **输入参数**：
+  * `owner` / `repo` (字符串, 可选)：仓库坐标。
+  * `issues` (对象数组, 必填)：拟创建的 Issues 结构列表（包含标题、内容和标签）。
+  * `dryRun` (布尔值, 默认 `true`)：默认开启预览模式，为 `false` 时真实写入 GitHub。
 
 ### `prepare_work_item`
-为特定的 Issue 生成 Agent 友好的工作简报（Brief），包括目标、非目标、验收标准、潜在风险，并附带接力提示词。
-- `includeRelatedFiles` (布尔值, 默认: `false`)：启发式地从 Issue 正文中提取相关文件路径。
-- `includeRecentPRs` (布尔值, 默认: `false`)：扫描最近更新的最多 20 个已关闭 PR, 返回其中最多 5 个改动过相关文件提示的已合并 PR (需要 `includeRelatedFiles` 先提取出文件提示, 否则直接返回空列表)。对应输出字段：`recentPRs`。
+为指定 Issue 生成供 AI 智能体直接消费的开发简报，提取目标、非目标、验收标准与核心风险。
+* **输入参数**：
+  * `owner` / `repo` (字符串, 可选)：仓库坐标。
+  * `issueNumber` (数字, 必填)：绑定的 GitHub Issue 编号。
+  * `includeRelatedFiles` (布尔值, 默认 `false`)：启发式搜索 Issue 内容中提及的关联文件。
+  * `includeRecentPRs` (布尔值, 默认 `false`)：检索最近关联的 5 个已合并 PR。
 
 ### `quality_gate_status`
-读取 PR 或特定 Git Ref 的质量检查（Check runs）结果。
-**使用场景**：在合并 PR 或发布前验证 CI 是否全部通过。
+审计一个 PR 或 Git 引用（Ref）所触发的所有 CI Check Runs 的成功与失败状态。
+* **输入参数**：
+  * `owner` / `repo` (字符串, 可选)：仓库坐标。
+  * `pullNumber` (数字, 可选)：待查询的 PR 编号。
+  * `ref` (字符串, 可选)：待查询的分支或 commit。
 
 ### `create_pr_summary`
-针对指定的 PR，生成结构化的内容摘要：变更概述、文件分类、测试覆盖率信号、潜在风险、Review 清单以及 Release Notes 草案。
+针对指定的 PR，自动生成结构化的内容变更摘要和更新日志草案。
+* **输入参数**：
+  * `owner` / `repo` (字符串, 可选)：仓库坐标。
+  * `pullNumber` (数字, 必填)：PR 编号。
 
 ### `review_pr_against_standard`
-根据给定的 SDLC 标准 (`basic` / `strict` / `security-focused`) 对 PR 自动执行审查。
-其中 `security-focused` (注重安全) 模式会主动扫描 Patch 差异中的敏感词（如密钥）、检测 `.env` 泄露、锁文件变更及意外引入的构建产物。
+依据 SDLC 安全级别规范（`basic` / `strict` / `security-focused`）对 PR 修改的代码行执行自动化评审。
+* **输入参数**：
+  * `owner` / `repo` (字符串, 可选)：仓库坐标。
+  * `pullNumber` (数字, 必填)：PR 编号。
+  * `standard` (字符串, 默认 `"basic"`)：执行标准的严格度。
+  * `checkOwnership` (布尔值, 默认 `true`)：检查修改的文件是否通过 `.github/CODEOWNERS` 指定了归属人且已执行审阅。
 
 ### `security_triage`
-收集 Code Scanning, Dependabot 和 Secret Scanning 警报，按严重等级分类，并推荐修复顺序。
+收集并分类过滤目标仓库的 Code Scanning 静态扫描、Dependabot 依赖审计和 Secret Scanning 密钥泄露警报。
+* **输入参数**：
+  * `owner` / `repo` (字符串, 可选)：仓库坐标。
 
 ### `release_readiness_check`
-发布前准备就绪度检查：包含 CI 状态、未修复的 Bug Issues、是否有 CHANGELOG，并生成发版前检查清单和回滚方案模板。
-
-### `agent_handoff_packet`
-生成一份紧凑的工作交接包（Handoff packet），以便下一个智能体（如专门负责 Review 或 Security 的 Agent）能够不丢失上下文地继续工作。
+发布前准备就绪度核查，审计 CI 是否通过、有无未决 Bug、是否有 CHANGELOG 更新，并自动生成回滚方案。
+* **输入参数**：
+  * `owner` / `repo` (字符串, 可选)：仓库坐标。
+  * `headRef` (字符串, 可选)：准备发布的 tag/分支。
 
 ### `branch_protection_status`
-读取分支的经典分支保护规则 (Branch protection) 以及仓库规则集 (Repository rulesets)（默认读取仓库的默认分支）。
-**检测项**：可检测是否安全（如缺失必填的 PR 评审、是否缺失必填的状态检查、是否允许强制推送或删除分支，以及是否强制启用了 CODEOWNERS 评审）。
+读取当前分支的分支保护配置与仓库规则集（Rulesets），分析保护强推、分支删除、合并审核机制是否缺失。
+* **输入参数**：
+  * `owner` / `repo` (字符串, 可选)：仓库坐标。
+  * `branch` (字符串, 可选)：目标分支名称，默认仓库的默认分支。
 
 ### `workflow_permissions_audit`
-扫描 `.github/workflows/*.yml` (及 `.yaml`) 文件中的 `permissions` 声明（包含工作流顶级声明和各个 job 级别的声明），并指出未遵循“最小权限原则”的配置缺陷。
-- `owner` / `repo` (字符串, 可选)：仓库的拥有者与名称。默认回退至 GITHUB_OWNER 和 GITHUB_REPO。
-- `ref` (字符串, 可选)：读取工作流文件所使用的分支、Tag 或 Commit SHA。默认回退至仓库的默认分支。
-
----
-
-## 参考资源 (Resources)
-
-这些是只读的文档资源，便于 Agent 直接获取规范指引：
-
-| URI 资源路径 | 描述说明 |
-|---|---|
-| `sdlc://standards/agentic-sdlc` | 完整的 Agentic SDLC 标准，包含各阶段说明和人类审批节点 |
-| `sdlc://templates/issue` | 标准的 Issue 模板 |
-| `sdlc://templates/pr-summary` | 标准的 PR 摘要模板 |
-| `sdlc://templates/release-readiness` | 发版前检查清单模板 |
-| `sdlc://templates/handoff` | 智能体工作交接模板 |
-
----
-
-## `dryRun` 安全模型
-
 所有的写入类工具都强制集成了 `dryRun` (空跑) 机制：
 
 | `dryRun` 参数值 | 实际效果 |
