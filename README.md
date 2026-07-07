@@ -1,89 +1,119 @@
-# agentic-sdlc-mcp
+<p align="center">
+  <img src="https://raw.githubusercontent.com/modelcontextprotocol/specification/main/assets/mcp-logo.png" alt="MCP Logo" width="100"/>
+</p>
 
-[![CI](https://github.com/SakuraCianna/agentic-sdlc-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/SakuraCianna/agentic-sdlc-mcp/actions/workflows/ci.yml)
+# Agentic SDLC Control Plane (agentic-sdlc-mcp)
 
-An MCP (Model Context Protocol) Server that acts as an **Agentic SDLC Control Plane** — helping AI coding agents plan, create, test, review, secure, and release software following GitHub Agentic AI best practices.
+<p align="center">
+  <b>Expose professional, structured SDLC workflows as MCP tools to guide AI coding agents (Claude, Cursor, etc.) through safe, auditable development lifecycles.</b>
+</p>
 
-- GitHub: [SakuraCianna/agentic-sdlc-mcp](https://github.com/SakuraCianna/agentic-sdlc-mcp)
-- Issues: [github.com/SakuraCianna/agentic-sdlc-mcp/issues](https://github.com/SakuraCianna/agentic-sdlc-mcp/issues)
-
----
-
-## What Is This?
-
-`agentic-sdlc-mcp` is not a simple GitHub API wrapper. It is a **SDLC orchestration layer** that exposes structured, agent-friendly tools aligned to the full software development lifecycle:
-
-```
-Plan -> Create -> Test -> Review -> Optimize -> Secure
-```
-
-**Safety first:** All write operations default to `dryRun: true`. Destructive or irreversible operations are never silently executed.
+<p align="center">
+  <a href="https://www.npmjs.com/package/agentic-sdlc-mcp"><img src="https://img.shields.io/npm/v/agentic-sdlc-mcp.svg?style=flat-square&color=blue" alt="npm version"></a>
+  <a href="https://github.com/SakuraCianna/agentic-sdlc-mcp/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/SakuraCianna/agentic-sdlc-mcp/ci.yml?branch=main&style=flat-square" alt="CI status"></a>
+  <a href="https://www.npmjs.com/package/agentic-sdlc-mcp"><img src="https://img.shields.io/npm/dm/agentic-sdlc-mcp.svg?style=flat-square&color=green" alt="downloads"></a>
+  <a href="https://github.com/SakuraCianna/agentic-sdlc-mcp/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/agentic-sdlc-mcp.svg?style=flat-square&color=orange" alt="license"></a>
+  <a href="https://modelcontextprotocol.io"><img src="https://img.shields.io/badge/MCP-Compatible-blue?style=flat-square" alt="MCP Compatible"></a>
+</p>
 
 ---
 
-## Installation
+## 💡 What Is This?
 
-**Requirements:** Node.js >= 24 (see `engines` in `package.json`; CI runs on Node 24).
+Traditional AI agents write code but often lack the context of software engineering discipline. They might force-push, bypass reviews, fail to run CI, leak secrets, or skip writing test cases.
 
-```powershell
+`agentic-sdlc-mcp` is an **SDLC orchestration layer and control plane** built on the **Model Context Protocol (MCP)**. It wraps GitHub APIs into high-level, opinionated tools that enforce traceability, human-in-the-loop gates, quality thresholds, and security checks for AI coding agents.
+
+### The Agentic SDLC Loop
+```mermaid
+graph TD
+    A[Phase 1: Plan] -->|Exposed context & briefs| B[Phase 2: Create]
+    B -->|Incremental commits| C[Phase 3: Test]
+    C -->|Local test reports| D[Phase 4: Review]
+    D -->|Human review gate| E[Phase 5: Optimize]
+    E -->|Refinement| F[Phase 6: Secure]
+    F -->|Security check | G[Human Release Approval]
+    G -->|Release Tag & deploy| A
+```
+
+---
+
+## 🛠️ Tools Categorization
+
+Instead of exposing raw API endpoints, this server provides **12 specialized tools** structured around the SDLC pipeline:
+
+| Category | Tools | Description |
+|---|---|---|
+| **💡 Planning & Context** | [`repo_context`](#repo_context)<br>[`plan_from_context`](#plan_from_context)<br>[`prepare_work_item`](#prepare_work_item) | Understand the codebase, structure phase-by-phase plans, and generate agent briefs. |
+| **🚀 Execution** | [`create_issue_set`](#create_issue_set) | Batch-create GitHub issues mapping directly to the SDLC plan. |
+| **🔍 Review & Verification** | [`quality_gate_status`](#quality_gate_status)<br>[`create_pr_summary`](#create_pr_summary)<br>[`review_pr_against_standard`](#review_pr_against_standard) | Audit CI checks, generate structured PR summaries, and review code against SDLC standard levels. |
+| **🛡️ Governance & Security** | [`branch_protection_status`](#branch_protection_status)<br>[`workflow_permissions_audit`](#workflow_permissions_audit)<br>[`security_triage`](#security_triage)<br>[`release_readiness_check`](#release_readiness_check) | Query branch rule enforcement, audit Actions workflow permissions, triage vulnerabilities, and perform pre-release checks. |
+| **🤝 Handoff & Continuity** | [`agent_handoff_packet`](#agent_handoff_packet) | Compile a packet so other agents can seamlessly take over the work. |
+
+---
+
+## 🗺️ System Architecture
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Developer as Human Owner
+    participant Agent as AI Coding Agent (Cursor/Claude)
+    participant MCP as agentic-sdlc-mcp (Control Plane)
+    participant GitHub as GitHub API
+    participant npm as npm Registry
+
+    Developer->>Agent: "Create a feature for repo X"
+    Agent->>MCP: Call repo_context / plan_from_context
+    MCP->>GitHub: Fetch repository states & file tree
+    GitHub-->>MCP: Repo Metadata & Files
+    MCP-->>Agent: SDLC Plan & context brief
+    Note over Agent: Agent develops code...
+    Agent->>MCP: Call review_pr_against_standard / quality_gate_status
+    MCP->>GitHub: Audit pull request, CODEOWNERS, & checks status
+    GitHub-->>MCP: PR approvals, CI check status
+    MCP-->>Agent: Verification report & findings
+    Note over Developer,Agent: Human Review Gate: Merge PR
+    Developer->>MCP: Trigger gh release create v1.3.0
+    MCP->>GitHub: Create Release Tag
+    GitHub->>GitHub: Trigger publish.yml Workflow (OIDC)
+    GitHub->>npm: Publish package (Signed with provenance)
+```
+
+---
+
+## ⚡ Quick Start
+
+### 1. Installation
+
+Requires **Node.js >= 24**.
+
+```bash
 # Clone the repository
 git clone https://github.com/SakuraCianna/agentic-sdlc-mcp.git
 cd agentic-sdlc-mcp
 
-# Install dependencies
+# Install dependencies and build
 npm install
-
-# Build
 npm run build
 ```
 
----
+### 2. Configure Environment
 
-## Environment Variables
-
-Copy `.env.example` to `.env` and fill in your values:
-
-```powershell
-Copy-Item .env.example .env
+Copy `.env.example` to `.env` and fill in your details:
+```bash
+cp .env.example .env
 ```
-
-Then edit `.env` — it is loaded automatically by `dotenv` when the server starts.
-
-Alternatively, set variables inline in PowerShell:
-
-```powershell
-$env:GITHUB_TOKEN = "ghp_your_token_here"
-$env:GITHUB_OWNER = "your-org"
-$env:GITHUB_REPO  = "your-repo"
-```
-
-| Variable | Required | Description |
-|---|---|---|
-| `GITHUB_TOKEN` | Yes | GitHub PAT or App token |
-| `GITHUB_OWNER` | Optional | Default owner (org or user) |
-| `GITHUB_REPO` | Optional | Default repository name |
-| `SDLC_DEFAULT_BRANCH` | Optional | Default branch (default: `main`) |
-| `TRANSPORT` | Optional | `stdio` (default) or `http` |
-| `PORT` | Optional | HTTP port (default: `3000`) |
-
-### Required GitHub Token Scopes
-
-| Scope | Purpose |
-|---|---|
-| `repo` | Read/write issues, PRs, file contents, checks (or `public_repo` for public-only repos) |
-| `security_events` | Code Scanning and Dependabot alerts (or `public_repo` for public-only repos) |
-| `repo` or `security_events` | Secret Scanning alerts |
-
-> Verified against GitHub's REST API reference (Dependabot alerts, Code Scanning alerts, Secret Scanning alerts, Checks endpoints) as of this writing. GitHub's scope requirements can change — see the [REST API docs](https://docs.github.com/en/rest) if a tool reports a permission error that doesn't match this table.
+Key configuration values:
+* `GITHUB_TOKEN`: Your GitHub Personal Access Token (PAT) with appropriate scopes.
+* `GITHUB_OWNER` / `GITHUB_REPO`: Default target repository coordinates.
 
 ---
 
-## MCP Client Configuration
+## ⚙️ MCP Client Configuration
 
-### Claude Desktop / Kiro / Cursor
+Add this server to your client settings (`claude_desktop_config.json` or your Cursor settings page):
 
-Add to your MCP client config (`claude_desktop_config.json` or equivalent):
-
+### Claude Desktop / Cursor
 ```json
 {
   "mcpServers": {
@@ -100,247 +130,147 @@ Add to your MCP client config (`claude_desktop_config.json` or equivalent):
 }
 ```
 
-Use forward slashes or escaped backslashes for Windows paths.
-
----
-
-## Running the Server
-
-### stdio mode (default — for MCP clients)
-
-```powershell
-$env:GITHUB_TOKEN = "ghp_your_token"
-node dist/index.js
-```
-
-### HTTP mode (for remote / multi-client use)
-
-```powershell
-$env:TRANSPORT = "http"
-$env:PORT      = "3000"
-$env:GITHUB_TOKEN = "ghp_your_token"
-node dist/index.js
-# Server listens at http://localhost:3000/mcp
-```
-
-### Smoke test (no real token required)
-
-Verifies the module loads cleanly and all tools register without error:
-
-```powershell
-npm run smoke
-# Output: [agentic-sdlc-mcp] SMOKE OK — all tools and resources registered successfully.
+### Windsurf
+```json
+{
+  "mcpServers": {
+    "agentic-sdlc": {
+      "command": "node",
+      "args": ["E:/CodeHome/agentic-sdlc-mcp/dist/index.js"],
+      "env": {
+        "GITHUB_TOKEN": "ghp_your_token",
+        "GITHUB_OWNER": "your-org",
+        "GITHUB_REPO": "your-repo"
+      }
+    }
+  }
+}
 ```
 
 ---
 
-## npm Scripts
+## 📖 Tools Reference
 
-| Script | Description |
-|---|---|
-| `npm run build` | Compile TypeScript to `dist/` |
-| `npm run typecheck` | Type-check without emitting |
-| `npm run test` | Run the Vitest test suite |
-| `npm run test:watch` | Watch mode for TDD |
-| `npm run test:coverage` | Coverage report (lcov + text) |
-| `npm run smoke` | Smoke-test: load + register, no real token needed |
-| `npm run dev` | Watch mode with tsx (development) |
-| `npm start` | Run the compiled server |
-
----
-
-## MCP Inspector (smoke test / exploration)
-
-```powershell
-$env:GITHUB_TOKEN = "ghp_your_token"
-npx @modelcontextprotocol/inspector node dist/index.js
-```
-
----
-
-## Tools Reference
+Detailed specifications of the exposed MCP tools.
 
 ### `repo_context`
-Read repository metadata, README, package.json, open issues, and open PRs.
-Use at the start of every workflow.
-- `issueLimit` / `prLimit` (number, default: `20`, max: `100`): cap how many open issues/PRs are fetched, to avoid token-heavy responses on large repos.
+Reads repository metadata, README, package.json, open issues, and open PRs. Use this at the start of any workflow to orient the agent.
+* **Arguments:**
+  * `owner` (string, optional): GitHub owner.
+  * `repo` (string, optional): GitHub repo.
+  * `issueLimit` / `prLimit` (number, default: `20`, max: `100`): Cap how many issues/PRs are fetched.
 
 ### `plan_from_context`
-Generate a phase-by-phase SDLC plan (Plan→Create→Test→Review→Optimize→Secure).
-Template-based — no LLM call needed.
+Generates a structured, phase-by-phase SDLC plan matching the standard milestones.
+* **Arguments:**
+  * `owner` / `repo` (string, optional): Repo coordinates.
+  * `goal` (string, required): The target feature or fix description.
 
 ### `create_issue_set`
-Batch-create GitHub issues from a plan.
-⚠️ `dryRun` defaults to `true` — pass `dryRun: false` to write to GitHub.
+Batch-creates GitHub issues mapping to the generated plan.
+* **Arguments:**
+  * `owner` / `repo` (string, optional): Repo coordinates.
+  * `issues` (array of objects, required): Structured list of issues to create (title, body, labels).
+  * `dryRun` (boolean, default: `true`): If `true`, previews the list without writing to GitHub.
 
 ### `prepare_work_item`
-Generate an agent-ready brief for a specific issue: goals, non-goals, acceptance criteria, risks, and a handoff prompt.
-- `includeRelatedFiles` (boolean, default: `false`): heuristically extract file paths mentioned in the issue body.
-- `includeRecentPRs` (boolean, default: `false`): scan up to 20 recently-updated closed PRs and return up to 5 merged ones that touched the related file hints (requires `includeRelatedFiles` to have found hints — returns an empty list otherwise). Output field: `recentPRs`.
+Generates an agent-ready brief for a specific issue containing goals, non-goals, and technical risks.
+* **Arguments:**
+  * `owner` / `repo` (string, optional): Repo coordinates.
+  * `issueNumber` (number, required): The target issue ID.
+  * `includeRelatedFiles` (boolean, default: `false`): Heuristically extract mentioned file paths.
+  * `includeRecentPRs` (boolean, default: `false`): Scan up to 5 merged PRs that touched these paths.
 
 ### `quality_gate_status`
-Read check-run results for a PR or git ref.
-Use to verify CI before merging or releasing.
+Audits the check-runs (CI status, build status, linting status) for a given PR or git ref.
+* **Arguments:**
+  * `owner` / `repo` (string, optional): Repo coordinates.
+  * `pullNumber` (number, optional): Query checks by PR number.
+  * `ref` (string, optional): Query checks by branch, tag, or SHA.
 
 ### `create_pr_summary`
-Generate a structured PR summary: change overview, file categories, test coverage signals, risks, review checklist, and release notes draft.
+Generates a structured pull request description and changelog draft.
+* **Arguments:**
+  * `owner` / `repo` (string, optional): Repo coordinates.
+  * `pullNumber` (number, required): The pull request ID.
 
 ### `review_pr_against_standard`
-Review a PR against SDLC standards (`basic` / `strict` / `security-focused`).
-`security-focused` mode scans actual patch lines for secret patterns, `.env` files, lockfile changes, and dist files.
-- `checkOwnership` (boolean, default: `true`): match changed files against `.github/CODEOWNERS` (or `CODEOWNERS` / `docs/CODEOWNERS`) and flag any matched owner who is neither the PR author, a requested reviewer, nor an actual reviewer. No finding is raised if no CODEOWNERS file exists — see the `codeownersFound` output field.
+Reviews pull request code changes against SDLC governance levels (`basic` / `strict` / `security-focused`).
+* **Arguments:**
+  * `owner` / `repo` (string, optional): Repo coordinates.
+  * `pullNumber` (number, required): The pull request ID.
+  * `standard` (string, default: `"basic"`): Standard level.
+  * `checkOwnership` (boolean, default: `true`): Validates file ownership changes against `.github/CODEOWNERS` and flags unassigned reviewers.
 
 ### `security_triage`
-Read Code Scanning, Dependabot, and Secret Scanning alerts, triage by severity, recommend fix order.
+Retrieves and triages Code Scanning, Dependabot, and Secret Scanning alerts.
+* **Arguments:**
+  * `owner` / `repo` (string, optional): Repo coordinates.
 
 ### `release_readiness_check`
-Pre-release assessment: CI status, open bugs, CHANGELOG, release checklist, rollback template.
-
-### `agent_handoff_packet`
-Generate a compact handoff packet so another agent can continue work without losing context.
+Assesses pre-release health (tests, open bugs, changelogs) and generates rollback instructions.
+* **Arguments:**
+  * `owner` / `repo` (string, optional): Repo coordinates.
+  * `headRef` (string, optional): Target release branch/tag.
 
 ### `branch_protection_status`
-Read classic branch protection AND repository rulesets for a branch (defaults to the repo's default branch).
-Flags missing required reviews, missing required status checks, allowed force pushes/deletions, and CODEOWNERS reviews not being enforced.
+Queries classic branch protection and repository rulesets for required reviews, status checks, and push limits.
+* **Arguments:**
+  * `owner` / `repo` (string, optional): Repo coordinates.
+  * `branch` (string, optional): Target branch. Defaults to default branch.
 
 ### `workflow_permissions_audit`
-Scan `.github/workflows/*.yml` (and `.yaml`) for `permissions` declarations (top-level and per-job) and flag least-privilege gaps.
-- `owner` / `repo` (string, optional): Repository coordinates. Falls back to GITHUB_OWNER / GITHUB_REPO.
-- `ref` (string, optional): Branch, tag, or SHA to read workflow files from. Falls back to the repository's default branch.
+Scans `.github/workflows/*.yml` files for `permissions` blocks and flags over-permissioned tokens.
+* **Arguments:**
+  * `owner` / `repo` (string, optional): Repo coordinates.
+  * `ref` (string, optional): Git ref. Defaults to default branch.
+
+### `agent_handoff_packet`
+Compiles current issue context, completed work, and remaining tasks into a compact prompt packet for the next agent.
+* **Arguments:**
+  * `owner` / `repo` (string, optional): Repo coordinates.
+  * `issueNumber` (number, required): Active issue ID.
 
 ---
 
-## Resources
+## 📚 Resources Reference
 
-| URI | Description |
+The server exposes read-only static resources under the `sdlc://` schema for quick agent guidance:
+
+| Resource URI | Description |
 |---|---|
-| `sdlc://standards/agentic-sdlc` | Full Agentic SDLC standard with phases and human gates |
-| `sdlc://templates/issue` | Standard issue template |
-| `sdlc://templates/pr-summary` | Standard PR summary template |
-| `sdlc://templates/release-readiness` | Pre-release checklist template |
-| `sdlc://templates/handoff` | Agent handoff template |
+| `sdlc://standards/agentic-sdlc` | Full Markdown specification of the Agentic SDLC Standard. |
+| `sdlc://templates/issue` | Markdown template for creating structured GitHub issues. |
+| `sdlc://templates/pr-summary` | Markdown template for PR descriptions and changelogs. |
+| `sdlc://templates/release-readiness` | Checklist for pre-release audits. |
+| `sdlc://templates/handoff` | Prompt packet template for agent handoffs. |
 
 ---
 
-## dryRun Safety Model
+## 🔒 Safety Defaults & `dryRun` Model
 
-All write tools implement `dryRun`:
+To prevent AI coding agents from performing destructive or unintended actions on production repositories, this control plane enforces:
 
-| `dryRun` | Effect |
-|---|---|
-| `true` (default) | Preview mode — no GitHub API writes |
-| `false` | Live mode — actually writes to GitHub |
-
-The default is always `dryRun: true`. Agents must explicitly pass `dryRun: false`.
+* **Preview by Default (`dryRun: true`)**: All tools that write data (like `create_issue_set`) run in preview mode by default. Writing requires explicitly passing `dryRun: false`.
+* **Zero Self-Merge Policy**: No tools exist to auto-merge pull requests. Human approval is required on all merge gates.
+* **Access Restraints**: The server does not support force-pushing or deleting branch rules.
+* **CODEOWNERS Enforced Review**: Special paths (such as workflows under `.github/` and core files under `src/`) require owner approvals.
 
 ---
 
-## Workflow Examples
+## 📦 Developer Guide & npm Publishing
 
-### 1. Start a new feature
+### Development Scripts
+* `npm run typecheck`: Runs TypeScript compiler type checking.
+* `npm run build`: Compiles TS files to the `dist/` directory.
+* `npm run test`: Executes the unit test suite (165 test cases).
+* `npm run smoke`: Verifies registration and loading without external credentials.
 
-```
-1. repo_context                  # understand the codebase
-2. plan_from_context (goal=...)  # generate SDLC plan
-3. create_issue_set (dryRun:true) # preview issues
-4. create_issue_set (dryRun:false) # create issues
-5. prepare_work_item (issueNumber=N) # get agent brief
-```
-
-### 2. Review a pull request
-
-```
-1. create_pr_summary (pullNumber=N)             # diff overview
-2. quality_gate_status (pullNumber=N)            # CI check
-3. review_pr_against_standard (standard:strict)  # findings
-```
-
-### 3. Pre-release check
-
-```
-1. security_triage                # check alerts
-2. release_readiness_check        # full readiness
-3. (fix blocking issues)
-4. Human approval before tagging release
-```
+### OIDC Trusted Publishing (For Maintainers)
+This package is securely published to npm via GitHub Actions using **Trusted Publishing (OIDC)**, eliminating the need to store static `NPM_TOKEN` secrets in the repository. Publishing is triggered by creating a GitHub Release or manually running the Action.
 
 ---
 
-## Security
+## 📄 License
 
-- Never commit your `GITHUB_TOKEN` — use `.env` or PowerShell `$env:` variables
-- `dryRun: true` by default prevents accidental writes
-- No auto-merge, no force-push, no branch deletion
-- Secret scanning alerts are always rated `critical`
-- The server does not make outbound requests beyond the GitHub API
-- `.github/CODEOWNERS` routes review of high-risk paths (`.github/`, `src/github/`, `src/tools/`) to the maintainer
-
----
-
-## Development
-
-```powershell
-# Type check
-npm run typecheck
-
-# Watch mode
-npm run dev
-
-# Build
-npm run build
-
-# Test
-npm run test
-
-# Smoke test (no token needed)
-npm run smoke
-```
-
----
-
-## Publishing (Maintainers)
-
-This package is published to npm using **Trusted Publishing (OIDC)** — no long-lived `NPM_TOKEN` secret is stored in the repo. Publishing is handled by `.github/workflows/publish.yml`.
-
-### One-time setup on npmjs.com
-
-1. Sign in to [npmjs.com](https://www.npmjs.com) and open the package's **Settings -> Publishing access**.
-2. Add a **Trusted Publisher** with:
-   - Provider: `GitHub Actions`
-   - Repository: `SakuraCianna/agentic-sdlc-mcp`
-   - Workflow filename: `publish.yml`
-3. Save. From then on, `publish.yml` publishes without any npm token — GitHub issues a short-lived OIDC token that npm exchanges for a publish credential, and provenance is generated automatically.
-
-> First publish only: if the package name doesn't exist on npm yet, Trusted Publisher can't be linked until the package exists. In that case, do one manual `npm publish` from your machine with a classic token first, then configure Trusted Publishing for all subsequent releases. The `publish.yml` workflow itself always uses OIDC — it never falls back to a token.
-
-### Triggering a publish
-
-- **Preferred:** create a GitHub Release (tag it, then "Publish release") — this fires `release: published` and runs `publish.yml` automatically.
-- **Manual:** go to **Actions -> Publish to npm -> Run workflow** (`workflow_dispatch`).
-
-### Pre-publish checklist (run locally before tagging a release)
-
-```powershell
-npm run typecheck
-npm run build
-npm run test
-npm run smoke
-npm run test:coverage
-npm pack --dry-run
-```
-
-`npm pack --dry-run` prints exactly which files would ship in the published tarball, without creating one. Confirm only `dist/`, `README.md`, and `.env.example` are included — test files and `package-lock.json` must NOT appear (enforced by `tsconfig.build.json`, which excludes `src/__tests__/**` from the compiled `dist/` output used for publishing).
-
-### GitHub Actions workflows
-
-| Workflow | Trigger | Purpose |
-|---|---|---|
-| `.github/workflows/ci.yml` | `pull_request`, `push` to `main` | Runs typecheck, build, test, smoke, and coverage on Node 24 |
-| `.github/workflows/publish.yml` | GitHub Release published, or manual dispatch | Publishes to npm via OIDC Trusted Publishing |
-| `.github/dependabot.yml` | Weekly schedule | Opens PRs for npm and GitHub Actions dependency updates (labelled `dependencies`) |
-
----
-
-## License
-
-MIT
+Exposed under the [MIT License](LICENSE).
