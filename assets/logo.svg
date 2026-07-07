@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="120" height="120">
+  <defs>
+    <!-- 渐变定义 -->
+    <linearGradient id="bg-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4f46e5" />
+      <stop offset="100%" stop-color="#06b6d4" />
+    </linearGradient>
+    <!-- 滤镜阴影 -->
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="8" stdDeviation="6" flood-color="#4f46e5" flood-opacity="0.25" />
+    </filter>
+  </defs>
+
+  <!-- 圆形渐变背景带阴影 -->
+  <rect x="10" y="10" width="180" height="180" rx="48" fill="url(#bg-grad)" filter="url(#shadow)" />
+
+  <!-- 抽象的 M 字母，表现为环绕的数据链路和节点 -->
+  <g stroke="#ffffff" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <!-- 数据链路路径 1 (左侧上扬到右侧) -->
+    <path d="M 45,140 L 45,75 C 45,55 70,55 75,75 L 100,120 L 125,75 C 130,55 155,55 155,75 L 155,140" />
+    
+    <!-- 闭环数据流 (下方的循环横向闭环，代表 SDLC Loop) -->
+    <path d="M 50,115 Q 100,85 150,115" stroke-dasharray="1 12" stroke-linecap="round" stroke-width="10" stroke="#a5f3fc" />
+  </g>
+
+  <!-- 科技感连线节点 (发光球) -->
+  <circle cx="45" cy="75" r="7" fill="#ffffff" />
+  <circle cx="100" cy="120" r="7" fill="#ffffff" />
+  <circle cx="155" cy="75" r="7" fill="#ffffff" />
+  <circle cx="45" cy="140" r="7" fill="#a5f3fc" />
+  <circle cx="155" cy="140" r="7" fill="#a5f3fc" />
+
+  <!-- 文字 MCP -->
+  <text x="100" y="165" font-family="'Inter', system-ui, sans-serif" font-weight="900" font-size="20" fill="#ffffff" text-anchor="middle" letter-spacing="3">MCP</text>
+</svg>

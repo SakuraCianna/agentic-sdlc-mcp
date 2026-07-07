@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/modelcontextprotocol/specification/main/assets/mcp-logo.png" alt="MCP Logo" width="100"/>
+  <img src="assets/logo.svg" alt="MCP Logo" width="120"/>
 </p>
 
-# Agentic SDLC Control Plane (agentic-sdlc-mcp)
+<h1 align="center">Agentic SDLC Control Plane (agentic-sdlc-mcp)</h1>
 
 <p align="center">
   <b>将专业、结构化的 SDLC 工作流封装为 MCP 工具，引导 AI 编码智能体（如 Claude、Cursor 等）在安全、可追溯且防失控的研生命周期中进行协作。</b>
