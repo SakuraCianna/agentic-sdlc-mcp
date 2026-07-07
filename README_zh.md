@@ -144,8 +144,25 @@ node dist/index.js
 }
 ```
 
-### 环境变量全局配置 (可选备用)
-如果你的 MCP 客户端不支持在 JSON 配置中直接指定环境变量，你可以在当前系统的 Shell 中设定全局环境变量（Windows 环境下使用 `PowerShell`，macOS/Linux 下使用 `bash`）：
+### 🔑 全局配置与交互式设置 (持久化)
+
+除了在 MCP 客户端配置中直接指定环境变量之外，您也可以使用交互式命令行来全局设置您的 GitHub 访问凭证。配置会自动持久化在您的用户主目录下（`~/.agentic-sdlc-mcp.json`），后续直接运行工具时将自动读取该全局配置。
+
+#### 1. 命令行交互配置
+在终端中直接运行以下命令：
+```bash
+npx agentic-sdlc-mcp configure
+```
+工具将启动引导，提示您输入：
+* `GITHUB_TOKEN` (核心凭证，[点击前往 GitHub 生成](https://github.com/settings/tokens)，需勾选 `repo` 和 `read:org` 权限)
+* `GITHUB_OWNER` (默认所有者，可选)
+* `GITHUB_REPO` (默认仓库名，可选)
+
+#### 2. 自动配置引导 (TTY)
+如果您在终端中直接执行 `npx -y agentic-sdlc-mcp` 启动服务，且当前环境中没有检测到任何 `GITHUB_TOKEN`，工具会自动识别交互式环境并触发上述引导流。如果检测到非交互式环境（如 Claude Desktop 后台静默启动），则会优雅报错并提示配置。
+
+#### 3. 环境变量全局配置 (备用)
+您也可以随时在 Shell 中指定全局环境变量（Windows PowerShell 或 macOS/Linux bash）：
 ```powershell
 # Windows PowerShell
 $env:GITHUB_TOKEN = "ghp_你的_token"

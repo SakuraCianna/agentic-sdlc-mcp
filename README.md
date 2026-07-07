@@ -142,8 +142,25 @@ Add this server configuration to your MCP client setting files (e.g., `claude_de
 }
 ```
 
-### Global Environment Variables (Optional fallback)
-If your client doesn't support setting environment variables directly via config, you can define them in your shell (`PowerShell` for Windows or `bash` for macOS/Linux):
+### 🔑 Global Configuration & Interactive Setup (Persistent)
+
+In addition to specifying environment variables in your MCP client configurations, you can configure your GitHub credentials globally using an interactive terminal questionnaire. The settings will be saved to `~/.agentic-sdlc-mcp.json` under your home directory and automatically loaded in subsequent runs.
+
+#### 1. Configure via CLI
+Run the configuration command:
+```bash
+npx agentic-sdlc-mcp configure
+```
+This guides you through configuring:
+* `GITHUB_TOKEN` (Primary token; [generate classic token here](https://github.com/settings/tokens) with `repo` and `read:org` scopes)
+* `GITHUB_OWNER` (Default repository owner name, optional)
+* `GITHUB_REPO` (Default repository name, optional)
+
+#### 2. Automatic Setup Prompts (TTY)
+If you run `npx -y agentic-sdlc-mcp` directly without a configured `GITHUB_TOKEN`, the tool detects if it is in an interactive environment (TTY) and automatically launches the prompt flow. If it runs non-interactively (e.g. launched by Claude Desktop in the background), it exits gracefully with clear setup instructions.
+
+#### 3. Global Environment Variables (Fallback)
+You can still define environment variables directly in your terminal shell (`PowerShell` for Windows or `bash` for macOS/Linux):
 ```powershell
 # Windows PowerShell
 $env:GITHUB_TOKEN = "ghp_your_token"

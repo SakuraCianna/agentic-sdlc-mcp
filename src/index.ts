@@ -32,7 +32,10 @@ import { registerWorkflowPermissionsAuditTool } from "./tools/workflow-permissio
 import { registerResources } from "./resources/index.js";
 
 // Config (exits early if GITHUB_TOKEN missing — skipped in smoke mode)
-import { config } from "./config.js";
+import { config, initializeConfig } from "./config.js";
+
+// Initialize config (loads global file or asks interactively)
+await initializeConfig();
 
 // ---------------------------------------------------------------------------
 // Server initialisation
@@ -40,7 +43,7 @@ import { config } from "./config.js";
 
 const server = new McpServer({
   name: "agentic-sdlc-mcp",
-  version: "1.3.0",
+  version: "1.3.1",
 });
 
 // Register all tools
