@@ -55,7 +55,7 @@
     "@modelcontextprotocol/sdk": "^1.6.1",
     "@octokit/rest": "^21.0.2",
     "dotenv": "^17.4.2",
-    "express": "^4.21.2",
+    "express": "^5.2.1",
     "yaml": "^2.9.0",
     "zod": "^4.4.3"
   },
