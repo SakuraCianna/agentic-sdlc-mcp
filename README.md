@@ -133,7 +133,7 @@ Add this server configuration to your MCP client setting files (e.g., `claude_de
       "command": "npx",
       "args": ["-y", "agentic-sdlc-mcp"],
       "env": {
-        "GITHUB_TOKEN": "ghp_your_token",
+        "GITHUB_TOKEN": "REPLACE_WITH_GITHUB_TOKEN",
         "GITHUB_OWNER": "your-github-username-or-org",
         "GITHUB_REPO": "your-target-repository"
       }
@@ -163,7 +163,7 @@ If you run `npx -y agentic-sdlc-mcp` directly without a configured `GITHUB_TOKEN
 You can still define environment variables directly in your terminal shell (`PowerShell` for Windows or `bash` for macOS/Linux):
 ```powershell
 # Windows PowerShell
-$env:GITHUB_TOKEN = "ghp_your_token"
+$env:GITHUB_TOKEN = "REPLACE_WITH_GITHUB_TOKEN"
 $env:GITHUB_OWNER = "your-org"
 $env:GITHUB_REPO  = "your-repo"
 ```
