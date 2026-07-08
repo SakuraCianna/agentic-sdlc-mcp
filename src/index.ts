@@ -43,7 +43,7 @@ await initializeConfig();
 
 const server = new McpServer({
   name: "agentic-sdlc-mcp",
-  version: "1.3.1",
+  version: "1.4.0",
 });
 
 // Register all tools

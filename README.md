@@ -121,6 +121,12 @@ node dist/index.js
 
 ---
 
+## ✅ Generic AI Coding Agent Smoke Test
+
+If you need to verify this MCP server in any MCP-capable AI coding agent, follow the client-neutral guide in [`docs/ai-coding-agent-smoke-test.md`](docs/ai-coding-agent-smoke-test.md). It covers the minimum configuration, repository fallback behavior, `repo_context` read-only validation, and `create_issue_set` dry-run preview without creating GitHub issues.
+
+---
+
 ## ⚙️ MCP Client Configuration
 
 Add this server configuration to your MCP client setting files (e.g., `claude_desktop_config.json`, Cursor, or Windsurf settings):
@@ -200,17 +206,28 @@ When preparation is complete and a release is requested:
 Detailed specifications of the exposed MCP tools.
 
 ### `repo_context`
-Reads repository metadata, README, package.json, open issues, and open PRs. Use this at the start of any workflow to orient the agent.
+Reads repository metadata, README, package.json, open issues, and open PRs. Optionally acts as a fuller "repository briefing packet" -- detected package manager, tech stack, common verification scripts, workflow file names, lightweight governance signals, and agent instruction file summaries (e.g. `AGENTS.md`, `CLAUDE.md`). Use this at the start of any workflow to orient the agent.
 * **Arguments:**
   * `owner` (string, optional): GitHub owner.
   * `repo` (string, optional): GitHub repo.
+  * `includeReadme` (boolean, default: `true`): Include a truncated README summary.
+  * `includePackageJson` (boolean, default: `false`): Include package.json summary, detected package manager (npm/pnpm/yarn/bun), tech stack, and common scripts (build/test/typecheck/lint/smoke/...).
+  * `includeWorkflows` (boolean, default: `false`): Include `.github/workflows/*.yml` file names (names only -- use `workflow_permissions_audit` for permission contents).
+  * `includeAgentInstructions` (boolean, default: `false`): Include summaries of agent instruction files found at the repo root (`AGENTS.md`, `CLAUDE.md`).
+  * `includeGovernance` (boolean, default: `false`): Include whether a CODEOWNERS file exists (for full branch protection details, use `branch_protection_status`).
+  * `includeOpenIssues` / `includeOpenPRs` (boolean, default: `false`): Include recent open issues/PRs.
   * `issueLimit` / `prLimit` (number, default: `20`, max: `100`): Cap how many issues/PRs are fetched.
+  * `maxReadmeChars` (number, default: `3000`): Max README characters before truncation.
+  * `maxInstructionChars` (number, default: `1000`): Max characters per agent instruction file summary before truncation.
 
 ### `plan_from_context`
-Generates a structured, phase-by-phase SDLC plan matching the standard milestones.
+Generates a structured, phase-by-phase SDLC plan matching the standard milestones, tailored to a `workType`. Each work type gets a materially different plan -- e.g. `docs` never defaults to requiring code unit tests, `bugfix` always includes repro + regression tests, `security` always includes a threat model and least-privilege review, and `release`/`infra` always include changelog/rollback and workflow-permission checks respectively.
 * **Arguments:**
   * `owner` / `repo` (string, optional): Repo coordinates.
   * `goal` (string, required): The target feature or fix description.
+  * `workType` (string, optional): One of `docs` / `feature` / `bugfix` / `refactor` / `security` / `release` / `infra`. If omitted, it is inferred from `goal` + `acceptanceCriteria` via a conservative keyword heuristic -- the response's `confidence` (`high`/`medium`/`low`) and `needsClarification` fields tell you whether to trust the guess or pass `workType` explicitly.
+  * `constraints` (string[], optional): Technical or business constraints.
+  * `acceptanceCriteria` (string[], optional): Explicit acceptance criteria (also used for workType inference).
 
 ### `create_issue_set`
 Batch-creates GitHub issues mapping to the generated plan.
@@ -309,7 +326,7 @@ To prevent AI coding agents from performing destructive or unintended actions on
 ### Development Scripts
 * `npm run typecheck`: Runs TypeScript compiler type checking.
 * `npm run build`: Compiles TS files to the `dist/` directory.
-* `npm run test`: Executes the unit test suite (165 test cases).
+* `npm run test`: Executes the unit test suite (214 test cases).
 * `npm run smoke`: Verifies registration and loading without external credentials.
 
 ### OIDC Trusted Publishing (For Maintainers)

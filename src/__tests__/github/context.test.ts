@@ -1,9 +1,11 @@
 /**
  * Tests for src/github/context.ts
- * Covers: fetchRepoContext issueLimit/prLimit pass-through, summarizePackageJson
+ * Covers: fetchRepoContext issueLimit/prLimit pass-through, summarizePackageJson,
+ * and the repo_context briefing-packet helpers (packageManager, techStack,
+ * scripts, workflows, governance, agentInstructions).
  */
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../../config.js", () => ({
   config: {
@@ -18,6 +20,8 @@ vi.mock("../../config.js", () => ({
 
 const listForRepo = vi.fn().mockResolvedValue({ data: [] });
 const pullsList = vi.fn().mockResolvedValue({ data: [] });
+const getContent = vi.fn().mockRejectedValue(Object.assign(new Error("Not Found"), { status: 404 }));
+const getReadme = vi.fn().mockRejectedValue(Object.assign(new Error("Not Found"), { status: 404 }));
 
 vi.mock("../../github/client.js", () => ({
   getOctokit: () => ({
@@ -36,15 +40,30 @@ vi.mock("../../github/client.js", () => ({
           pushed_at: "2026-01-01T00:00:00Z",
         },
       }),
+      getContent,
+      getReadme,
     },
     issues: { listForRepo },
     pulls: { list: pullsList },
   }),
 }));
 
-const { fetchRepoContext, summarizePackageJson } = await import("../../github/context.js");
+const {
+  fetchRepoContext,
+  summarizePackageJson,
+  identifyPackageManagerFromField,
+  detectTechStack,
+  extractCommonScripts,
+} = await import("../../github/context.js");
 
 describe("fetchRepoContext", () => {
+  beforeEach(() => {
+    listForRepo.mockClear().mockResolvedValue({ data: [] });
+    pullsList.mockClear().mockResolvedValue({ data: [] });
+    getContent.mockReset().mockRejectedValue(Object.assign(new Error("Not Found"), { status: 404 }));
+    getReadme.mockReset().mockRejectedValue(Object.assign(new Error("Not Found"), { status: 404 }));
+  });
+
   it("uses default per_page of 20 when issueLimit/prLimit are not provided", async () => {
     await fetchRepoContext({
       owner: "test-org",
@@ -87,6 +106,238 @@ describe("fetchRepoContext", () => {
 
     expect(listForRepo).not.toHaveBeenCalled();
     expect(pullsList).not.toHaveBeenCalled();
+  });
+
+  it("degrades gracefully when package.json, workflows, CODEOWNERS, and agent instructions are all missing", async () => {
+    getContent.mockRejectedValue(Object.assign(new Error("Not Found"), { status: 404 }));
+
+    const ctx = await fetchRepoContext({
+      owner: "test-org",
+      repo: "test-repo",
+      includePackageJson: true,
+      includeWorkflows: true,
+      includeGovernance: true,
+      includeAgentInstructions: true,
+    });
+
+    expect(ctx.packageJson).toBeUndefined();
+    expect(ctx.packageManager).toBe("unknown");
+    expect(ctx.techStack).toEqual([]);
+    expect(ctx.scripts).toEqual({});
+    expect(ctx.workflows).toEqual([]);
+    expect(ctx.governance).toEqual({ codeownersFound: false });
+    expect(ctx.agentInstructions).toEqual([]);
+  });
+
+  it("does not populate optional fields when their include flags are off", async () => {
+    const ctx = await fetchRepoContext({ owner: "test-org", repo: "test-repo" });
+
+    expect(ctx.packageManager).toBeUndefined();
+    expect(ctx.techStack).toBeUndefined();
+    expect(ctx.scripts).toBeUndefined();
+    expect(ctx.workflows).toBeUndefined();
+    expect(ctx.governance).toBeUndefined();
+    expect(ctx.agentInstructions).toBeUndefined();
+  });
+
+  it("does not call getContent/getReadme at all when every optional include flag is off (default call path stays cheap)", async () => {
+    await fetchRepoContext({ owner: "test-org", repo: "test-repo" });
+
+    expect(getContent).not.toHaveBeenCalled();
+    expect(getReadme).not.toHaveBeenCalled();
+  });
+
+  it("calls getContent exactly once for governance when includeGovernance is on and CODEOWNERS exists at the first candidate path", async () => {
+    getContent.mockImplementation(async ({ path }: { path: string }) => {
+      if (path === ".github/CODEOWNERS") return { data: "* @someone" };
+      throw Object.assign(new Error("Not Found"), { status: 404 });
+    });
+
+    await fetchRepoContext({ owner: "test-org", repo: "test-repo", includeGovernance: true });
+
+    expect(getContent).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not call getContent for workflows/governance/agentInstructions when their flags are off but includePackageJson is on", async () => {
+    getContent.mockImplementation(async ({ path }: { path: string }) => {
+      if (path === "package.json") {
+        return { data: JSON.stringify({ name: "x", packageManager: "npm@10.0.0" }) };
+      }
+      throw Object.assign(new Error("Not Found"), { status: 404 });
+    });
+
+    await fetchRepoContext({ owner: "test-org", repo: "test-repo", includePackageJson: true });
+
+    // Only package.json should have been fetched -- workflows/CODEOWNERS/agent
+    // instructions must not be probed just because includePackageJson is on.
+    expect(getContent).toHaveBeenCalledTimes(1);
+    expect(getContent).toHaveBeenCalledWith(expect.objectContaining({ path: "package.json" }));
+  });
+
+  it("reads packageManager from the package.json field when present, without probing lock files", async () => {
+    getContent.mockImplementation(async ({ path }: { path: string }) => {
+      if (path === "package.json") {
+        return {
+          data: JSON.stringify({ name: "x", packageManager: "pnpm@9.0.0", scripts: {}, dependencies: {} }),
+        };
+      }
+      throw Object.assign(new Error("Not Found"), { status: 404 });
+    });
+
+    const ctx = await fetchRepoContext({
+      owner: "test-org",
+      repo: "test-repo",
+      includePackageJson: true,
+    });
+
+    expect(ctx.packageManager).toBe("pnpm");
+    // Only package.json should have been fetched -- no lock-file probing needed.
+    expect(getContent).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to lock-file probing when package.json has no packageManager field", async () => {
+    getContent.mockImplementation(async ({ path }: { path: string }) => {
+      if (path === "package.json") {
+        return { data: JSON.stringify({ name: "x", scripts: {}, dependencies: {} }) };
+      }
+      if (path === "pnpm-lock.yaml") {
+        return { data: "lockfileVersion: 6" };
+      }
+      throw Object.assign(new Error("Not Found"), { status: 404 });
+    });
+
+    const ctx = await fetchRepoContext({
+      owner: "test-org",
+      repo: "test-repo",
+      includePackageJson: true,
+    });
+
+    expect(ctx.packageManager).toBe("pnpm");
+  });
+
+  it("lists workflow file names, filtering out non-yaml entries", async () => {
+    getContent.mockImplementation(async ({ path }: { path: string }) => {
+      if (path === ".github/workflows") {
+        return {
+          data: [
+            { type: "file", name: "ci.yml" },
+            { type: "file", name: "publish.yaml" },
+            { type: "file", name: "README.md" },
+            { type: "dir", name: "nested" },
+          ],
+        };
+      }
+      throw Object.assign(new Error("Not Found"), { status: 404 });
+    });
+
+    const ctx = await fetchRepoContext({
+      owner: "test-org",
+      repo: "test-repo",
+      includeWorkflows: true,
+    });
+
+    expect(ctx.workflows).toEqual(["ci.yml", "publish.yaml"]);
+  });
+
+  it("reports codeownersFound true when a CODEOWNERS file exists at a conventional path", async () => {
+    getContent.mockImplementation(async ({ path }: { path: string }) => {
+      if (path === ".github/CODEOWNERS") {
+        return { data: "* @someone" };
+      }
+      throw Object.assign(new Error("Not Found"), { status: 404 });
+    });
+
+    const ctx = await fetchRepoContext({
+      owner: "test-org",
+      repo: "test-repo",
+      includeGovernance: true,
+    });
+
+    expect(ctx.governance).toEqual({ codeownersFound: true });
+  });
+
+  it("fetches and truncates agent instruction file summaries", async () => {
+    getContent.mockImplementation(async ({ path }: { path: string }) => {
+      if (path === "AGENTS.md") {
+        return { data: "x".repeat(50) };
+      }
+      throw Object.assign(new Error("Not Found"), { status: 404 });
+    });
+
+    const ctx = await fetchRepoContext({
+      owner: "test-org",
+      repo: "test-repo",
+      includeAgentInstructions: true,
+      maxInstructionChars: 10,
+    });
+
+    expect(ctx.agentInstructions).toHaveLength(1);
+    expect(ctx.agentInstructions?.[0]?.path).toBe("AGENTS.md");
+    expect(ctx.agentInstructions?.[0]?.summary).toContain("...(truncated)");
+    expect(ctx.agentInstructions?.[0]?.summary.length).toBeLessThan(50);
+  });
+
+  it("respects maxReadmeChars for truncation", async () => {
+    getReadme.mockResolvedValue({ data: "x".repeat(100) });
+
+    const ctx = await fetchRepoContext({
+      owner: "test-org",
+      repo: "test-repo",
+      includeReadme: true,
+      maxReadmeChars: 50,
+    });
+
+    expect(ctx.readme).toContain("...(truncated)");
+    expect(ctx.readme?.length).toBeLessThan(100);
+  });
+});
+
+describe("identifyPackageManagerFromField", () => {
+  it("returns null when packageManager field is absent", () => {
+    expect(identifyPackageManagerFromField({})).toBeNull();
+    expect(identifyPackageManagerFromField(undefined)).toBeNull();
+  });
+
+  it("parses a corepack-style packageManager field", () => {
+    expect(identifyPackageManagerFromField({ packageManager: "npm@10.2.4" })).toBe("npm");
+    expect(identifyPackageManagerFromField({ packageManager: "yarn@4.1.0" })).toBe("yarn");
+  });
+
+  it("returns null for an unrecognised manager name", () => {
+    expect(identifyPackageManagerFromField({ packageManager: "cargo@1.0.0" })).toBeNull();
+  });
+});
+
+describe("detectTechStack", () => {
+  it("returns an empty array when pkg is undefined", () => {
+    expect(detectTechStack(undefined)).toEqual([]);
+  });
+
+  it("detects known technologies from dependencies and devDependencies", () => {
+    const stack = detectTechStack({
+      dependencies: { express: "^5.0.0", zod: "^4.0.0" },
+      devDependencies: { typescript: "^6.0.0", vitest: "^4.0.0" },
+    });
+    expect(stack).toEqual(expect.arrayContaining(["Express", "Zod", "TypeScript", "Vitest"]));
+  });
+
+  it("ignores unrecognised dependency names", () => {
+    const stack = detectTechStack({ dependencies: { "some-random-lib": "^1.0.0" } });
+    expect(stack).toEqual([]);
+  });
+});
+
+describe("extractCommonScripts", () => {
+  it("returns an empty object when scripts is absent", () => {
+    expect(extractCommonScripts({})).toEqual({});
+    expect(extractCommonScripts(undefined)).toEqual({});
+  });
+
+  it("extracts only known common script names", () => {
+    const scripts = extractCommonScripts({
+      scripts: { build: "tsc", test: "vitest run", "custom:thing": "echo hi" },
+    });
+    expect(scripts).toEqual({ build: "tsc", test: "vitest run" });
   });
 });
 
