@@ -121,6 +121,12 @@ node dist/index.js
 
 ---
 
+## ✅ Generic AI Coding Agent Smoke Test
+
+If you need to verify this MCP server in any MCP-capable AI coding agent, follow the client-neutral guide in [`docs/ai-coding-agent-smoke-test.md`](docs/ai-coding-agent-smoke-test.md). It covers the minimum configuration, repository fallback behavior, `repo_context` read-only validation, and `create_issue_set` dry-run preview without creating GitHub issues.
+
+---
+
 ## ⚙️ MCP Client Configuration
 
 Add this server configuration to your MCP client setting files (e.g., `claude_desktop_config.json`, Cursor, or Windsurf settings):
@@ -133,7 +139,7 @@ Add this server configuration to your MCP client setting files (e.g., `claude_de
       "command": "npx",
       "args": ["-y", "agentic-sdlc-mcp"],
       "env": {
-        "GITHUB_TOKEN": "ghp_your_token",
+        "GITHUB_TOKEN": "YOUR_GITHUB_PAT_HERE",
         "GITHUB_OWNER": "your-github-username-or-org",
         "GITHUB_REPO": "your-target-repository"
       }
