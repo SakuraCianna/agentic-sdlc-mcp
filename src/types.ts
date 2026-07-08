@@ -21,6 +21,20 @@ export type SdlcPhase =
   | "optimize"
   | "secure";
 
+/**
+ * Task category recognised by `plan_from_context`. Each type gets a distinct
+ * set of phase tasks — e.g. a `docs` task should not default to requiring
+ * code unit tests, while `bugfix` must always include repro + regression.
+ */
+export type SdlcWorkType =
+  | "docs"
+  | "feature"
+  | "bugfix"
+  | "refactor"
+  | "security"
+  | "release"
+  | "infra";
+
 // ---------------------------------------------------------------------------
 // Tool output shapes
 // ---------------------------------------------------------------------------
