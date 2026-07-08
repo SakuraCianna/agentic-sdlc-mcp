@@ -59,3 +59,9 @@ When adding a new tool, copy this shape (`repo-context.ts` for a read-only examp
 - No auto-merge, no force-push, no branch deletion — the server must never expose a tool that does these, per the security model in the README/SDLC standard resource.
 - Secret-pattern scanning (`review-pr.ts`'s `scanPatchForSecrets`) only matches added (`+`) patch lines with assignment-like patterns (`key\s*[:=]\s*['"...]`), not just keyword mentions — keep new secret patterns similarly conservative to avoid noisy false positives.
 - All Windows-facing docs/comments use PowerShell syntax (`$env:VAR="value"`), not bash `export`.
+
+## Repository governance (this repo, not the MCP server's tool capabilities)
+
+- This repo is currently maintained by a single person (`SakuraCianna`, sole collaborator and CODEOWNER). GitHub does not allow a PR author to approve their own PR, so a "required approving review" branch protection rule cannot structurally be satisfied here — it would only force every merge through an admin-override bypass, which is worse for auditability than not having the rule.
+- As of 2026-07-08, `main`'s branch protection has had `required_pull_request_reviews` removed. It still keeps `required_status_checks` (CI must pass) and `allow_force_pushes: false` / `allow_deletions: false`. Do not re-add a required-review rule unless the user explicitly asks, or unless a second collaborator has been added to the repo — at that point required review should be reconsidered.
+- This is a repo-level GitHub setting, not a product capability change: it does not affect the "no auto-merge / no force-push / no branch deletion" rule above, which is about what the MCP server's *own tools* may do, not how this repo's own PRs get merged.
