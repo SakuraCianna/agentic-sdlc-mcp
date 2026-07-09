@@ -31,6 +31,18 @@ export interface RepoContextOptions extends RepoRef {
 const KNOWN_PACKAGE_MANAGERS = ["npm", "pnpm", "yarn", "bun"] as const;
 export type PackageManager = (typeof KNOWN_PACKAGE_MANAGERS)[number] | "unknown";
 
+const PACKAGE_JSON_PARSE_FAILURE = Symbol("packageJsonParseFailure");
+
+function createPackageJsonParseFailure(raw: string): Record<string, unknown> {
+  const failure: Record<string, unknown> = { _raw: raw };
+  Object.defineProperty(failure, PACKAGE_JSON_PARSE_FAILURE, { value: true });
+  return failure;
+}
+
+function isPackageJsonParseFailure(pkg: Record<string, unknown>): boolean {
+  return Reflect.get(pkg, PACKAGE_JSON_PARSE_FAILURE) === true;
+}
+
 export interface RepoContextResult {
   name: string;
   fullName: string;
@@ -154,15 +166,59 @@ const COMMON_SCRIPT_KEYS = [
   "format",
 ];
 
+/** Maximum command characters retained for one common package script. */
+export const SCRIPT_COMMAND_MAX_CHARS = 300;
+/** Maximum combined command characters retained across all common package scripts. */
+export const COMMON_SCRIPTS_TOTAL_MAX_CHARS = 1_200;
+const SCRIPT_TRUNCATION_MARKER = "...(truncated)";
+
+function boundScriptCommand(command: string, maxChars: number): string {
+  if (command.length <= maxChars) return command;
+  const prefixChars = Math.max(0, maxChars - SCRIPT_TRUNCATION_MARKER.length);
+  return command.slice(0, prefixChars) + SCRIPT_TRUNCATION_MARKER;
+}
+
+function resolveScriptCommandCap(entries: ReadonlyArray<readonly [string, string]>): number {
+  const totalAtPerCommandCap = entries.reduce(
+    (total, [, command]) => total + Math.min(command.length, SCRIPT_COMMAND_MAX_CHARS),
+    0
+  );
+  if (totalAtPerCommandCap <= COMMON_SCRIPTS_TOTAL_MAX_CHARS) {
+    return SCRIPT_COMMAND_MAX_CHARS;
+  }
+
+  let low = SCRIPT_TRUNCATION_MARKER.length;
+  let high = SCRIPT_COMMAND_MAX_CHARS;
+  while (low < high) {
+    const candidate = Math.ceil((low + high) / 2);
+    const totalAtCandidate = entries.reduce(
+      (total, [, command]) => total + Math.min(command.length, candidate),
+      0
+    );
+    if (totalAtCandidate <= COMMON_SCRIPTS_TOTAL_MAX_CHARS) {
+      low = candidate;
+    } else {
+      high = candidate - 1;
+    }
+  }
+  return low;
+}
+
 /** Extract known, commonly-useful scripts from package.json. Pure -- no I/O. */
 export function extractCommonScripts(pkg: Record<string, unknown> | undefined): Record<string, string> {
   const scripts = pkg?.["scripts"];
   if (!scripts || typeof scripts !== "object" || Array.isArray(scripts)) return {};
-  const result: Record<string, string> = {};
-  for (const key of COMMON_SCRIPT_KEYS) {
+
+  const entries = COMMON_SCRIPT_KEYS.flatMap((key) => {
     const value = (scripts as Record<string, unknown>)[key];
-    if (typeof value === "string") result[key] = value;
-  }
+    return typeof value === "string" ? [[key, value] as const] : [];
+  });
+  const commandCap = resolveScriptCommandCap(entries);
+  const result: Record<string, string> = {};
+  entries.forEach(([key, value]) => {
+    result[key] = boundScriptCommand(value, commandCap);
+  });
+
   return result;
 }
 
@@ -308,9 +364,13 @@ export async function fetchRepoContext(
       });
       const raw = typeof fileData === "string" ? fileData : JSON.stringify(fileData);
       try {
-        result.packageJson = JSON.parse(raw) as Record<string, unknown>;
+        const parsed: unknown = JSON.parse(raw);
+        result.packageJson =
+          typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+            ? (parsed as Record<string, unknown>)
+            : createPackageJsonParseFailure(raw);
       } catch {
-        result.packageJson = { _raw: raw };
+        result.packageJson = createPackageJsonParseFailure(raw);
       }
     } catch {
       result.packageJson = undefined;
@@ -385,8 +445,26 @@ export async function fetchRepoContext(
   return result;
 }
 
-/** Summarise a package.json into a concise string for context. */
+/** Hard cap for package.json summaries returned to an agent context. */
+export const PACKAGE_JSON_SUMMARY_MAX_CHARS = 2_000;
+const PACKAGE_JSON_TRUNCATION_MARKER = "\n...(truncated)";
+
+function boundPackageJsonSummary(summary: string): string {
+  if (summary.length <= PACKAGE_JSON_SUMMARY_MAX_CHARS) return summary;
+  return (
+    summary.slice(
+      0,
+      PACKAGE_JSON_SUMMARY_MAX_CHARS - PACKAGE_JSON_TRUNCATION_MARKER.length
+    ) + PACKAGE_JSON_TRUNCATION_MARKER
+  );
+}
+
+/** Summarise a package.json into a concise, bounded string for context. */
 export function summarizePackageJson(pkg: Record<string, unknown>): string {
+  if (isPackageJsonParseFailure(pkg)) {
+    return "(package.json could not be parsed as a JSON object)";
+  }
+
   const lines: string[] = [];
   if (pkg["name"]) lines.push(`name: ${pkg["name"]}`);
   if (pkg["version"]) lines.push(`version: ${pkg["version"]}`);
@@ -404,5 +482,9 @@ export function summarizePackageJson(pkg: Record<string, unknown>): string {
     const keys = Object.keys(devDeps as object).slice(0, 5);
     lines.push(`devDependencies (${Object.keys(devDeps as object).length}): ${keys.join(", ")}${Object.keys(devDeps as object).length > 5 ? "..." : ""}`);
   }
-  return lines.join("\n");
+  const summary =
+    lines.length > 0
+      ? lines.join("\n")
+      : "(package.json contains no standard summary fields)";
+  return boundPackageJsonSummary(summary);
 }
