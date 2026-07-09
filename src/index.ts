@@ -13,6 +13,7 @@ import "dotenv/config";
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { SERVER_INFO } from "./version.js";
 
 // Tools
 import { registerRepoContextTool } from "./tools/repo-context.js";
@@ -41,10 +42,7 @@ await initializeConfig();
 // Server initialisation
 // ---------------------------------------------------------------------------
 
-const server = new McpServer({
-  name: "agentic-sdlc-mcp",
-  version: "1.4.0",
-});
+const server = new McpServer(SERVER_INFO);
 
 // Register all tools
 registerRepoContextTool(server);

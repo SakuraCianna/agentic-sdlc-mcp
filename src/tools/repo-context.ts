@@ -118,6 +118,8 @@ export const RepoContextOutputSchema = {
   openIssuesCount: z.number(),
   topics: z.array(z.string()),
   pushedAt: z.string().nullable(),
+  readmeSummary: z.string().optional(),
+  packageJsonSummary: z.string().optional(),
   packageManager: z.enum(["npm", "pnpm", "yarn", "bun", "unknown"]).optional(),
   techStack: z.array(z.string()).optional(),
   scripts: z.record(z.string(), z.string()).optional(),
@@ -193,10 +195,11 @@ Returns: Markdown summary of the repository context, plus structured content. Mi
           `**Last pushed:** ${ctx.pushedAt ?? "unknown"}`,
         ];
 
-        if (ctx.packageJson) {
-          lines.push("", "## package.json Summary", "```", summarizePackageJson(ctx.packageJson), "```");
-        }
         if (params.includePackageJson) {
+          const packageJsonSummary = ctx.packageJson
+            ? summarizePackageJson(ctx.packageJson)
+            : "(package.json not found or inaccessible)";
+          lines.push("", "## package.json Summary", "```", packageJsonSummary, "```");
           lines.push(
             "",
             "## Build & Runtime",
@@ -276,6 +279,16 @@ Returns: Markdown summary of the repository context, plus structured content. Mi
           openIssuesCount: ctx.openIssuesCount,
           topics: ctx.topics,
           pushedAt: ctx.pushedAt,
+          ...(params.includeReadme
+            ? { readmeSummary: ctx.readme ?? "(README not found or inaccessible)" }
+            : {}),
+          ...(params.includePackageJson
+            ? {
+                packageJsonSummary: ctx.packageJson
+                  ? summarizePackageJson(ctx.packageJson)
+                  : "(package.json not found or inaccessible)",
+              }
+            : {}),
           ...(ctx.packageManager ? { packageManager: ctx.packageManager } : {}),
           ...(ctx.techStack ? { techStack: ctx.techStack } : {}),
           ...(ctx.scripts ? { scripts: ctx.scripts } : {}),

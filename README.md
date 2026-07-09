@@ -207,6 +207,7 @@ Detailed specifications of the exposed MCP tools.
 
 ### `repo_context`
 Reads repository metadata, README, package.json, open issues, and open PRs. Optionally acts as a fuller "repository briefing packet" -- detected package manager, tech stack, common verification scripts, workflow file names, lightweight governance signals, and agent instruction file summaries (e.g. `AGENTS.md`, `CLAUDE.md`). Use this at the start of any workflow to orient the agent.
+When requested, the bounded `readmeSummary` and `packageJsonSummary` values are also returned in `structuredContent`, so agents do not need to recover them from the Markdown response.
 * **Arguments:**
   * `owner` (string, optional): GitHub owner.
   * `repo` (string, optional): GitHub repo.
@@ -222,6 +223,7 @@ Reads repository metadata, README, package.json, open issues, and open PRs. Opti
 
 ### `plan_from_context`
 Generates a structured, phase-by-phase SDLC plan matching the standard milestones, tailored to a `workType`. Each work type gets a materially different plan -- e.g. `docs` never defaults to requiring code unit tests, `bugfix` always includes repro + regression tests, `security` always includes a threat model and least-privilege review, and `release`/`infra` always include changelog/rollback and workflow-permission checks respectively.
+The response includes 3-5 structured `issueDrafts` whose titles, Markdown bodies, confirmed repository labels, SDLC phases, acceptance criteria, risk levels, and source goal can be passed directly to `create_issue_set`.
 * **Arguments:**
   * `owner` / `repo` (string, optional): Repo coordinates.
   * `goal` (string, required): The target feature or fix description.
@@ -230,10 +232,10 @@ Generates a structured, phase-by-phase SDLC plan matching the standard milestone
   * `acceptanceCriteria` (string[], optional): Explicit acceptance criteria (also used for workType inference).
 
 ### `create_issue_set`
-Batch-creates GitHub issues mapping to the generated plan.
+Previews or batch-creates GitHub issues mapping to the generated plan. Dry-run responses include the target repository, final titles, labels, body summaries, and human-review warnings without calling a GitHub write API. Live batches retain successful issue numbers and URLs while reporting safe per-item failure reasons, so one rejected issue does not hide earlier successes or stop later attempts.
 * **Arguments:**
   * `owner` / `repo` (string, optional): Repo coordinates.
-  * `issues` (array of objects, required): Structured list of issues to create (title, body, labels).
+  * `issues` (array of objects, required): Structured list of issues to create (title, body, labels, and optional assignees). Accepts `plan_from_context.issueDrafts` directly.
   * `dryRun` (boolean, default: `true`): If `true`, previews the list without writing to GitHub.
 
 ### `prepare_work_item`
@@ -315,6 +317,7 @@ The server exposes read-only static resources under the `sdlc://` schema for qui
 To prevent AI coding agents from performing destructive or unintended actions on production repositories, this control plane enforces:
 
 * **Preview by Default (`dryRun: true`)**: All tools that write data (like `create_issue_set`) run in preview mode by default. Writing requires explicitly passing `dryRun: false`.
+* **Reviewable Batch Results**: Issue previews expose the exact target repository and warnings before a write. Live batches preserve both successful results and safe failure details instead of concealing partial completion.
 * **Zero Self-Merge Policy**: No tools exist to auto-merge pull requests. Human approval is required on all merge gates.
 * **Access Restraints**: The server does not support force-pushing or deleting branch rules.
 * **CODEOWNERS Enforced Review**: Special paths (such as workflows under `.github/` and core files under `src/`) require owner approvals.
@@ -326,7 +329,7 @@ To prevent AI coding agents from performing destructive or unintended actions on
 ### Development Scripts
 * `npm run typecheck`: Runs TypeScript compiler type checking.
 * `npm run build`: Compiles TS files to the `dist/` directory.
-* `npm run test`: Executes the unit test suite (214 test cases).
+* `npm run test`: Executes the full unit test suite.
 * `npm run smoke`: Verifies registration and loading without external credentials.
 
 ### OIDC Trusted Publishing (For Maintainers)

@@ -16,9 +16,10 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { resolveRepo, handleGitHubError } from "../github/client.js";
+import { resolveRepo, getOctokit, paginateAll, handleGitHubError } from "../github/client.js";
 import { fetchRepoContext } from "../github/context.js";
-import type { SdlcPlanPhase, SdlcWorkType } from "../types.js";
+import type { SdlcPlanPhase, SdlcPhase, SdlcWorkType, IssueDraft, IssueRiskLevel, RepoRef } from "../types.js";
+import type { Octokit } from "@octokit/rest";
 
 // ---------------------------------------------------------------------------
 // Schema
@@ -50,6 +51,16 @@ export type PlanFromContextInput = z.infer<typeof PlanFromContextInputSchema>;
 // Output schema
 // ---------------------------------------------------------------------------
 
+const IssueDraftShape = z.object({
+  title: z.string(),
+  body: z.string(),
+  labels: z.array(z.string()),
+  phase: z.string(),
+  acceptanceCriteria: z.array(z.string()),
+  riskLevel: z.enum(["low", "medium", "high"]),
+  goal: z.string(),
+});
+
 export const PlanFromContextOutputSchema = {
   goal: z.string(),
   repo: z.string(),
@@ -69,6 +80,7 @@ export const PlanFromContextOutputSchema = {
     })
   ),
   suggestedIssues: z.array(z.string()),
+  issueDrafts: z.array(IssueDraftShape),
   risks: z.array(z.string()),
 };
 
@@ -89,6 +101,7 @@ export interface PlanFromContextResult {
   acceptanceCriteria: string[];
   phases: SdlcPlanPhase[];
   suggestedIssues: string[];
+  issueDrafts: IssueDraft[];
   risks: string[];
 }
 
@@ -140,8 +153,14 @@ const WORK_TYPE_KEYWORDS: Record<Exclude<SdlcWorkType, "feature">, string[]> = {
     "vulnerable",
     "vulnerability",
     "vulnerabilities",
-    "secret",
     "secrets",
+    "secret leak",
+    "secret leakage",
+    "leaked secret",
+    "exposed secret",
+    "hardcoded secret",
+    "credential",
+    "credentials",
     "permission",
     "permissions",
     "audit",
@@ -587,59 +606,208 @@ const PHASE_TEMPLATES_BY_WORK_TYPE: Record<SdlcWorkType, PhaseTaskMap> = {
   },
 };
 
+/** Capitalise a single lower-case word (all SdlcPhase/bracket-tag values are single words). */
+function capitalize(word: string): string {
+  return word.charAt(0).toUpperCase() + word.slice(1);
+}
+
+const GITHUB_ISSUE_TITLE_MAX_CHARS = 256;
+const ISSUE_TITLE_TRUNCATION_MARKER = "...(truncated)";
+
+function boundIssueTitle(title: string): string {
+  if (title.length <= GITHUB_ISSUE_TITLE_MAX_CHARS) return title;
+
+  const prefixChars =
+    GITHUB_ISSUE_TITLE_MAX_CHARS - ISSUE_TITLE_TRUNCATION_MARKER.length;
+  let prefix = title.slice(0, prefixChars);
+  const finalCodeUnit = prefix.charCodeAt(prefix.length - 1);
+  if (finalCodeUnit >= 0xd800 && finalCodeUnit <= 0xdbff) {
+    prefix = prefix.slice(0, -1);
+  }
+  return prefix + ISSUE_TITLE_TRUNCATION_MARKER;
+}
+
+function buildIssueTitle(spec: IssueSpec, goal: string): string {
+  return boundIssueTitle(`[${capitalize(spec.phase)}] ${spec.action(goal)}`);
+}
+
+/**
+ * One entry per issue draft this workType produces. Deliberately a curated
+ * subset of the 6 SDLC phases (3-5 items, matching the ROADMAP's examples)
+ * rather than one issue per phase -- an "Optimize" issue is rarely worth a
+ * standalone GitHub issue. `suggestedIssues` and `issueDrafts` are both
+ * derived from this single table so the two can never drift apart.
+ */
+interface IssueSpec {
+  phase: SdlcPhase;
+  /** The action phrase after the "[Phase] " bracket tag, e.g. "Implement: {goal}". */
+  action: (goal: string) => string;
+  riskLevel: IssueRiskLevel;
+}
+
+const ISSUE_SPECS_BY_WORK_TYPE: Record<SdlcWorkType, IssueSpec[]> = {
+  feature: [
+    { phase: "plan", action: (g) => `Define acceptance criteria and technical approach for: ${g}`, riskLevel: "low" },
+    { phase: "create", action: (g) => `Implement: ${g}`, riskLevel: "medium" },
+    { phase: "test", action: (g) => `Add tests for: ${g}`, riskLevel: "low" },
+    { phase: "secure", action: (g) => `Security review for: ${g}`, riskLevel: "medium" },
+  ],
+  docs: [
+    { phase: "plan", action: (g) => `Identify documentation gaps and audience for: ${g}`, riskLevel: "low" },
+    { phase: "create", action: (g) => `Write/update documentation for: ${g}`, riskLevel: "low" },
+    { phase: "test", action: (g) => `Verify examples and links for: ${g}`, riskLevel: "low" },
+    { phase: "review", action: (g) => `Proofread and confirm no sensitive info leaked for: ${g}`, riskLevel: "medium" },
+  ],
+  bugfix: [
+    { phase: "plan", action: (g) => `Reproduce and identify root cause for: ${g}`, riskLevel: "medium" },
+    { phase: "create", action: (g) => `Implement minimal fix for: ${g}`, riskLevel: "medium" },
+    { phase: "test", action: (g) => `Add regression test for: ${g}`, riskLevel: "low" },
+    { phase: "review", action: (g) => `Explain root cause and fix in the PR for: ${g}`, riskLevel: "low" },
+  ],
+  refactor: [
+    { phase: "plan", action: (g) => `Confirm existing test coverage before refactor: ${g}`, riskLevel: "medium" },
+    { phase: "create", action: (g) => `Refactor incrementally with no behaviour change: ${g}`, riskLevel: "medium" },
+    { phase: "test", action: (g) => `Confirm full suite passes after each commit: ${g}`, riskLevel: "low" },
+    { phase: "review", action: (g) => `Explain refactor rationale and API impact: ${g}`, riskLevel: "medium" },
+  ],
+  security: [
+    { phase: "plan", action: (g) => `Define threat model for: ${g}`, riskLevel: "high" },
+    { phase: "create", action: (g) => `Implement least-privilege fix for: ${g}`, riskLevel: "high" },
+    { phase: "test", action: (g) => `Add attack-scenario tests for: ${g}`, riskLevel: "high" },
+    { phase: "secure", action: (g) => `Security review and re-audit for: ${g}`, riskLevel: "high" },
+  ],
+  release: [
+    { phase: "plan", action: (g) => `Confirm release scope and breaking changes for: ${g}`, riskLevel: "medium" },
+    { phase: "create", action: (g) => `Update CHANGELOG and bump version for: ${g}`, riskLevel: "medium" },
+    { phase: "test", action: (g) => `Confirm CI green and smoke test for: ${g}`, riskLevel: "medium" },
+    { phase: "secure", action: (g) => `Run security triage before tagging: ${g}`, riskLevel: "high" },
+  ],
+  infra: [
+    { phase: "plan", action: (g) => `Identify affected workflows/permissions for: ${g}`, riskLevel: "medium" },
+    { phase: "create", action: (g) => `Implement least-privilege infra change for: ${g}`, riskLevel: "high" },
+    { phase: "test", action: (g) => `Test workflow on a branch before merge for: ${g}`, riskLevel: "medium" },
+    { phase: "review", action: (g) => `Run workflow_permissions_audit for: ${g}`, riskLevel: "high" },
+  ],
+};
+
+/**
+ * Candidate labels per workType -- conservative, generic names likely to
+ * exist on many repos (GitHub's own default label set covers docs/feature/
+ * bugfix; the rest are common but not universal conventions). These are
+ * never applied blindly: `buildIssueDrafts` intersects them against the
+ * target repo's *actual* labels, so a repo without a "security" label never
+ * gets one invented for it -- GitHub silently auto-creates unknown labels
+ * when an issue is created with them, which would otherwise pollute the
+ * repo's label list on a live (non-dry-run) `create_issue_set` call.
+ */
+const CANDIDATE_LABELS_BY_WORK_TYPE: Record<SdlcWorkType, string[]> = {
+  docs: ["documentation"],
+  feature: ["enhancement"],
+  bugfix: ["bug"],
+  refactor: ["enhancement"],
+  security: ["security"],
+  release: ["release"],
+  infra: ["infrastructure"],
+};
+
 /** Per-workType suggested issue titles. The `feature` case matches the pre-workType default wording. */
 function buildSuggestedIssues(goal: string, workType: SdlcWorkType): string[] {
-  switch (workType) {
-    case "docs":
-      return [
-        `[Plan] Identify documentation gaps and audience for: ${goal}`,
-        `[Create] Write/update documentation for: ${goal}`,
-        `[Test] Verify examples and links for: ${goal}`,
-        `[Review] Proofread and confirm no sensitive info leaked for: ${goal}`,
-      ];
-    case "bugfix":
-      return [
-        `[Plan] Reproduce and identify root cause for: ${goal}`,
-        `[Create] Implement minimal fix for: ${goal}`,
-        `[Test] Add regression test for: ${goal}`,
-        `[Review] Explain root cause and fix in the PR for: ${goal}`,
-      ];
-    case "refactor":
-      return [
-        `[Plan] Confirm existing test coverage before refactor: ${goal}`,
-        `[Create] Refactor incrementally with no behaviour change: ${goal}`,
-        `[Test] Confirm full suite passes after each commit: ${goal}`,
-        `[Review] Explain refactor rationale and API impact: ${goal}`,
-      ];
-    case "security":
-      return [
-        `[Plan] Define threat model for: ${goal}`,
-        `[Create] Implement least-privilege fix for: ${goal}`,
-        `[Test] Add attack-scenario tests for: ${goal}`,
-        `[Secure] Security review and re-audit for: ${goal}`,
-      ];
-    case "release":
-      return [
-        `[Plan] Confirm release scope and breaking changes for: ${goal}`,
-        `[Create] Update CHANGELOG and bump version for: ${goal}`,
-        `[Test] Confirm CI green and smoke test for: ${goal}`,
-        `[Secure] Run security triage before tagging: ${goal}`,
-      ];
-    case "infra":
-      return [
-        `[Plan] Identify affected workflows/permissions for: ${goal}`,
-        `[Create] Implement least-privilege infra change for: ${goal}`,
-        `[Test] Test workflow on a branch before merge for: ${goal}`,
-        `[Review] Run workflow_permissions_audit for: ${goal}`,
-      ];
-    case "feature":
-    default:
-      return [
-        `[Plan] Define acceptance criteria and technical approach for: ${goal}`,
-        `[Create] Implement: ${goal}`,
-        `[Test] Add tests for: ${goal}`,
-        `[Secure] Security review for: ${goal}`,
-      ];
+  const specs = ISSUE_SPECS_BY_WORK_TYPE[workType] ?? ISSUE_SPECS_BY_WORK_TYPE.feature;
+  return specs.map((spec) => buildIssueTitle(spec, goal));
+}
+
+/**
+ * Build the body for a single issue draft: background (reusing the phase's
+ * own summary), a merged acceptance-criteria checklist (phase tasks plus
+ * caller-provided criteria), and a pointer to the full Definition of Done
+ * template rather than repeating all 7 of its sections in every draft.
+ */
+function buildIssueDraftBody(
+  phaseData: SdlcPlanPhase,
+  acceptanceCriteria: string[]
+): string {
+  return [
+    "### Background",
+    phaseData.summary,
+    "",
+    "### Acceptance Criteria",
+    ...acceptanceCriteria.map((criterion) => `- [ ] ${criterion}`),
+    "",
+    "### Definition of Done",
+    "See `sdlc://templates/issue` for the full checklist this issue should satisfy before closing.",
+  ].join("\n");
+}
+
+/**
+ * Build structured issue drafts directly usable as `create_issue_set`'s
+ * `issues` input (the planning metadata is accepted but not sent to GitHub).
+ * One draft per `ISSUE_SPECS_BY_WORK_TYPE[workType]` entry --
+ * titles are identical to `buildSuggestedIssues`' output, in the same order,
+ * since both are derived from the same table.
+ */
+export function buildIssueDrafts(
+  goal: string,
+  workType: SdlcWorkType,
+  plan: SdlcPlanPhase[],
+  repoLabelNames: string[],
+  userAcceptanceCriteria: string[] = []
+): IssueDraft[] {
+  const specs = ISSUE_SPECS_BY_WORK_TYPE[workType] ?? ISSUE_SPECS_BY_WORK_TYPE.feature;
+  const candidateLabels = CANDIDATE_LABELS_BY_WORK_TYPE[workType] ?? [];
+  const repoLabelsByNormalizedName = new Map(
+    repoLabelNames.map((label) => [label.toLowerCase(), label])
+  );
+  const confirmedLabels = candidateLabels.flatMap((label) => {
+    const repositoryLabel = repoLabelsByNormalizedName.get(label.toLowerCase());
+    return repositoryLabel ? [repositoryLabel] : [];
+  });
+
+  return specs.map((spec) => {
+    const phaseData = plan.find((p) => p.phase === spec.phase);
+    const tasks = phaseData?.tasks ?? [];
+    const acceptanceCriteria = Array.from(
+      new Set([...tasks, ...userAcceptanceCriteria])
+    );
+    return {
+      title: buildIssueTitle(spec, goal),
+      body: phaseData
+        ? buildIssueDraftBody(phaseData, acceptanceCriteria)
+        : [
+            "### Background",
+            `${capitalize(spec.phase)} phase for: ${goal}`,
+            "",
+            "### Acceptance Criteria",
+            ...acceptanceCriteria.map((criterion) => `- [ ] ${criterion}`),
+          ].join("\n"),
+      labels: confirmedLabels,
+      phase: spec.phase,
+      acceptanceCriteria,
+      riskLevel: spec.riskLevel,
+      goal,
+    };
+  });
+}
+
+/**
+ * Fetch a repo's actual label names (paginated, capped at 200 -- repos
+ * rarely define anywhere near that many). Degrades to `[]` on any error
+ * (missing scope, repo with issues disabled, rate limit, etc.) rather than
+ * failing the whole plan: an issue draft with no labels is always valid,
+ * an invented label that doesn't exist yet is not.
+ */
+async function fetchRepoLabelNames(ref: RepoRef): Promise<string[]> {
+  try {
+    const octokit = getOctokit();
+    const labels = await paginateAll(
+      (page, perPage) =>
+        octokit.issues
+          .listLabelsForRepo({ owner: ref.owner, repo: ref.repo, per_page: perPage, page })
+          .then((r) => r.data),
+      200
+    );
+    return labels.map((l) => l.name);
+  } catch {
+    return [];
   }
 }
 
@@ -656,7 +824,7 @@ export function buildPlan(
   const template = PHASE_TEMPLATES_BY_WORK_TYPE[workType] ?? PHASE_TEMPLATES_BY_WORK_TYPE.feature;
   return (Object.keys(template) as Array<keyof PhaseTaskMap>).map((phase) => ({
     phase,
-    summary: `${phase.charAt(0).toUpperCase() + phase.slice(1)} phase for: ${goal} (${repoName})`,
+    summary: `${capitalize(phase)} phase for: ${goal} (${repoName})`,
     tasks: template[phase].tasks,
   }));
 }
@@ -667,7 +835,8 @@ export function buildPlan(
 
 export async function handlePlanFromContext(
   params: PlanFromContextInput,
-  fetchContext: typeof fetchRepoContext
+  fetchContext: typeof fetchRepoContext,
+  fetchLabels: (ref: RepoRef) => Promise<string[]> = fetchRepoLabelNames
 ): Promise<{ text: string; structured: PlanFromContextResult }> {
   const constraints = params.constraints ?? [];
   const acceptance = params.acceptanceCriteria ?? [];
@@ -678,6 +847,23 @@ export async function handlePlanFromContext(
   const inference = inferWorkType(params.goal, acceptance, params.workType);
   const plan = buildPlan(params.goal, ctx.fullName, inference.workType);
   const suggestedIssues = buildSuggestedIssues(params.goal, inference.workType);
+
+  let repoLabelNames: string[] = [];
+  try {
+    repoLabelNames = await fetchLabels(ref);
+  } catch {
+    // Belt-and-braces: fetchRepoLabelNames already catches internally, but a
+    // caller-supplied `fetchLabels` (e.g. in tests) might not -- either way,
+    // "no confirmed labels" is always a safe fallback.
+    repoLabelNames = [];
+  }
+  const issueDrafts = buildIssueDrafts(
+    params.goal,
+    inference.workType,
+    plan,
+    repoLabelNames,
+    acceptance
+  );
 
   const risks = [
     "Unknown scope may expand during implementation",
@@ -698,6 +884,7 @@ export async function handlePlanFromContext(
     acceptanceCriteria: acceptance,
     phases: plan,
     suggestedIssues,
+    issueDrafts,
     risks,
   };
 
@@ -733,12 +920,7 @@ export async function handlePlanFromContext(
 
   lines.push("", "## Phase-by-Phase Plan");
   for (const phase of plan) {
-    lines.push(
-      "",
-      `### ${phase.phase.charAt(0).toUpperCase() + phase.phase.slice(1)}`,
-      `*${phase.summary}*`,
-      ""
-    );
+    lines.push("", `### ${capitalize(phase.phase)}`, `*${phase.summary}*`, "");
     phase.tasks.forEach((t) => lines.push(`- [ ] ${t}`));
   }
 
@@ -748,6 +930,18 @@ export async function handlePlanFromContext(
     "",
     "Use `create_issue_set` with these suggested issues:",
     ...suggestedIssues.map((s) => `- ${s}`),
+    "",
+    "## Issue Drafts (ready for create_issue_set)",
+    "",
+    `${issueDrafts.length} structured draft(s) available in this response's \`issueDrafts\` field -- ` +
+      "each has a full body, labels (only ones confirmed to already exist in this repo), phase, " +
+      "acceptanceCriteria, and riskLevel. Pass `issueDrafts` directly as `create_issue_set`'s `issues` " +
+      "input (dryRun defaults to true, so preview before creating anything real):",
+    "",
+    ...issueDrafts.map(
+      (d) =>
+        `- **${d.title}** (risk: ${d.riskLevel}, labels: ${d.labels.length > 0 ? d.labels.join(", ") : "none confirmed in this repo"})`
+    ),
     "",
     "## Risks",
     ...risks.map((r) => `- ${r}`),
@@ -772,7 +966,7 @@ export function registerPlanFromContextTool(server: McpServer): void {
       title: "Generate SDLC Plan from Context",
       description: `Generate a structured Agentic SDLC plan (Plan->Create->Test->Review->Optimize->Secure) from a goal and repo context. The plan is tailored to a \`workType\` (docs/feature/bugfix/refactor/security/release/infra) -- e.g. docs tasks do not default to requiring code unit tests, while bugfix tasks always include repro + regression tests.
 
-Template-based -- no LLM call needed. Reads basic repo metadata to enrich the plan.
+Template-based -- no LLM call needed. Reads basic repo metadata (and the repo's actual label list, to avoid inventing labels that don't exist) to enrich the plan.
 
 Args:
   - goal (string): The user's goal or feature description (required).
@@ -781,7 +975,7 @@ Args:
   - constraints (string[]?): Technical or business constraints.
   - acceptanceCriteria (string[]?): Explicit acceptance criteria.
 
-Returns: Phase-by-phase SDLC plan tailored to the (inferred or explicit) work type, plus structured output including workType/confidence/reasoning/needsClarification.`,
+Returns: Phase-by-phase SDLC plan tailored to the (inferred or explicit) work type, plus structured output including workType/confidence/reasoning/needsClarification, and \`issueDrafts\` -- structured issue drafts (title/body/labels/phase/acceptanceCriteria/riskLevel) directly usable as \`create_issue_set\`'s \`issues\` input.`,
       inputSchema: PlanFromContextInputSchema,
       outputSchema: PlanFromContextOutputSchema,
       annotations: {

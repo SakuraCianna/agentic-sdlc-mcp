@@ -97,6 +97,28 @@ export interface SdlcPlanPhase {
   tasks: string[];
 }
 
+/** Coarse triage signal for an issue draft -- not a per-line diff analysis (that's review_pr_against_standard's job), just a category-level heuristic useful for release/readiness or review sorting. */
+export type IssueRiskLevel = "low" | "medium" | "high";
+
+/**
+ * A structured issue draft produced by `plan_from_context`. Shaped so it can
+ * be passed directly as an entry in `create_issue_set`'s `issues` input --
+ * that tool's input schema explicitly accepts the planning metadata fields
+ * (`phase`/`acceptanceCriteria`/`riskLevel`/`goal`), while its handler only
+ * sends the GitHub issue fields (`title`/`body`/`labels`/`assignees`).
+ */
+export interface IssueDraft {
+  title: string;
+  body: string;
+  /** Only labels confirmed to already exist in the target repo (see plan-from-context.ts) -- never invented, to avoid GitHub silently auto-creating unknown labels on real issue creation. */
+  labels: string[];
+  phase: SdlcPhase;
+  acceptanceCriteria: string[];
+  riskLevel: IssueRiskLevel;
+  /** Traceability anchor back to the plan this draft came from. plan_from_context is stateless (no persisted plan ID), so the goal string is the anchor. */
+  goal: string;
+}
+
 export interface HandoffPacket {
   repoContext: string;
   currentStatus: string;

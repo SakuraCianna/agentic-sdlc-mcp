@@ -290,6 +290,44 @@ describe("fetchRepoContext", () => {
     expect(ctx.readme).toContain("...(truncated)");
     expect(ctx.readme?.length).toBeLessThan(100);
   });
+
+  it("degrades gracefully when package.json contains invalid JSON", async () => {
+    getContent.mockImplementation(async ({ path }: { path: string }) => {
+      if (path === "package.json") return { data: "{ invalid json" };
+      throw Object.assign(new Error("Not Found"), { status: 404 });
+    });
+
+    const ctx = await fetchRepoContext({
+      owner: "test-org",
+      repo: "test-repo",
+      includePackageJson: true,
+    });
+
+    expect(ctx.packageJson).toEqual({ _raw: "{ invalid json" });
+    expect(summarizePackageJson(ctx.packageJson!)).toMatch(/could not be parsed/i);
+    expect(ctx.techStack).toEqual([]);
+    expect(ctx.scripts).toEqual({});
+  });
+
+  it.each(["null", "\"text\"", "42", "true", "[]"])(
+    "degrades gracefully when package.json is valid JSON but not an object: %s",
+    async (raw) => {
+      getContent.mockImplementation(async ({ path }: { path: string }) => {
+        if (path === "package.json") return { data: raw };
+        throw Object.assign(new Error("Not Found"), { status: 404 });
+      });
+
+      const ctx = await fetchRepoContext({
+        owner: "test-org",
+        repo: "test-repo",
+        includePackageJson: true,
+      });
+
+      expect(summarizePackageJson(ctx.packageJson!)).toMatch(/could not be parsed as a JSON object/i);
+      expect(ctx.techStack).toEqual([]);
+      expect(ctx.scripts).toEqual({});
+    }
+  );
 });
 
 describe("identifyPackageManagerFromField", () => {
@@ -339,6 +377,60 @@ describe("extractCommonScripts", () => {
     });
     expect(scripts).toEqual({ build: "tsc", test: "vitest run" });
   });
+
+  it("bounds an oversized script command and marks truncation", () => {
+    const scripts = extractCommonScripts({
+      scripts: { build: `node -e "${"x".repeat(50_000)}"` },
+    });
+
+    expect(scripts.build.length).toBeLessThanOrEqual(300);
+    expect(scripts.build).toContain("...(truncated)");
+  });
+
+  it("keeps all returned script commands within the total character budget", () => {
+    const scripts = extractCommonScripts({
+      scripts: {
+        build: "b".repeat(50_000),
+        dev: "d".repeat(50_000),
+        start: "s".repeat(50_000),
+        test: "t".repeat(50_000),
+        "test:watch": "w".repeat(50_000),
+        "test:coverage": "c".repeat(50_000),
+        typecheck: "y".repeat(50_000),
+        lint: "l".repeat(50_000),
+        smoke: "m".repeat(50_000),
+        format: "f".repeat(50_000),
+      },
+    });
+
+    const totalCommandChars = Object.values(scripts).reduce(
+      (total, command) => total + command.length,
+      0
+    );
+    expect(totalCommandChars).toBeLessThanOrEqual(1_200);
+    expect(Object.values(scripts).every((command) => command.includes("...(truncated)"))).toBe(true);
+  });
+
+  it("does not truncate normal commands when their combined size is within budget", () => {
+    const buildCommand = "b".repeat(200);
+    const scripts = extractCommonScripts({
+      scripts: {
+        build: buildCommand,
+        dev: "d",
+        start: "s",
+        test: "t",
+        "test:watch": "w",
+        "test:coverage": "c",
+        typecheck: "y",
+        lint: "l",
+        smoke: "m",
+        format: "f",
+      },
+    });
+
+    expect(scripts.build).toBe(buildCommand);
+    expect(Object.values(scripts).some((command) => command.includes("...(truncated)"))).toBe(false);
+  });
 });
 
 describe("summarizePackageJson", () => {
@@ -352,5 +444,30 @@ describe("summarizePackageJson", () => {
     expect(summary).toContain("name: test-repo");
     expect(summary).toContain("version: 1.0.0");
     expect(summary).toContain("dependencies (2): a, b");
+  });
+
+  it("does not mistake a valid string-valued _raw field for a parse failure", () => {
+    const summary = summarizePackageJson({
+      name: "valid-package",
+      version: "1.0.0",
+      _raw: "legitimate package metadata",
+    });
+
+    expect(summary).toContain("name: valid-package");
+    expect(summary).toContain("version: 1.0.0");
+    expect(summary).not.toMatch(/could not be parsed/i);
+  });
+
+  it("bounds summaries with oversized fields and marks truncation", () => {
+    const summary = summarizePackageJson({
+      name: "large-package",
+      version: "1.0.0",
+      description: "x".repeat(50_000),
+      main: "dist/index.js",
+    });
+
+    expect(summary.length).toBeLessThanOrEqual(2_000);
+    expect(summary).toContain("name: large-package");
+    expect(summary).toContain("...(truncated)");
   });
 });

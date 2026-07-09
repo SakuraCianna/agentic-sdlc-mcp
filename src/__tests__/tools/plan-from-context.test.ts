@@ -18,8 +18,9 @@ vi.mock("../../config.js", () => ({
   isSmokeMode: false,
 }));
 
-const { buildPlan, inferWorkType, handlePlanFromContext } =
+const { buildPlan, inferWorkType, buildIssueDrafts, handlePlanFromContext } =
   await import("../../tools/plan-from-context.js");
+const { CreateIssueSetInputSchema } = await import("../../tools/create-issue-set.js");
 
 import type { PlanFromContextInput } from "../../tools/plan-from-context.js";
 
@@ -99,6 +100,46 @@ describe("buildPlan", () => {
     const plan = buildPlan("Simplify config loader", "org/repo", "refactor");
     const planPhase = plan.find((p) => p.phase === "plan")!;
     expect(planPhase.tasks.some((t) => /existing tests/i.test(t))).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildIssueDrafts (pure helper)
+// ---------------------------------------------------------------------------
+
+describe("buildIssueDrafts", () => {
+  it("produces one draft per issue spec, with title matching '[Phase] action'", () => {
+    const plan = buildPlan("Add dark mode", "org/repo", "feature");
+    const drafts = buildIssueDrafts("Add dark mode", "feature", plan, []);
+
+    expect(drafts.length).toBeGreaterThanOrEqual(3);
+    for (const d of drafts) {
+      expect(d.title).toMatch(/^\[[A-Z][a-z]+\] /);
+    }
+  });
+
+  it("filters candidate labels down to only those present in repoLabelNames", () => {
+    const plan = buildPlan("Fix crash", "org/repo", "bugfix");
+
+    const withLabel = buildIssueDrafts("Fix crash", "bugfix", plan, ["bug", "documentation"]);
+    for (const d of withLabel) expect(d.labels).toEqual(["bug"]);
+
+    const withoutLabel = buildIssueDrafts("Fix crash", "bugfix", plan, ["documentation"]);
+    for (const d of withoutLabel) expect(d.labels).toEqual([]);
+  });
+
+  it("falls back to a minimal body when the plan has no matching phase entry", () => {
+    const drafts = buildIssueDrafts("Some goal", "feature", [], []);
+    for (const d of drafts) {
+      expect(d.body).toContain("### Background");
+      expect(d.acceptanceCriteria).toEqual([]);
+    }
+  });
+
+  it("carries the goal through to every draft for traceability", () => {
+    const plan = buildPlan("Improve caching", "org/repo", "infra");
+    const drafts = buildIssueDrafts("Improve caching", "infra", plan, []);
+    for (const d of drafts) expect(d.goal).toBe("Improve caching");
   });
 });
 
@@ -187,6 +228,12 @@ describe("inferWorkType", () => {
       expect(result.needsClarification).toBe(true);
     });
 
+    it("does not classify a Secret Santa feature as security work", () => {
+      const result = inferWorkType("Add a Secret Santa organizer", []);
+      expect(result.workType).toBe("feature");
+      expect(result.needsClarification).toBe(true);
+    });
+
     it("still infers bugfix for genuine 'fix'/'fixes' usage", () => {
       expect(inferWorkType("Fix crash when saving with no network", []).workType).toBe("bugfix");
       expect(inferWorkType("This PR fixes the broken login flow", []).workType).toBe("bugfix");
@@ -227,6 +274,12 @@ describe("handlePlanFromContext", () => {
     pushedAt: "2026-01-01T00:00:00Z",
   });
 
+  // Always pass an explicit fetchLabels mock -- the real default
+  // (fetchRepoLabelNames) calls the live GitHub API via getOctokit(), which
+  // must never happen in a unit test. Most tests don't care about labels, so
+  // a small conservative default label set is fine unless a test overrides it.
+  const mockFetchLabels = vi.fn().mockResolvedValue(["bug", "documentation", "enhancement"]);
+
   it("returns structured output with all phases", async () => {
     const params: PlanFromContextInput = {
       goal: "Add dark mode support",
@@ -234,7 +287,7 @@ describe("handlePlanFromContext", () => {
       repo: "myrepo",
     };
 
-    const { structured } = await handlePlanFromContext(params, mockFetch);
+    const { structured } = await handlePlanFromContext(params, mockFetch, mockFetchLabels);
 
     expect(structured.goal).toBe("Add dark mode support");
     expect(structured.repo).toBe("myorg/myrepo");
@@ -252,7 +305,7 @@ describe("handlePlanFromContext", () => {
       acceptanceCriteria: ["all tests pass", "migration is reversible"],
     };
 
-    const { structured } = await handlePlanFromContext(params, mockFetch);
+    const { structured } = await handlePlanFromContext(params, mockFetch, mockFetchLabels);
 
     expect(structured.constraints).toEqual(["must not break existing API"]);
     expect(structured.acceptanceCriteria).toEqual([
@@ -268,7 +321,7 @@ describe("handlePlanFromContext", () => {
       repo: "myrepo",
     };
 
-    const { text } = await handlePlanFromContext(params, mockFetch);
+    const { text } = await handlePlanFromContext(params, mockFetch, mockFetchLabels);
 
     expect(text).toContain("Build webhook integration");
     expect(text).toContain("SDLC Plan");
@@ -282,7 +335,7 @@ describe("handlePlanFromContext", () => {
       repo: "myrepo",
     };
 
-    const { text } = await handlePlanFromContext(params, mockFetch);
+    const { text } = await handlePlanFromContext(params, mockFetch, mockFetchLabels);
 
     expect(text).toContain("create_issue_set");
     expect(text).toContain("[Plan]");
@@ -297,7 +350,7 @@ describe("handlePlanFromContext", () => {
       workType: "security",
     };
 
-    const { structured } = await handlePlanFromContext(params, mockFetch);
+    const { structured } = await handlePlanFromContext(params, mockFetch, mockFetchLabels);
 
     expect(structured.workType).toBe("security");
     expect(structured.confidence).toBe("high");
@@ -312,7 +365,7 @@ describe("handlePlanFromContext", () => {
       acceptanceCriteria: ["Includes env var explanation", "Includes repo_context example"],
     };
 
-    const { structured, text } = await handlePlanFromContext(params, mockFetch);
+    const { structured, text } = await handlePlanFromContext(params, mockFetch, mockFetchLabels);
 
     expect(structured.workType).toBe("docs");
     const createPhase = structured.phases.find((p) => p.phase === "create")!;
@@ -327,7 +380,7 @@ describe("handlePlanFromContext", () => {
       repo: "myrepo",
     };
 
-    const { structured } = await handlePlanFromContext(params, mockFetch);
+    const { structured } = await handlePlanFromContext(params, mockFetch, mockFetchLabels);
 
     expect(structured.workType).toBe("bugfix");
     const planPhase = structured.phases.find((p) => p.phase === "plan")!;
@@ -341,7 +394,7 @@ describe("handlePlanFromContext", () => {
       repo: "myrepo",
     };
 
-    const { structured } = await handlePlanFromContext(params, mockFetch);
+    const { structured } = await handlePlanFromContext(params, mockFetch, mockFetchLabels);
 
     expect(structured.workType).toBe("security");
     const securePhase = structured.phases.find((p) => p.phase === "secure")!;
@@ -355,9 +408,247 @@ describe("handlePlanFromContext", () => {
       repo: "myrepo",
     };
 
-    const { structured, text } = await handlePlanFromContext(params, mockFetch);
+    const { structured, text } = await handlePlanFromContext(params, mockFetch, mockFetchLabels);
 
     expect(structured.needsClarification).toBe(true);
     expect(text).toContain("NEEDS CLARIFICATION");
+  });
+
+  // -------------------------------------------------------------------------
+  // issueDrafts (v1.5: Plan -> Issue creation closure)
+  // -------------------------------------------------------------------------
+
+  describe("issueDrafts", () => {
+    it("returns issueDrafts directly usable as create_issue_set's issues input, for docs/feature/bugfix/security", async () => {
+      const workTypes: Array<"docs" | "feature" | "bugfix" | "security"> = [
+        "docs",
+        "feature",
+        "bugfix",
+        "security",
+      ];
+      for (const workType of workTypes) {
+        const params: PlanFromContextInput = {
+          goal: "Add dark mode support",
+          owner: "myorg",
+          repo: "myrepo",
+          workType,
+        };
+
+        const { structured } = await handlePlanFromContext(params, mockFetch, mockFetchLabels);
+        const createInput = CreateIssueSetInputSchema.parse({ issues: structured.issueDrafts });
+
+        expect(structured.issueDrafts.length).toBeGreaterThanOrEqual(3);
+        expect(structured.issueDrafts.length).toBeLessThanOrEqual(5);
+        for (const draft of structured.issueDrafts) {
+          expect(draft.title).toContain("Add dark mode support");
+          expect(draft.body).toContain("### Background");
+          expect(draft.body).toContain("### Acceptance Criteria");
+          expect(Array.isArray(draft.labels)).toBe(true);
+          expect(draft.acceptanceCriteria.length).toBeGreaterThan(0);
+          expect(["low", "medium", "high"]).toContain(draft.riskLevel);
+          expect(draft.goal).toBe("Add dark mode support");
+        }
+        expect(createInput.issues).toHaveLength(structured.issueDrafts.length);
+        expect(createInput.issues[0]).toEqual(structured.issueDrafts[0]);
+        expect(createInput.dryRun).toBe(true);
+      }
+    });
+
+    it("suggestedIssues and issueDrafts titles are identical and in the same order", async () => {
+      const params: PlanFromContextInput = {
+        goal: "Add rate limiting",
+        owner: "myorg",
+        repo: "myrepo",
+        workType: "feature",
+      };
+
+      const { structured } = await handlePlanFromContext(params, mockFetch, mockFetchLabels);
+
+      expect(structured.issueDrafts.map((d) => d.title)).toEqual(structured.suggestedIssues);
+      expect(structured.suggestedIssues).toEqual([
+        "[Plan] Define acceptance criteria and technical approach for: Add rate limiting",
+        "[Create] Implement: Add rate limiting",
+        "[Test] Add tests for: Add rate limiting",
+        "[Secure] Security review for: Add rate limiting",
+      ]);
+      expect(structured.suggestedIssues.every((title) => !title.includes("...(truncated)"))).toBe(
+        true
+      );
+    });
+
+    it("bounds every generated title for a long Unicode goal while preserving traceability", async () => {
+      const longGoal = "修复国际化缓存边界".repeat(40);
+      const workTypes = [
+        "docs",
+        "feature",
+        "bugfix",
+        "refactor",
+        "security",
+        "release",
+        "infra",
+      ] as const;
+
+      for (const workType of workTypes) {
+        const { structured } = await handlePlanFromContext(
+          {
+            goal: longGoal,
+            owner: "myorg",
+            repo: "myrepo",
+            workType,
+          },
+          mockFetch,
+          mockFetchLabels
+        );
+
+        expect(structured.issueDrafts.map((draft) => draft.title)).toEqual(
+          structured.suggestedIssues
+        );
+        for (const title of structured.suggestedIssues) {
+          expect(title.length).toBeLessThanOrEqual(256);
+          expect(title).toContain("修复国际化缓存边界");
+          expect(title).toContain("...(truncated)");
+          expect(title.trim()).not.toBe("");
+        }
+        expect(() =>
+          CreateIssueSetInputSchema.parse({ issues: structured.issueDrafts })
+        ).not.toThrow();
+      }
+    });
+
+    it("only includes labels that were confirmed to exist in the target repo", async () => {
+      const params: PlanFromContextInput = {
+        goal: "Fix login crash",
+        owner: "myorg",
+        repo: "myrepo",
+        workType: "bugfix",
+      };
+
+      // Repo has "documentation" but not "bug" -- bugfix drafts should get no labels.
+      const noLabelsFetch = vi.fn().mockResolvedValue(["documentation"]);
+      const { structured } = await handlePlanFromContext(params, mockFetch, noLabelsFetch);
+
+      for (const draft of structured.issueDrafts) {
+        expect(draft.labels).toEqual([]);
+      }
+    });
+
+    it("includes a candidate label when it is confirmed to exist in the target repo", async () => {
+      const params: PlanFromContextInput = {
+        goal: "Fix login crash",
+        owner: "myorg",
+        repo: "myrepo",
+        workType: "bugfix",
+      };
+
+      const withBugLabel = vi.fn().mockResolvedValue(["bug", "documentation"]);
+      const { structured } = await handlePlanFromContext(params, mockFetch, withBugLabel);
+
+      for (const draft of structured.issueDrafts) {
+        expect(draft.labels).toEqual(["bug"]);
+      }
+    });
+
+    it("matches repository labels case-insensitively and preserves their actual spelling", async () => {
+      const params: PlanFromContextInput = {
+        goal: "Fix login crash",
+        owner: "myorg",
+        repo: "myrepo",
+        workType: "bugfix",
+      };
+
+      const withCasedBugLabel = vi.fn().mockResolvedValue(["Bug", "Documentation"]);
+      const { structured } = await handlePlanFromContext(params, mockFetch, withCasedBugLabel);
+
+      for (const draft of structured.issueDrafts) {
+        expect(draft.labels).toEqual(["Bug"]);
+      }
+    });
+
+    it("degrades to empty labels (not an error) when the label fetch throws", async () => {
+      const params: PlanFromContextInput = {
+        goal: "Fix login crash",
+        owner: "myorg",
+        repo: "myrepo",
+        workType: "bugfix",
+      };
+
+      const throwingFetch = vi.fn().mockRejectedValue(new Error("rate limited"));
+      const { structured } = await handlePlanFromContext(params, mockFetch, throwingFetch);
+
+      expect(structured.issueDrafts.length).toBeGreaterThan(0);
+      for (const draft of structured.issueDrafts) {
+        expect(draft.labels).toEqual([]);
+      }
+    });
+
+    it("acceptanceCriteria in each draft matches that phase's tasks in the plan", async () => {
+      const params: PlanFromContextInput = {
+        goal: "Add rate limiting",
+        owner: "myorg",
+        repo: "myrepo",
+        workType: "feature",
+      };
+
+      const { structured } = await handlePlanFromContext(params, mockFetch, mockFetchLabels);
+
+      for (const draft of structured.issueDrafts) {
+        const phaseData = structured.phases.find((p) => p.phase === draft.phase)!;
+        expect(draft.acceptanceCriteria).toEqual(phaseData.tasks);
+      }
+    });
+
+    it("preserves caller-provided acceptance criteria in every directly creatable draft", async () => {
+      const params: PlanFromContextInput = {
+        goal: "Add rate limiting",
+        owner: "myorg",
+        repo: "myrepo",
+        workType: "feature",
+        acceptanceCriteria: [
+          "Reject requests above 100 per minute",
+          "Return a Retry-After header",
+        ],
+      };
+
+      const { structured } = await handlePlanFromContext(params, mockFetch, mockFetchLabels);
+
+      for (const draft of structured.issueDrafts) {
+        expect(draft.acceptanceCriteria).toEqual(
+          expect.arrayContaining(params.acceptanceCriteria!)
+        );
+        expect(draft.body).toContain("Reject requests above 100 per minute");
+        expect(draft.body).toContain("Return a Retry-After header");
+      }
+    });
+
+    it("security issueDrafts are all high risk", async () => {
+      const params: PlanFromContextInput = {
+        goal: "Audit workflow permissions",
+        owner: "myorg",
+        repo: "myrepo",
+        workType: "security",
+      };
+
+      const { structured } = await handlePlanFromContext(params, mockFetch, mockFetchLabels);
+
+      for (const draft of structured.issueDrafts) {
+        expect(draft.riskLevel).toBe("high");
+      }
+      const combinedBodies = structured.issueDrafts.map((draft) => draft.body).join("\n");
+      expect(combinedBodies).toMatch(/permission|least-privilege/i);
+      expect(combinedBodies).toMatch(/attack scenario|negative test|unauthorized/i);
+    });
+
+    it("includes issueDrafts summary in the markdown output", async () => {
+      const params: PlanFromContextInput = {
+        goal: "Add rate limiting",
+        owner: "myorg",
+        repo: "myrepo",
+      };
+
+      const { text } = await handlePlanFromContext(params, mockFetch, mockFetchLabels);
+
+      expect(text).toContain("Issue Drafts (ready for create_issue_set)");
+      expect(text).toContain("issueDrafts");
+    });
   });
 });
