@@ -26,7 +26,7 @@ describe("npm publish workflow", () => {
     const setupNode = steps.find((step) => step.uses === "actions/setup-node@v6");
     const installIndex = steps.findIndex((step) => step.run === "npm ci");
     const checksIndex = steps.findIndex((step) => step.run === "npm run prepublishOnly");
-    const upgradeIndex = steps.findIndex((step) => step.run === "npm install -g npm@latest");
+    const upgradeIndex = steps.findIndex((step) => step.run === "npm install -g npm@11.11.0");
     const publishIndex = steps.findIndex((step) => step.run === "npm publish --access public");
 
     expect(setupNode?.with?.["registry-url"]).toBe("https://registry.npmjs.org");
