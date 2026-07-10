@@ -161,14 +161,20 @@ export function findOwnershipGaps(
 /** Fetch CODEOWNERS from GitHub's conventional candidate paths in priority order. */
 export async function fetchCodeownersRules(
   ref: RepoRef,
-  octokit: Octokit
+  octokit: Octokit,
+  gitRef?: string
 ): Promise<{ rules: CodeownersRule[]; error: string | null }> {
   const candidatePaths = [".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS"];
   let lastError: string | null = null;
 
   for (const path of candidatePaths) {
     try {
-      const { data } = await octokit.repos.getContent({ owner: ref.owner, repo: ref.repo, path });
+      const { data } = await octokit.repos.getContent({
+        owner: ref.owner,
+        repo: ref.repo,
+        path,
+        ...(gitRef === undefined ? {} : { ref: gitRef }),
+      });
       if (!Array.isArray(data) && data.type === "file" && data.content) {
         const content = Buffer.from(data.content, "base64").toString("utf-8");
         return { rules: parseCodeowners(content), error: null };

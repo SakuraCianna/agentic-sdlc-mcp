@@ -135,6 +135,29 @@ describe("fetchCodeownersRules", () => {
     });
   });
 
+  it("reads every CODEOWNERS candidate from an explicit git ref when provided", async () => {
+    const octokit = makeContentOctokit({});
+    await fetchCodeownersRules(ref, octokit, "base-sha");
+    expect(octokit.repos.getContent).toHaveBeenNthCalledWith(1, {
+      owner: "test-org",
+      repo: "test-repo",
+      path: ".github/CODEOWNERS",
+      ref: "base-sha",
+    });
+    expect(octokit.repos.getContent).toHaveBeenNthCalledWith(2, {
+      owner: "test-org",
+      repo: "test-repo",
+      path: "CODEOWNERS",
+      ref: "base-sha",
+    });
+    expect(octokit.repos.getContent).toHaveBeenNthCalledWith(3, {
+      owner: "test-org",
+      repo: "test-repo",
+      path: "docs/CODEOWNERS",
+      ref: "base-sha",
+    });
+  });
+
   it("falls back to root CODEOWNERS when .github/CODEOWNERS is missing", async () => {
     const octokit = makeContentOctokit({ CODEOWNERS: { content: "* @root-owner\n" } });
     await expect(fetchCodeownersRules(ref, octokit)).resolves.toEqual({
