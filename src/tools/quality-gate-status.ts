@@ -127,8 +127,14 @@ const QualityGateEvidenceShape = z.object({
       classicEnabled: z.boolean(),
       rulesetRuleTypes: z.array(z.string()),
       pullRequestRuleRequirements: z.object({
+        allowedMergeMethods: z.array(z.string()).nullable(),
+        lockBranch: z.boolean(),
+        requiredConversationResolution: z.boolean(),
+        requiredLinearHistory: z.boolean(),
         requiredReviewThreadResolution: z.boolean(),
         requiredReviewersConfigured: z.boolean(),
+        requiredSignatures: z.boolean(),
+        strictRequiredStatusChecksPolicy: z.boolean(),
       }),
     })
     .nullable(),
@@ -444,6 +450,26 @@ function mergePolicyState(evidence: PullRequestEvidence): {
   }
   if (pullRequestRequirements?.requiredReviewersConfigured) {
     unmodeledRules.push("pull_request.required_reviewers");
+  }
+  if (Array.isArray(pullRequestRequirements?.allowedMergeMethods)) {
+    unmodeledRules.push("pull_request.allowed_merge_methods");
+  }
+  if (pullRequestRequirements?.strictRequiredStatusChecksPolicy) {
+    unmodeledRules.push(
+      "required_status_checks.strict_required_status_checks_policy"
+    );
+  }
+  if (pullRequestRequirements?.requiredConversationResolution) {
+    unmodeledRules.push("branch_protection.required_conversation_resolution");
+  }
+  if (pullRequestRequirements?.requiredSignatures) {
+    unmodeledRules.push("branch_protection.required_signatures");
+  }
+  if (pullRequestRequirements?.requiredLinearHistory) {
+    unmodeledRules.push("branch_protection.required_linear_history");
+  }
+  if (pullRequestRequirements?.lockBranch) {
+    unmodeledRules.push("branch_protection.lock_branch");
   }
 
   return {

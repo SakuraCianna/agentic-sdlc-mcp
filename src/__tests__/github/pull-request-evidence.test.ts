@@ -300,10 +300,21 @@ describe("collectPullRequestEvidence", () => {
         getBranchProtection: vi.fn().mockResolvedValue({
           data: {
             required_pull_request_reviews: {
+              dismiss_stale_reviews: true,
               required_approving_review_count: 2,
               require_code_owner_reviews: true,
+              require_last_push_approval: true,
             },
+            required_conversation_resolution: { enabled: true },
+            required_signatures: { enabled: true },
+            required_linear_history: { enabled: true },
+            lock_branch: { enabled: true },
+            allow_force_pushes: { enabled: true },
+            allow_deletions: { enabled: true },
+            block_creations: { enabled: true },
+            allow_fork_syncing: { enabled: true },
             required_status_checks: {
+              strict: true,
               contexts: ["test", "lint", "legacy"],
               checks: [
                 { context: "test", app_id: 15368 },
@@ -317,6 +328,7 @@ describe("collectPullRequestEvidence", () => {
             {
               type: "pull_request",
               parameters: {
+                allowed_merge_methods: ["merge"],
                 dismiss_stale_reviews_on_push: true,
                 require_code_owner_review: false,
                 require_last_push_approval: true,
@@ -338,7 +350,7 @@ describe("collectPullRequestEvidence", () => {
                   { context: "build", integration_id: 4242 },
                   { context: "portable" },
                 ],
-                strict_required_status_checks_policy: false,
+                strict_required_status_checks_policy: true,
               },
             },
           ],
@@ -358,12 +370,89 @@ describe("collectPullRequestEvidence", () => {
         { context: "portable", appId: null },
       ],
       pullRequestRuleRequirements: {
+        allowedMergeMethods: ["merge"],
+        lockBranch: true,
+        requiredConversationResolution: true,
+        requiredLinearHistory: true,
         requiredReviewThreadResolution: true,
         requiredReviewersConfigured: true,
+        requiredSignatures: true,
+        strictRequiredStatusChecksPolicy: true,
       },
     });
     expect(evidence.reviews.requiredApprovals).toBe(2);
     expect(evidence.reviews.requireCodeOwnerReviews).toBe(true);
+  });
+
+  it.each([
+    {
+      name: "classic strict protection",
+      protection: {
+        required_status_checks: {
+          strict: true,
+          contexts: ["build"],
+          checks: [{ context: "build", app_id: null }],
+        },
+      },
+      rules: [],
+      expected: true,
+    },
+    {
+      name: "ruleset strict protection",
+      protection: {
+        required_status_checks: {
+          strict: false,
+          contexts: ["build"],
+          checks: [{ context: "build", app_id: null }],
+        },
+      },
+      rules: [
+        {
+          type: "required_status_checks",
+          parameters: {
+            required_status_checks: [{ context: "build" }],
+            strict_required_status_checks_policy: true,
+          },
+        },
+      ],
+      expected: true,
+    },
+    {
+      name: "non-strict protection",
+      protection: {
+        required_status_checks: {
+          strict: false,
+          contexts: ["build"],
+          checks: [{ context: "build", app_id: null }],
+        },
+      },
+      rules: [
+        {
+          type: "required_status_checks",
+          parameters: {
+            required_status_checks: [{ context: "build" }],
+            strict_required_status_checks_policy: false,
+          },
+        },
+      ],
+      expected: false,
+    },
+  ])("collects $name independently", async ({ protection, rules, expected }) => {
+    const evidence = await collectPullRequestEvidence(
+      { pullNumber: 42 },
+      ref,
+      makeOctokit({
+        repos: {
+          getBranchProtection: vi.fn().mockResolvedValue({ data: protection }),
+          getBranchRules: vi.fn().mockResolvedValue({ data: rules }),
+        },
+      })
+    );
+
+    expect(
+      evidence.branchProtection.pullRequestRuleRequirements
+        .strictRequiredStatusChecksPolicy
+    ).toBe(expected);
   });
 
   it("keeps 300 applied rules but marks branch rules truncated when a 301st exists", async () => {

@@ -26,9 +26,15 @@ export interface RequiredStatusCheck {
 
 export interface PullRequestRuleRequirements {
   // Approval freshness and last-push approval are represented by reviewDecision.
-  // These requirements need evidence that this collector does not currently fetch.
+  // The fields below need merge evidence that this collector does not currently fetch.
+  allowedMergeMethods: string[] | null;
+  lockBranch: boolean;
+  requiredConversationResolution: boolean;
+  requiredLinearHistory: boolean;
   requiredReviewThreadResolution: boolean;
   requiredReviewersConfigured: boolean;
+  requiredSignatures: boolean;
+  strictRequiredStatusChecksPolicy: boolean;
 }
 
 export interface SignalBuckets {
@@ -453,9 +459,48 @@ interface ClassicProtectionValue {
   requireCodeOwnerReviews: boolean | null;
   requiredStatusContexts: string[];
   requiredStatusChecks: RequiredStatusCheck[];
+  pullRequestRuleRequirements: PullRequestRuleRequirements;
+}
+
+function emptyPullRequestRuleRequirements(): PullRequestRuleRequirements {
+  return {
+    allowedMergeMethods: null,
+    lockBranch: false,
+    requiredConversationResolution: false,
+    requiredLinearHistory: false,
+    requiredReviewThreadResolution: false,
+    requiredReviewersConfigured: false,
+    requiredSignatures: false,
+    strictRequiredStatusChecksPolicy: false,
+  };
+}
+
+function combinePullRequestRuleRequirements(
+  classic: PullRequestRuleRequirements,
+  rules: PullRequestRuleRequirements
+): PullRequestRuleRequirements {
+  return {
+    allowedMergeMethods: rules.allowedMergeMethods,
+    lockBranch: classic.lockBranch || rules.lockBranch,
+    requiredConversationResolution:
+      classic.requiredConversationResolution || rules.requiredConversationResolution,
+    requiredLinearHistory:
+      classic.requiredLinearHistory || rules.requiredLinearHistory,
+    requiredReviewThreadResolution:
+      classic.requiredReviewThreadResolution || rules.requiredReviewThreadResolution,
+    requiredReviewersConfigured:
+      classic.requiredReviewersConfigured || rules.requiredReviewersConfigured,
+    requiredSignatures: classic.requiredSignatures || rules.requiredSignatures,
+    strictRequiredStatusChecksPolicy:
+      classic.strictRequiredStatusChecksPolicy ||
+      rules.strictRequiredStatusChecksPolicy,
+  };
 }
 
 function classicProtectionValue(protection: BranchProtection): ClassicProtectionValue {
+  // Actor restrictions/enforce_admins do not describe revision state. Likewise,
+  // force-push/deletion/fork-sync allowances and block_creations do not add a
+  // merge condition for an existing pull request, so they are intentionally omitted.
   const configuredChecks = protection.required_status_checks?.checks ?? [];
   const checkedContexts = new Set(
     configuredChecks.map((check) => check.context.toLocaleLowerCase())
@@ -477,6 +522,16 @@ function classicProtectionValue(protection: BranchProtection): ClassicProtection
       protection.required_pull_request_reviews?.require_code_owner_reviews ?? null,
     requiredStatusContexts: requiredStatusChecks.map((check) => check.context),
     requiredStatusChecks,
+    pullRequestRuleRequirements: {
+      ...emptyPullRequestRuleRequirements(),
+      lockBranch: protection.lock_branch?.enabled === true,
+      requiredConversationResolution:
+        protection.required_conversation_resolution?.enabled === true,
+      requiredLinearHistory: protection.required_linear_history?.enabled === true,
+      requiredSignatures: protection.required_signatures?.enabled === true,
+      strictRequiredStatusChecksPolicy:
+        protection.required_status_checks?.strict === true,
+    },
   };
 }
 
@@ -499,6 +554,7 @@ async function collectClassicProtection(
       requireCodeOwnerReviews: null,
       requiredStatusContexts: [],
       requiredStatusChecks: [],
+      pullRequestRuleRequirements: emptyPullRequestRuleRequirements(),
     };
     if (hasHttpStatus(error, 404)) return { value, errors: [], unverifiedSignals: [] };
     return {
@@ -538,15 +594,20 @@ function rulesValue(rules: AppliedBranchRule[]): RulesValue {
   const approvalCounts: number[] = [];
   const codeOwnerRequirements: boolean[] = [];
   const requiredStatusChecks: RequiredStatusCheck[] = [];
-  const pullRequestRuleRequirements: PullRequestRuleRequirements = {
-    requiredReviewThreadResolution: false,
-    requiredReviewersConfigured: false,
-  };
+  const pullRequestRuleRequirements = emptyPullRequestRuleRequirements();
 
   for (const rule of rules) {
     if (rule.type === "pull_request" && rule.parameters) {
       approvalCounts.push(rule.parameters.required_approving_review_count);
       codeOwnerRequirements.push(rule.parameters.require_code_owner_review);
+      if (rule.parameters.allowed_merge_methods !== undefined) {
+        pullRequestRuleRequirements.allowedMergeMethods = [
+          ...new Set([
+            ...(pullRequestRuleRequirements.allowedMergeMethods ?? []),
+            ...rule.parameters.allowed_merge_methods,
+          ]),
+        ];
+      }
       pullRequestRuleRequirements.requiredReviewThreadResolution ||=
         rule.parameters.required_review_thread_resolution;
       const runtimeParameters = rule.parameters as typeof rule.parameters & {
@@ -556,6 +617,8 @@ function rulesValue(rules: AppliedBranchRule[]): RulesValue {
         hasBlockingRequiredReviewers(runtimeParameters.required_reviewers);
     }
     if (rule.type === "required_status_checks" && rule.parameters) {
+      pullRequestRuleRequirements.strictRequiredStatusChecksPolicy ||=
+        rule.parameters.strict_required_status_checks_policy;
       requiredStatusChecks.push(
         ...rule.parameters.required_status_checks.map((check) => ({
           context: check.context,
@@ -608,10 +671,7 @@ async function collectAppliedRules(
         requireCodeOwnerReviews: null,
         requiredStatusContexts: [],
         requiredStatusChecks: [],
-        pullRequestRuleRequirements: {
-          requiredReviewThreadResolution: false,
-          requiredReviewersConfigured: false,
-        },
+        pullRequestRuleRequirements: emptyPullRequestRuleRequirements(),
       },
       errors: [`branch_rules: ${handleGitHubError(error)}`],
       unverifiedSignals: ["branch_rules"],
@@ -800,7 +860,10 @@ export async function collectPullRequestEvidence(
       rulesetRuleTypes: appliedRules.value.types,
       requiredStatusContexts,
       requiredStatusChecks,
-      pullRequestRuleRequirements: appliedRules.value.pullRequestRuleRequirements,
+      pullRequestRuleRequirements: combinePullRequestRuleRequirements(
+        classicProtection.value.pullRequestRuleRequirements,
+        appliedRules.value.pullRequestRuleRequirements
+      ),
     },
     linkedIssues: graphQl.value.linkedIssues,
     degraded: unverifiedSignals.length > 0,

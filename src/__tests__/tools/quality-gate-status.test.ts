@@ -113,6 +113,24 @@ type PullRequestOverrides = {
   errors?: string[];
 };
 
+function pullRequestRuleRequirements(
+  overrides: Partial<
+    PullRequestEvidence["branchProtection"]["pullRequestRuleRequirements"]
+  > = {}
+): PullRequestEvidence["branchProtection"]["pullRequestRuleRequirements"] {
+  return {
+    allowedMergeMethods: null,
+    lockBranch: false,
+    requiredConversationResolution: false,
+    requiredLinearHistory: false,
+    requiredReviewThreadResolution: false,
+    requiredReviewersConfigured: false,
+    requiredSignatures: false,
+    strictRequiredStatusChecksPolicy: false,
+    ...overrides,
+  };
+}
+
 function pullRequestEvidence(overrides: PullRequestOverrides = {}): PullRequestEvidence {
   const unverifiedSignals = overrides.unverifiedSignals ?? [];
   return {
@@ -147,10 +165,7 @@ function pullRequestEvidence(overrides: PullRequestOverrides = {}): PullRequestE
       rulesetRuleTypes: [],
       requiredStatusContexts: [],
       requiredStatusChecks: [],
-      pullRequestRuleRequirements: {
-        requiredReviewThreadResolution: false,
-        requiredReviewersConfigured: false,
-      },
+      pullRequestRuleRequirements: pullRequestRuleRequirements(),
       ...overrides.branchProtection,
     },
     linkedIssues:
@@ -279,10 +294,10 @@ describe("evaluateQualityGate PR policy", () => {
       branchProtection: {
         classicEnabled: false,
         rulesetRuleTypes: ["pull_request"],
-        pullRequestRuleRequirements: {
+        pullRequestRuleRequirements: pullRequestRuleRequirements({
           requiredReviewThreadResolution: true,
           requiredReviewersConfigured: false,
-        },
+        }),
       },
     });
 
@@ -299,14 +314,107 @@ describe("evaluateQualityGate PR policy", () => {
       branchProtection: {
         classicEnabled: false,
         rulesetRuleTypes: ["pull_request"],
-        pullRequestRuleRequirements: {
+        pullRequestRuleRequirements: pullRequestRuleRequirements({
           requiredReviewThreadResolution: false,
           requiredReviewersConfigured: true,
-        },
+        }),
       },
     });
 
     expect(evaluateQualityGate(evidence, DEFAULT_BLOCKING_LABELS).conclusion).toBe("policy_gap");
+  });
+
+  it("fails closed when allowed merge methods cannot be compared with repository settings", () => {
+    const evidence = pullRequestEvidence({
+      ci: ciEvidence(),
+      reviews: { reviewDecision: "APPROVED", requiredApprovals: 1 },
+      branchProtection: { classicEnabled: false, rulesetRuleTypes: ["pull_request"] },
+    });
+    Object.assign(evidence.branchProtection.pullRequestRuleRequirements, {
+      allowedMergeMethods: ["merge"],
+    });
+
+    const decision = evaluateQualityGate(evidence, DEFAULT_BLOCKING_LABELS);
+
+    expect(decision.conclusion).toBe("policy_gap");
+    expect(decision.blockers.join(" ")).toMatch(/allowed_merge_methods/i);
+  });
+
+  it("fails closed when strict required checks lack authoritative up-to-date evidence", () => {
+    const evidence = pullRequestEvidence({
+      reviews: {
+        reviewDecision: null,
+        requiredApprovals: null,
+        requireCodeOwnerReviews: false,
+      },
+      ci: ciEvidence({ checkRuns: [signal("build")] }),
+      branchProtection: {
+        classicEnabled: false,
+        rulesetRuleTypes: ["required_status_checks"],
+        requiredStatusContexts: ["build"],
+        requiredStatusChecks: [{ context: "build", appId: null }],
+      },
+    });
+    Object.assign(evidence.branchProtection.pullRequestRuleRequirements, {
+      strictRequiredStatusChecksPolicy: true,
+    });
+
+    const decision = evaluateQualityGate(evidence, DEFAULT_BLOCKING_LABELS);
+
+    expect(decision.conclusion).toBe("policy_gap");
+    expect(decision.blockers.join(" ")).toMatch(/strict_required_status_checks_policy/i);
+  });
+
+  it("keeps non-strict required checks modeled when their matching check passes", () => {
+    const evidence = pullRequestEvidence({
+      reviews: {
+        reviewDecision: null,
+        requiredApprovals: null,
+        requireCodeOwnerReviews: false,
+      },
+      ci: ciEvidence({ checkRuns: [signal("build")] }),
+      branchProtection: {
+        classicEnabled: false,
+        rulesetRuleTypes: ["required_status_checks"],
+        requiredStatusContexts: ["build"],
+        requiredStatusChecks: [{ context: "build", appId: null }],
+      },
+    });
+    Object.assign(evidence.branchProtection.pullRequestRuleRequirements, {
+      strictRequiredStatusChecksPolicy: false,
+    });
+
+    expect(evaluateQualityGate(evidence, DEFAULT_BLOCKING_LABELS).conclusion).toBe("passing");
+  });
+
+  it.each([
+    [
+      "strict required checks",
+      "strictRequiredStatusChecksPolicy",
+      "strict_required_status_checks_policy",
+    ],
+    [
+      "conversation resolution",
+      "requiredConversationResolution",
+      "required_conversation_resolution",
+    ],
+    ["signed commits", "requiredSignatures", "required_signatures"],
+    ["linear history", "requiredLinearHistory", "required_linear_history"],
+    ["a locked branch", "lockBranch", "lock_branch"],
+  ] as const)("fails closed for classic %s without authoritative evidence", (_, field, blocker) => {
+    const evidence = pullRequestEvidence({
+      ci: ciEvidence(),
+      reviews: { reviewDecision: "APPROVED", requiredApprovals: 1 },
+      branchProtection: { classicEnabled: true, rulesetRuleTypes: [] },
+    });
+    Object.assign(evidence.branchProtection.pullRequestRuleRequirements, {
+      [field]: true,
+    });
+
+    const decision = evaluateQualityGate(evidence, DEFAULT_BLOCKING_LABELS);
+
+    expect(decision.conclusion).toBe("policy_gap");
+    expect(decision.blockers.join(" ")).toContain(blocker);
   });
 
   it("does not treat zero CI signals as passing", () => {
