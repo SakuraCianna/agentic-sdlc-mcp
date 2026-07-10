@@ -128,8 +128,10 @@ const QualityGateEvidenceShape = z.object({
       rulesetRuleTypes: z.array(z.string()),
       pullRequestRuleRequirements: z.object({
         allowedMergeMethods: z.array(z.string()).nullable(),
+        dismissStaleReviews: z.boolean(),
         lockBranch: z.boolean(),
         requiredConversationResolution: z.boolean(),
+        requireLastPushApproval: z.boolean(),
         requiredLinearHistory: z.boolean(),
         requiredReviewThreadResolution: z.boolean(),
         requiredReviewersConfigured: z.boolean(),
@@ -416,24 +418,24 @@ function requiredContextsState(evidence: PullRequestEvidence): {
 }
 
 function hasReviewPolicy(evidence: PullRequestEvidence): boolean {
+  const requirements = evidence.branchProtection.pullRequestRuleRequirements;
   return (
     (evidence.reviews.requiredApprovals ?? 0) > 0 ||
-    evidence.reviews.requireCodeOwnerReviews === true
+    evidence.reviews.requireCodeOwnerReviews === true ||
+    requirements?.dismissStaleReviews === true ||
+    requirements?.requireLastPushApproval === true
   );
 }
 
-const UNMODELED_MERGE_RULE_TYPES = new Set([
-  "merge_queue",
-  "required_deployments",
-  "required_signatures",
-  "required_linear_history",
-  "code_scanning",
-  "workflows",
-  "required_workflows",
+const MODELED_MERGE_RULE_TYPES = new Set(["pull_request", "required_status_checks"]);
+const SAFE_IGNORE_MERGE_RULE_TYPES = new Set([
+  "creation",
+  "deletion",
+  "non_fast_forward",
 ]);
 
 function mergePolicyState(evidence: PullRequestEvidence): {
-  hasModeledPolicy: boolean;
+  hasAnyPolicy: boolean;
   unmodeledRules: string[];
 } {
   const reviewPolicyConfigured = hasReviewPolicy(evidence);
@@ -443,7 +445,8 @@ function mergePolicyState(evidence: PullRequestEvidence): {
     const normalized = type.toLocaleLowerCase();
     if (normalized === "pull_request") return !reviewPolicyConfigured;
     if (normalized === "required_status_checks") return !hasRequiredContexts;
-    return UNMODELED_MERGE_RULE_TYPES.has(normalized);
+    if (SAFE_IGNORE_MERGE_RULE_TYPES.has(normalized)) return false;
+    return !MODELED_MERGE_RULE_TYPES.has(normalized);
   });
   if (pullRequestRequirements?.requiredReviewThreadResolution) {
     unmodeledRules.push("pull_request.required_review_thread_resolution");
@@ -472,9 +475,11 @@ function mergePolicyState(evidence: PullRequestEvidence): {
     unmodeledRules.push("branch_protection.lock_branch");
   }
 
+  const modeled = reviewPolicyConfigured || hasRequiredContexts;
+  const uniqueUnmodeledRules = uniqueCaseInsensitive(unmodeledRules);
   return {
-    hasModeledPolicy: reviewPolicyConfigured || hasRequiredContexts,
-    unmodeledRules: uniqueCaseInsensitive(unmodeledRules),
+    hasAnyPolicy: modeled || uniqueUnmodeledRules.length > 0,
+    unmodeledRules: uniqueUnmodeledRules,
   };
 }
 
@@ -530,6 +535,8 @@ export function evaluateQualityGate(
     ...evidence.ci.unverifiedSignals,
   ]);
   const unverified = new Set(unverifiedSignals);
+  const aggregateReviewUnverified = unverified.has("review_decision");
+  const restReviewsVerified = !unverified.has("reviews");
   const failingReasons: string[] = [];
   const pendingReasons: string[] = [];
   const reviewReasons: string[] = [];
@@ -549,6 +556,15 @@ export function evaluateQualityGate(
       evidence.reviews.changesRequestedUsers.length > 0
         ? `Changes requested by: ${evidence.reviews.changesRequestedUsers.join(", ")}.`
         : "A reviewer requested changes."
+    );
+  }
+  if (
+    aggregateReviewUnverified &&
+    restReviewsVerified &&
+    evidence.reviews.changesRequestedUsers.length > 0
+  ) {
+    failingReasons.push(
+      `Changes requested by: ${evidence.reviews.changesRequestedUsers.join(", ")}.`
     );
   }
   for (const label of matchedBlockingLabels) {
@@ -589,8 +605,15 @@ export function evaluateQualityGate(
     "check_runs",
     "commit_statuses",
   ];
+  if (aggregateReviewUnverified) {
+    criticalSources.push("review_decision");
+    policyReasons.push(
+      "Aggregate review decision is unavailable; review blockers cannot be fully ruled out."
+    );
+    if (!restReviewsVerified) criticalSources.push("reviews");
+  }
   if (reviewPolicyConfigured && evidence.reviews.reviewDecision === null) {
-    criticalSources.push("reviews", "review_decision");
+    criticalSources.push("review_decision");
     policyReasons.push("Aggregate review decision is unavailable for the configured review policy.");
   }
   if (evidence.reviews.requireCodeOwnerReviews === true) {
@@ -619,7 +642,7 @@ export function evaluateQualityGate(
   if (
     !unverified.has("branch_protection") &&
     !unverified.has("branch_rules") &&
-    !mergePolicy.hasModeledPolicy
+    !mergePolicy.hasAnyPolicy
   ) {
     policyReasons.push("No verified merge-relevant protection policy was found.");
   }

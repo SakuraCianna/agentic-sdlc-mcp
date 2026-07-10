@@ -25,11 +25,13 @@ export interface RequiredStatusCheck {
 }
 
 export interface PullRequestRuleRequirements {
-  // Approval freshness and last-push approval are represented by reviewDecision.
-  // The fields below need merge evidence that this collector does not currently fetch.
   allowedMergeMethods: string[] | null;
+  /** Aggregate reviewDecision is authoritative for review freshness when verified. */
+  dismissStaleReviews: boolean;
   lockBranch: boolean;
   requiredConversationResolution: boolean;
+  /** Aggregate reviewDecision is authoritative for last-push approval when verified. */
+  requireLastPushApproval: boolean;
   requiredLinearHistory: boolean;
   requiredReviewThreadResolution: boolean;
   requiredReviewersConfigured: boolean;
@@ -465,8 +467,10 @@ interface ClassicProtectionValue {
 function emptyPullRequestRuleRequirements(): PullRequestRuleRequirements {
   return {
     allowedMergeMethods: null,
+    dismissStaleReviews: false,
     lockBranch: false,
     requiredConversationResolution: false,
+    requireLastPushApproval: false,
     requiredLinearHistory: false,
     requiredReviewThreadResolution: false,
     requiredReviewersConfigured: false,
@@ -481,9 +485,13 @@ function combinePullRequestRuleRequirements(
 ): PullRequestRuleRequirements {
   return {
     allowedMergeMethods: rules.allowedMergeMethods,
+    dismissStaleReviews:
+      classic.dismissStaleReviews || rules.dismissStaleReviews,
     lockBranch: classic.lockBranch || rules.lockBranch,
     requiredConversationResolution:
       classic.requiredConversationResolution || rules.requiredConversationResolution,
+    requireLastPushApproval:
+      classic.requireLastPushApproval || rules.requireLastPushApproval,
     requiredLinearHistory:
       classic.requiredLinearHistory || rules.requiredLinearHistory,
     requiredReviewThreadResolution:
@@ -524,9 +532,13 @@ function classicProtectionValue(protection: BranchProtection): ClassicProtection
     requiredStatusChecks,
     pullRequestRuleRequirements: {
       ...emptyPullRequestRuleRequirements(),
+      dismissStaleReviews:
+        protection.required_pull_request_reviews?.dismiss_stale_reviews === true,
       lockBranch: protection.lock_branch?.enabled === true,
       requiredConversationResolution:
         protection.required_conversation_resolution?.enabled === true,
+      requireLastPushApproval:
+        protection.required_pull_request_reviews?.require_last_push_approval === true,
       requiredLinearHistory: protection.required_linear_history?.enabled === true,
       requiredSignatures: protection.required_signatures?.enabled === true,
       strictRequiredStatusChecksPolicy:
@@ -608,6 +620,10 @@ function rulesValue(rules: AppliedBranchRule[]): RulesValue {
           ]),
         ];
       }
+      pullRequestRuleRequirements.dismissStaleReviews ||=
+        rule.parameters.dismiss_stale_reviews_on_push;
+      pullRequestRuleRequirements.requireLastPushApproval ||=
+        rule.parameters.require_last_push_approval;
       pullRequestRuleRequirements.requiredReviewThreadResolution ||=
         rule.parameters.required_review_thread_resolution;
       const runtimeParameters = rule.parameters as typeof rule.parameters & {

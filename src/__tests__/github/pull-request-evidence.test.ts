@@ -371,8 +371,10 @@ describe("collectPullRequestEvidence", () => {
       ],
       pullRequestRuleRequirements: {
         allowedMergeMethods: ["merge"],
+        dismissStaleReviews: true,
         lockBranch: true,
         requiredConversationResolution: true,
+        requireLastPushApproval: true,
         requiredLinearHistory: true,
         requiredReviewThreadResolution: true,
         requiredReviewersConfigured: true,
@@ -382,6 +384,50 @@ describe("collectPullRequestEvidence", () => {
     });
     expect(evidence.reviews.requiredApprovals).toBe(2);
     expect(evidence.reviews.requireCodeOwnerReviews).toBe(true);
+  });
+
+  it.each([
+    { name: "classic review freshness", classic: true, ruleset: false, expected: true },
+    { name: "ruleset review freshness", classic: false, ruleset: true, expected: true },
+    { name: "disabled review freshness", classic: false, ruleset: false, expected: false },
+  ])("collects $name independently", async ({ classic, ruleset, expected }) => {
+    const evidence = await collectPullRequestEvidence(
+      { pullNumber: 42 },
+      ref,
+      makeOctokit({
+        repos: {
+          getBranchProtection: vi.fn().mockResolvedValue({
+            data: {
+              required_pull_request_reviews: {
+                dismiss_stale_reviews: classic,
+                require_code_owner_reviews: false,
+                require_last_push_approval: classic,
+                required_approving_review_count: 0,
+              },
+            },
+          }),
+          getBranchRules: vi.fn().mockResolvedValue({
+            data: [
+              {
+                type: "pull_request",
+                parameters: {
+                  dismiss_stale_reviews_on_push: ruleset,
+                  require_code_owner_review: false,
+                  require_last_push_approval: ruleset,
+                  required_approving_review_count: 0,
+                  required_review_thread_resolution: false,
+                },
+              },
+            ],
+          }),
+        },
+      })
+    );
+
+    expect(evidence.branchProtection.pullRequestRuleRequirements).toMatchObject({
+      dismissStaleReviews: expected,
+      requireLastPushApproval: expected,
+    });
   });
 
   it.each([

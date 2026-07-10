@@ -120,8 +120,10 @@ function pullRequestRuleRequirements(
 ): PullRequestEvidence["branchProtection"]["pullRequestRuleRequirements"] {
   return {
     allowedMergeMethods: null,
+    dismissStaleReviews: false,
     lockBranch: false,
     requiredConversationResolution: false,
+    requireLastPushApproval: false,
     requiredLinearHistory: false,
     requiredReviewThreadResolution: false,
     requiredReviewersConfigured: false,
@@ -491,8 +493,107 @@ describe("evaluateQualityGate PR policy", () => {
       degraded: true,
       unverifiedSignals: ["reviews"],
     });
+    Object.assign(evidence.branchProtection.pullRequestRuleRequirements, {
+      dismissStaleReviews: true,
+      requireLastPushApproval: true,
+    });
 
     expect(evaluateQualityGate(evidence, DEFAULT_BLOCKING_LABELS).conclusion).toBe("passing");
+  });
+
+  it("returns policy_gap for classic last-push approval with zero approvals when aggregate is unverified", () => {
+    const evidence = pullRequestEvidence({
+      reviews: {
+        reviewDecision: null,
+        requiredApprovals: 0,
+        requireCodeOwnerReviews: false,
+      },
+      ci: ciEvidence({ checkRuns: [signal("build")] }),
+      branchProtection: {
+        classicEnabled: true,
+        rulesetRuleTypes: ["required_status_checks"],
+        requiredStatusContexts: ["build"],
+        requiredStatusChecks: [{ context: "build", appId: null }],
+      },
+      degraded: true,
+      unverifiedSignals: ["review_decision"],
+    });
+    Object.assign(evidence.branchProtection.pullRequestRuleRequirements, {
+      requireLastPushApproval: true,
+    });
+
+    const decision = evaluateQualityGate(evidence, DEFAULT_BLOCKING_LABELS);
+
+    expect(decision.conclusion).toBe("policy_gap");
+    expect(decision.blockers.join(" ")).toMatch(/aggregate review decision|review_decision/i);
+  });
+
+  it("fails on verified REST changes-requested when the aggregate is unverified", () => {
+    const evidence = pullRequestEvidence({
+      reviews: {
+        reviewDecision: null,
+        changesRequestedUsers: ["Eve"],
+        requiredApprovals: null,
+        requireCodeOwnerReviews: false,
+      },
+      ci: ciEvidence({
+        checkRuns: [signal("build"), signal("optional", "pending")],
+      }),
+      branchProtection: {
+        classicEnabled: false,
+        rulesetRuleTypes: ["required_status_checks"],
+        requiredStatusContexts: ["build"],
+        requiredStatusChecks: [{ context: "build", appId: null }],
+      },
+      degraded: true,
+      unverifiedSignals: ["review_decision"],
+    });
+
+    const decision = evaluateQualityGate(evidence, DEFAULT_BLOCKING_LABELS);
+
+    expect(decision.conclusion).toBe("failing");
+    expect(decision.blockers.join(" ")).toContain("Eve");
+  });
+
+  it("fails closed when aggregate review state is unverified even without a review policy", () => {
+    const evidence = pullRequestEvidence({
+      reviews: {
+        reviewDecision: null,
+        requiredApprovals: null,
+        requireCodeOwnerReviews: false,
+      },
+      branchProtection: {
+        classicEnabled: false,
+        rulesetRuleTypes: ["required_status_checks"],
+        requiredStatusContexts: ["test"],
+      },
+      degraded: true,
+      unverifiedSignals: ["review_decision"],
+    });
+
+    expect(evaluateQualityGate(evidence, DEFAULT_BLOCKING_LABELS).conclusion).toBe("policy_gap");
+  });
+
+  it("explains both missing review sources when aggregate and REST reviews are unverified", () => {
+    const evidence = pullRequestEvidence({
+      reviews: {
+        reviewDecision: null,
+        requiredApprovals: null,
+        requireCodeOwnerReviews: false,
+      },
+      branchProtection: {
+        classicEnabled: false,
+        rulesetRuleTypes: ["required_status_checks"],
+        requiredStatusContexts: ["test"],
+      },
+      degraded: true,
+      unverifiedSignals: ["review_decision", "reviews"],
+    });
+
+    const decision = evaluateQualityGate(evidence, DEFAULT_BLOCKING_LABELS);
+
+    expect(decision.conclusion).toBe("policy_gap");
+    expect(decision.blockers.join(" ")).toMatch(/review_decision.*reviews|reviews.*review_decision/i);
   });
 
   it("returns policy_gap when a configured review policy has no aggregate decision", () => {
@@ -682,6 +783,57 @@ describe("merge-relevant policy", () => {
 
     expect(evaluateQualityGate(evidence, DEFAULT_BLOCKING_LABELS).conclusion).toBe("policy_gap");
   });
+
+  it.each([
+    "commit_message_pattern",
+    "commit_author_email_pattern",
+    "committer_email_pattern",
+    "file_path_restriction",
+    "max_file_path_length",
+    "file_extension_restriction",
+    "max_file_size",
+    "update",
+    "future_code_quality_rule",
+  ])("fails closed for default-unmodeled rule %s beside a passing required check", (ruleType) => {
+    const evidence = pullRequestEvidence({
+      reviews: noReviewPolicy,
+      ci: ciEvidence({ checkRuns: [signal("build")] }),
+      branchProtection: {
+        classicEnabled: false,
+        rulesetRuleTypes: ["required_status_checks", ruleType],
+        requiredStatusContexts: ["build"],
+        requiredStatusChecks: [{ context: "build", appId: null }],
+      },
+    });
+
+    const decision = evaluateQualityGate(evidence, DEFAULT_BLOCKING_LABELS);
+
+    expect(decision.conclusion).toBe("policy_gap");
+    expect(decision.blockers.join(" ")).toContain(ruleType);
+    expect(decision.blockers.join(" ")).not.toContain(
+      "No verified merge-relevant protection policy"
+    );
+  });
+
+  it.each(["creation", "deletion", "non_fast_forward"])(
+    "safely ignores %s when a modeled required check passes",
+    (ruleType) => {
+      const evidence = pullRequestEvidence({
+        reviews: noReviewPolicy,
+        ci: ciEvidence({ checkRuns: [signal("build")] }),
+        branchProtection: {
+          classicEnabled: false,
+          rulesetRuleTypes: ["required_status_checks", ruleType],
+          requiredStatusContexts: ["build"],
+          requiredStatusChecks: [{ context: "build", appId: null }],
+        },
+      });
+
+      expect(evaluateQualityGate(evidence, DEFAULT_BLOCKING_LABELS).conclusion).toBe(
+        "passing"
+      );
+    }
+  );
 
   it("fails closed for a pull_request rule with no visible review requirements", () => {
     const evidence = pullRequestEvidence({
@@ -1094,6 +1246,40 @@ describe("handleQualityGateStatus output", () => {
     expect(text).toContain("Changes requested: Eve");
     expect(text).toContain("Requested users: Carol");
     expect(text).toContain("Requested teams: test-org/platform");
+  });
+
+  it("keeps REST changes-requested failing in structured output and Markdown when aggregate is unavailable", async () => {
+    evidenceMocks.collectPullRequestEvidence.mockResolvedValueOnce(
+      pullRequestEvidence({
+        reviews: {
+          reviewDecision: null,
+          changesRequestedUsers: ["Eve"],
+          requiredApprovals: null,
+          requireCodeOwnerReviews: false,
+        },
+        branchProtection: {
+          classicEnabled: false,
+          rulesetRuleTypes: ["required_status_checks"],
+          requiredStatusContexts: ["test"],
+          requiredStatusChecks: [{ context: "test", appId: null }],
+        },
+        degraded: true,
+        unverifiedSignals: ["review_decision"],
+      })
+    );
+
+    const { structured, text } = await handleQualityGateStatus(
+      { pullNumber: 42 },
+      REF,
+      makeOctokit()
+    );
+
+    expect(structured.conclusion).toBe("failing");
+    expect(structured.blockers.join(" ")).toContain("Eve");
+    expect(structured.evidence.reviews?.changesRequestedUsers).toEqual(["Eve"]);
+    expect(() => z.object(QualityGateOutputSchema).parse(structured)).not.toThrow();
+    expect(text).toContain("**Conclusion:** failing");
+    expect(text).toContain("Changes requested: Eve");
   });
 
   it("exposes PR evidence errors in the schema and sanitizes them in Markdown notes", async () => {
