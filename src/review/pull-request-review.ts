@@ -1,0 +1,797 @@
+import type { Finding, SdlcWorkType, Severity } from "../types.js";
+
+export type ReviewDimension =
+  | "intent"
+  | "scope"
+  | "evidence"
+  | "ownership"
+  | "policy"
+  | "fallback"
+  | "security";
+
+export interface StructuredReviewFinding extends Finding {
+  dimension: ReviewDimension;
+  paths: string[];
+  reason: string;
+  suggestion: string;
+}
+
+/** Minimal changed-file shape accepted from GitHub or a caller-owned fixture. */
+export interface PrFile {
+  filename: string;
+  status?: string;
+  additions?: number;
+  deletions?: number;
+  changes?: number;
+  patch?: string;
+}
+
+/** PR text used by the pure classifier. GitHub-only metadata stays in the tool layer. */
+export interface ReviewPrMeta {
+  title: string;
+  body: string | null;
+  labels: string[];
+}
+
+export interface WorkTypeInference {
+  workType: SdlcWorkType;
+  confidence: "high" | "medium" | "low";
+  reasoning: string;
+}
+
+export interface ClassifiedPrFiles {
+  allFiles: PrFile[];
+  docsFiles: PrFile[];
+  testFiles: PrFile[];
+  snapshotTestFiles: PrFile[];
+  nonSnapshotTestFiles: PrFile[];
+  workflowFiles: PrFile[];
+  infrastructureFiles: PrFile[];
+  authSecurityFiles: PrFile[];
+  releaseFiles: PrFile[];
+  lockFiles: PrFile[];
+  envFiles: PrFile[];
+  generatedFiles: PrFile[];
+  sourceFiles: PrFile[];
+  docsOnly: boolean;
+}
+
+export type ReviewStandard = "basic" | "strict" | "security-focused";
+export type ReleaseRisk = "low" | "moderate" | "high" | "critical";
+export type TestCoverageSignal =
+  | "adequate"
+  | "missing"
+  | "not_required"
+  | "insufficient_evidence";
+
+export interface ReviewEvaluationInput {
+  pr: ReviewPrMeta;
+  files: PrFile[];
+  workType?: SdlcWorkType;
+  standard?: ReviewStandard;
+}
+
+export interface ReviewEvaluationResult {
+  workType: SdlcWorkType;
+  workTypeConfidence: WorkTypeInference["confidence"];
+  workTypeReasoning: string;
+  findings: StructuredReviewFinding[];
+  releaseRisk: ReleaseRisk;
+  testCoverageSignal: TestCoverageSignal;
+  conclusion: "pass" | "needs_changes" | "risky_but_acceptable";
+  hasTests: boolean;
+  totalChangedLines: number;
+}
+
+const SEVERITY_ORDER: Severity[] = ["critical", "high", "medium", "low", "info"];
+
+const LOCK_FILE_NAMES = new Set([
+  "bun.lock",
+  "bun.lockb",
+  "cargo.lock",
+  "composer.lock",
+  "gemfile.lock",
+  "go.sum",
+  "npm-shrinkwrap.json",
+  "package-lock.json",
+  "pipfile.lock",
+  "pnpm-lock.yaml",
+  "poetry.lock",
+  "uv.lock",
+  "yarn.lock",
+]);
+
+function normalizePath(filename: string): string {
+  return filename.replace(/\\/g, "/").replace(/^\.\//, "");
+}
+
+function normalizeFile(file: PrFile): PrFile {
+  return { ...file, filename: normalizePath(file.filename) };
+}
+
+function isDocsPath(filename: string): boolean {
+  const lower = filename.toLowerCase();
+  const basename = lower.split("/").at(-1) ?? lower;
+  return (
+    lower.startsWith("docs/") ||
+    /\.(?:adoc|md|mdx|rst|txt)$/.test(lower) ||
+    /^(?:changelog|contributing|license|readme)(?:\..+)?$/.test(basename)
+  );
+}
+
+function isTestPath(filename: string): boolean {
+  const lower = filename.toLowerCase();
+  return (
+    /(?:^|\/)(?:__tests__|tests?|specs?)(?:\/|$)/.test(lower) ||
+    /\.(?:test|spec)\.[cm]?[jt]sx?$/.test(lower) ||
+    /(?:^|\/)__snapshots__(?:\/|$)/.test(lower) ||
+    lower.endsWith(".snap")
+  );
+}
+
+function isSnapshotPath(filename: string): boolean {
+  const lower = filename.toLowerCase();
+  return /(?:^|\/)__snapshots__(?:\/|$)/.test(lower) || lower.endsWith(".snap");
+}
+
+function isWorkflowPath(filename: string): boolean {
+  return filename.toLowerCase().startsWith(".github/workflows/");
+}
+
+function isInfrastructurePath(filename: string): boolean {
+  const lower = filename.toLowerCase();
+  const basename = lower.split("/").at(-1) ?? lower;
+  return (
+    isWorkflowPath(lower) ||
+    /(?:^|\/)(?:deploy|deployment|helm|infra|infrastructure|k8s|kubernetes|terraform)(?:\/|$)/.test(
+      lower
+    ) ||
+    /\.(?:tf|tfvars)$/.test(lower) ||
+    /^dockerfile(?:\..+)?$/.test(basename) ||
+    /^(?:docker-compose|compose)\.(?:ya?ml)$/.test(basename)
+  );
+}
+
+function isEnvironmentPath(filename: string): boolean {
+  return /(?:^|\/)\.env(?:\.|$)/i.test(filename);
+}
+
+function isAuthSecurityPath(filename: string): boolean {
+  const lower = filename.toLowerCase();
+  return (
+    isEnvironmentPath(lower) ||
+    /(?:^|[\/_.-])(?:auth|authorization|credential|credentials|oauth|password|permissions?|secrets?|security|session|tokens?)(?:[\/_.-]|$)/.test(
+      lower
+    )
+  );
+}
+
+function isReleasePath(filename: string): boolean {
+  const lower = filename.toLowerCase();
+  const basename = lower.split("/").at(-1) ?? lower;
+  return (
+    /(?:^|\/)(?:publish|release|releases)(?:\/|$)/.test(lower) ||
+    /(?:^|[._-])(?:publish|release)(?:[._-]|$)/.test(basename) ||
+    /(?:^|\/)(?:publish|release)\.[^/]+$/.test(lower)
+  );
+}
+
+function isLockPath(filename: string): boolean {
+  return LOCK_FILE_NAMES.has((filename.split("/").at(-1) ?? filename).toLowerCase());
+}
+
+function isGeneratedPath(filename: string): boolean {
+  const lower = filename.toLowerCase();
+  return (
+    /(?:^|\/)(?:build|coverage|dist|generated)(?:\/|$)/.test(lower) ||
+    /\.min\.(?:css|js)$/.test(lower)
+  );
+}
+
+export function classifyPrFiles(files: PrFile[]): ClassifiedPrFiles {
+  const allFiles = files.map(normalizeFile);
+  const docsFiles = allFiles.filter((file) => isDocsPath(file.filename));
+  const testFiles = allFiles.filter((file) => isTestPath(file.filename));
+  const snapshotTestFiles = testFiles.filter((file) => isSnapshotPath(file.filename));
+  const nonSnapshotTestFiles = testFiles.filter((file) => !isSnapshotPath(file.filename));
+  const workflowFiles = allFiles.filter((file) => isWorkflowPath(file.filename));
+  const infrastructureFiles = allFiles.filter((file) => isInfrastructurePath(file.filename));
+  const authSecurityFiles = allFiles.filter((file) => isAuthSecurityPath(file.filename));
+  const releaseFiles = allFiles.filter((file) => isReleasePath(file.filename));
+  const lockFiles = allFiles.filter((file) => isLockPath(file.filename));
+  const envFiles = allFiles.filter((file) => isEnvironmentPath(file.filename));
+  const generatedFiles = allFiles.filter((file) => isGeneratedPath(file.filename));
+  const sourceFiles = allFiles.filter(
+    (file) =>
+      !docsFiles.includes(file) &&
+      !testFiles.includes(file) &&
+      !lockFiles.includes(file) &&
+      !generatedFiles.includes(file)
+  );
+
+  return {
+    allFiles,
+    docsFiles,
+    testFiles,
+    snapshotTestFiles,
+    nonSnapshotTestFiles,
+    workflowFiles,
+    infrastructureFiles,
+    authSecurityFiles,
+    releaseFiles,
+    lockFiles,
+    envFiles,
+    generatedFiles,
+    sourceFiles,
+    docsOnly: allFiles.length > 0 && docsFiles.length === allFiles.length,
+  };
+}
+
+function normalizedLabels(labels: string[]): string[] {
+  return labels.map((label) => label.trim().toLowerCase());
+}
+
+function hasLabel(labels: string[], pattern: RegExp): boolean {
+  return labels.some((label) => pattern.test(label));
+}
+
+export function inferWorkType(pr: ReviewPrMeta, files: PrFile[]): WorkTypeInference {
+  const classified = classifyPrFiles(files);
+  const labels = normalizedLabels(pr.labels);
+  const title = pr.title.trim();
+  const body = pr.body ?? "";
+
+  if (
+    hasLabel(labels, /^(?:security|security-fix|vulnerability)$/) ||
+    /\b(?:security|vulnerability|cve-\d+|credential exposure)\b/i.test(title) ||
+    /\b(?:security(?: hardening| vulnerability)?|credential exposure|threat model|cve-\d+)\b/i.test(
+      body
+    )
+  ) {
+    return {
+      workType: "security",
+      confidence: "high",
+      reasoning: "Security-specific label or PR text takes priority over other work signals.",
+    };
+  }
+
+  if (
+    classified.releaseFiles.length > 0 ||
+    hasLabel(labels, /^(?:publish|release|release-.+)$/) ||
+    /\b(?:publish|release)\b/i.test(title)
+  ) {
+    return {
+      workType: "release",
+      confidence: "high",
+      reasoning: "A release/publish path, label, or title explicitly identifies release work.",
+    };
+  }
+
+  if (classified.infrastructureFiles.length > 0) {
+    return {
+      workType: "infra",
+      confidence: "high",
+      reasoning: "Workflow or infrastructure paths are present in the changed files.",
+    };
+  }
+
+  if (classified.docsOnly) {
+    return {
+      workType: "docs",
+      confidence: "high",
+      reasoning: "Every changed file is documentation.",
+    };
+  }
+
+  if (
+    hasLabel(labels, /^(?:bug|bugfix|defect|fix|regression)$/) ||
+    /\b(?:bug|bugfix|crash|defect|fix(?:e[sd])?|regression)\b/i.test(title) ||
+    /\b(?:bugfix|bug|crash|defect|regression|reproducible crash|fix(?:e[sd])? (?:a |the )?(?:bug|crash|defect))\b/i.test(
+      body
+    )
+  ) {
+    return {
+      workType: "bugfix",
+      confidence: "medium",
+      reasoning: "A bug-specific label or conservative bug/regression phrase is present.",
+    };
+  }
+
+  if (
+    hasLabel(labels, /^(?:refactor|refactoring)$/) ||
+    /\b(?:refactor|refactoring)\b/i.test(title)
+  ) {
+    return {
+      workType: "refactor",
+      confidence: "medium",
+      reasoning: "A refactor label or title identifies behavior-preserving restructuring.",
+    };
+  }
+
+  return {
+    workType: "feature",
+    confidence: "low",
+    reasoning: "No higher-confidence task signal was found; feature is the conservative default.",
+  };
+}
+
+function finding(
+  severity: Severity,
+  category: string,
+  dimension: ReviewDimension,
+  description: string,
+  paths: string[],
+  reason: string,
+  suggestion: string
+): StructuredReviewFinding {
+  return { severity, category, dimension, description, paths, reason, suggestion };
+}
+
+function hasDetailedPrefixedLine(body: string, prefixes: RegExp): boolean {
+  return body.split(/\r?\n/).some((line) => {
+    const match = line.match(prefixes);
+    return Boolean(match?.[1] && match[1].replace(/\s/g, "").length >= 10);
+  });
+}
+
+function hasNoTestReason(body: string): boolean {
+  return hasDetailedPrefixedLine(
+    body,
+    /^\s*(?:[-*]\s*)?(?:no tests|testing not required)\s*:\s*(.+)$/i
+  );
+}
+
+function hasDetailedSection(body: string, names: string): boolean {
+  const section = new RegExp(
+    `(?:^|\\n)\\s*(?:#{1,6}\\s*)?(?:${names})\\s*:?\\s*(?:\\n|\\s+)([^\\n]{10,})`,
+    "i"
+  );
+  return section.test(body);
+}
+
+function hasDocsVerification(body: string): boolean {
+  return (
+    /\bmarkdownlint\b|\blink[ -]?check(?:er|ing)?\b/i.test(body) ||
+    /\b(?:ran|run|executed|verified with|validated with)\s+`?(?:bun|cargo|dotnet|git|go|gradle|make|markdownlint|mvn|node|npm|npx|pnpm|python|pytest|yarn)\b/i.test(
+      body
+    ) ||
+    hasDetailedSection(body, "verification|validated")
+  );
+}
+
+function hasBugReproduction(body: string): boolean {
+  return hasDetailedSection(body, "reproduction|steps? to reproduce|before");
+}
+
+function hasFallback(body: string): boolean {
+  return hasDetailedSection(body, "rollback|fallback|revert");
+}
+
+function hasSecurityValidation(body: string): boolean {
+  return (
+    hasDetailedSection(body, "security verification|security validation") ||
+    /\b(?:codeql|dast|npm audit|penetration test(?:ing)?|sast|security test(?:ing)?|threat model (?:validated|verified))\b/i.test(
+      body
+    )
+  );
+}
+
+interface SecretPattern {
+  name: string;
+  pattern: RegExp;
+}
+
+const SECRET_ASSIGNMENTS: SecretPattern[] = [
+  {
+    name: "credential assignment",
+    pattern:
+      /(?:^|[,{;]\s*|\b(?:const|let|var)\s+)\s*["']?[\w.-]*(?:api[_-]?key|client[_-]?secret|credential|password|private[_-]?key|secret|token)[\w.-]*["']?\s*[:=]\s*(["'`])([^"'`]+)\1/i,
+  },
+  {
+    name: "AWS access key assignment",
+    pattern: /\b[\w.-]+\s*[:=]\s*(["'`])(AKIA[0-9A-Z]{16})\1/,
+  },
+];
+
+function isPlaceholderSecret(value: string): boolean {
+  const normalized = value.trim();
+  return (
+    normalized.length < 8 ||
+    /(?:process|import\.meta)\.env|(?:os\.)?getenv\s*\(|\$\{?[A-Z_][A-Z0-9_]*\}?/i.test(
+      normalized
+    ) ||
+    /^(?:<[^>]+>|\*+|x+|your[_ -]|change[_ -]?me|dummy|example|placeholder|sample|test)/i.test(
+      normalized
+    ) ||
+    /(?:_example|example_|your[_ -]?token|not[_ -]?a[_ -]?secret)/i.test(normalized)
+  );
+}
+
+export function scanPatchForSecrets(
+  filename: string,
+  patch?: string
+): StructuredReviewFinding[] {
+  if (!patch) return [];
+  const normalizedFilename = normalizePath(filename);
+  const findings: StructuredReviewFinding[] = [];
+
+  for (const rawLine of patch.split(/\r?\n/)) {
+    if (!rawLine.startsWith("+") || rawLine.startsWith("+++")) continue;
+    const addedLine = rawLine.slice(1);
+
+    for (const { name, pattern } of SECRET_ASSIGNMENTS) {
+      const match = addedLine.match(pattern);
+      const value = match?.[2];
+      if (!value || isPlaceholderSecret(value)) continue;
+
+      findings.push(
+        finding(
+          "high",
+          "SecretLikeAssignment",
+          "security",
+          `Possible ${name} added in \`${normalizedFilename}\`.`,
+          [normalizedFilename],
+          "The added patch line assigns a non-placeholder literal to a credential-like name.",
+          "Confirm this is not a real credential; if it is, remove and rotate it, then load it from a secret store or environment variable."
+        )
+      );
+      break;
+    }
+  }
+
+  return findings;
+}
+
+function evaluateTestEvidence(
+  workType: SdlcWorkType,
+  body: string,
+  classified: ClassifiedPrFiles,
+  findings: StructuredReviewFinding[]
+): TestCoverageSignal {
+  const changedPaths = classified.allFiles.map((file) => file.filename);
+  const hasNonSnapshotTests = classified.nonSnapshotTestFiles.length > 0;
+  const hasSnapshotTests = classified.snapshotTestFiles.length > 0;
+  const noTestReason = hasNoTestReason(body);
+
+  if (workType === "docs") {
+    if (hasDocsVerification(body)) return "not_required";
+    findings.push(
+      finding(
+        "medium",
+        "MissingDocsVerification",
+        "evidence",
+        "Documentation changes do not include a reviewable verification method.",
+        classified.docsFiles.map((file) => file.filename),
+        "Docs-only work does not need code tests, but still needs Markdown, link, example, or command verification.",
+        "Add a Verification or Validated section naming the command or manual documentation check performed."
+      )
+    );
+    return "insufficient_evidence";
+  }
+
+  if (workType === "bugfix") {
+    if (!hasBugReproduction(body)) {
+      findings.push(
+        finding(
+          "high",
+          "MissingReproduction",
+          "intent",
+          "The bugfix does not include a concrete reproduction or before-state.",
+          changedPaths,
+          "A reviewer cannot confirm that the change addresses the reported failure without reproduction evidence.",
+          "Add a Reproduction, Steps to reproduce, or Before section with the failing behavior."
+        )
+      );
+    }
+    if (!hasNonSnapshotTests) {
+      findings.push(
+        finding(
+          "high",
+          "MissingRegressionTest",
+          "evidence",
+          "The bugfix does not include a non-snapshot regression test.",
+          classified.testFiles.map((file) => file.filename),
+          hasSnapshotTests
+            ? "Snapshot-only updates do not demonstrate the repaired behavior with a focused assertion."
+            : "No changed non-snapshot test protects the repaired behavior from regression.",
+          "Add or update a focused unit or integration test that fails before the fix and passes after it."
+        )
+      );
+      return hasSnapshotTests ? "insufficient_evidence" : "missing";
+    }
+    return "adequate";
+  }
+
+  if (hasNonSnapshotTests) return "adequate";
+  if (noTestReason) return "not_required";
+
+  findings.push(
+    finding(
+      "high",
+      "MissingTests",
+      "evidence",
+      "The change has no non-snapshot test evidence or qualified no-test explanation.",
+      changedPaths,
+      hasSnapshotTests
+        ? "Only snapshot evidence changed, which is insufficient for behavior coverage."
+        : "No changed test file demonstrates the new or preserved behavior.",
+      "Add a focused unit/integration test, or include `No tests:` / `Testing not required:` followed by a specific reviewable reason."
+    )
+  );
+  return hasSnapshotTests ? "insufficient_evidence" : "missing";
+}
+
+function addWorkTypeEvidenceFindings(
+  workType: SdlcWorkType,
+  body: string,
+  classified: ClassifiedPrFiles,
+  findings: StructuredReviewFinding[]
+): void {
+  const paths = classified.allFiles.map((file) => file.filename);
+
+  if ((workType === "release" || workType === "infra") && !hasDocsVerification(body)) {
+    findings.push(
+      finding(
+        "high",
+        "MissingOperationalVerification",
+        "evidence",
+        `${workType === "release" ? "Release" : "Infrastructure"} work lacks explicit verification evidence.`,
+        paths,
+        "Operational changes need a named command or validation procedure before merge.",
+        "Add a Verification section with the command or environment validation performed."
+      )
+    );
+  }
+
+  if ((workType === "release" || workType === "infra") && !hasFallback(body)) {
+    findings.push(
+      finding(
+        "high",
+        "MissingFallback",
+        "fallback",
+        `${workType === "release" ? "Release" : "Infrastructure"} work lacks a detailed rollback or fallback.`,
+        paths,
+        "High-impact operational changes need an executable recovery path, not an empty heading.",
+        "Add a Rollback, Fallback, or Revert section with concrete recovery steps."
+      )
+    );
+  }
+
+  if (workType === "release" && !/\bv?\d+\.\d+\.\d+(?:-[0-9a-z.-]+)?\b/i.test(body)) {
+    findings.push(
+      finding(
+        "high",
+        "MissingReleaseVersion",
+        "policy",
+        "Release work does not identify the version being published.",
+        paths,
+        "The version is required to compare source metadata, release configuration, and the intended artifact.",
+        "Name the exact semantic version in the PR description and verify it matches the release metadata."
+      )
+    );
+  }
+
+  if (workType === "infra" && classified.workflowFiles.length > 0) {
+    if (!/\b(?:pull_request|push|schedule|trigger(?:ed|s)?|workflow_dispatch)\b|\bon\s*:/i.test(body)) {
+      findings.push(
+        finding(
+          "high",
+          "MissingWorkflowTrigger",
+          "policy",
+          "Workflow work does not document the intended trigger conditions.",
+          classified.workflowFiles.map((file) => file.filename),
+          "A reviewer cannot determine when the changed automation will run.",
+          "Describe the exact events, branches, paths, or schedules that should trigger the workflow."
+        )
+      );
+    }
+    if (!/\b(?:error path|fail(?:ed|s|ure)?|timeout|cancelled|canceled)\b/i.test(body)) {
+      findings.push(
+        finding(
+          "high",
+          "MissingWorkflowFailurePath",
+          "fallback",
+          "Workflow work does not describe failure behavior.",
+          classified.workflowFiles.map((file) => file.filename),
+          "Operational automation needs an explicit failure path so partial or stalled execution is reviewable.",
+          "Describe failure, timeout, and cancellation behavior and how an operator should recover."
+        )
+      );
+    }
+  }
+
+  if (workType === "security") {
+    const requirements: Array<[RegExp, string, string]> = [
+      [/\b(?:threat|attack|vulnerability|risk)\b/i, "MissingThreatAnalysis", "threat or risk"],
+      [/\b(?:access|authorization|permission|privilege)\b/i, "MissingPermissionAnalysis", "permission impact"],
+      [/\b(?:credential|key|secret|token)\b/i, "MissingSecretAnalysis", "credential and secret handling"],
+    ];
+    for (const [pattern, category, subject] of requirements) {
+      if (pattern.test(body)) continue;
+      findings.push(
+        finding(
+          "high",
+          category,
+          "security",
+          `Security work does not document ${subject}.`,
+          paths,
+          `The approved security review standard requires an explicit ${subject} assessment.`,
+          `Document the ${subject} and the evidence used to validate it.`
+        )
+      );
+    }
+    if (!hasSecurityValidation(body)) {
+      findings.push(
+        finding(
+          "high",
+          "MissingSecurityValidation",
+          "security",
+          "Security work does not describe security-specific validation.",
+          paths,
+          "General test files do not prove that the identified threat or permission boundary was validated.",
+          "Document a security verification method such as a focused abuse-case test, CodeQL/SAST result, audit, or threat-model validation."
+        )
+      );
+    }
+  }
+}
+
+function addSecurityFocusedFindings(
+  classified: ClassifiedPrFiles,
+  findings: StructuredReviewFinding[]
+): void {
+  if (classified.envFiles.length > 0) {
+    findings.push(
+      finding(
+        "critical",
+        "EnvironmentFileChanged",
+        "security",
+        "An environment configuration file is included in the change.",
+        classified.envFiles.map((file) => file.filename),
+        "Environment files can contain deploy-time credentials or private configuration.",
+        "Confirm no real secret is present, keep runtime environment files ignored, and rotate any exposed credential."
+      )
+    );
+  }
+
+  for (const file of classified.allFiles) {
+    findings.push(...scanPatchForSecrets(file.filename, file.patch));
+  }
+
+  if (classified.lockFiles.length > 0) {
+    findings.push(
+      finding(
+        "medium",
+        "LockfileChanged",
+        "security",
+        "A dependency lockfile changed.",
+        classified.lockFiles.map((file) => file.filename),
+        "Dependency resolution changed and may alter the shipped software supply chain.",
+        "Review the dependency diff and run the ecosystem's vulnerability audit before release."
+      )
+    );
+  }
+
+  if (classified.generatedFiles.length > 0) {
+    findings.push(
+      finding(
+        "medium",
+        "GeneratedArtifactChanged",
+        "scope",
+        "Generated or built artifacts are included in the change.",
+        classified.generatedFiles.map((file) => file.filename),
+        "Generated output is harder to review and can conceal behavior not evident in source changes.",
+        "Verify the artifacts are intentionally versioned and reproducible from reviewed source."
+      )
+    );
+  }
+}
+
+function addStrictFindings(
+  classified: ClassifiedPrFiles,
+  totalChangedLines: number,
+  findings: StructuredReviewFinding[]
+): void {
+  if (totalChangedLines <= 800) return;
+  findings.push(
+    finding(
+      "medium",
+      "LargeChangeScope",
+      "scope",
+      `The PR changes ${totalChangedLines} lines, which is difficult to review as one unit.`,
+      classified.allFiles.map((file) => file.filename),
+      "Large diffs increase the chance that intent, tests, or security-sensitive details are missed during review.",
+      "Split independent concerns into smaller PRs, or document why this change must remain atomic."
+    )
+  );
+}
+
+function calculateReleaseRisk(
+  findings: StructuredReviewFinding[],
+  classified: ClassifiedPrFiles
+): ReleaseRisk {
+  if (findings.some((item) => item.severity === "critical")) return "critical";
+  if (
+    findings.some((item) => item.severity === "high") ||
+    classified.workflowFiles.length > 0 ||
+    classified.authSecurityFiles.length > 0 ||
+    classified.releaseFiles.length > 0 ||
+    classified.lockFiles.length > 0
+  ) {
+    return "high";
+  }
+  if (findings.some((item) => item.severity === "medium")) return "moderate";
+  return "low";
+}
+
+function calculateConclusion(
+  findings: StructuredReviewFinding[]
+): ReviewEvaluationResult["conclusion"] {
+  if (findings.some((item) => item.severity === "critical" || item.severity === "high")) {
+    return "needs_changes";
+  }
+  if (findings.some((item) => item.severity === "medium")) return "risky_but_acceptable";
+  return "pass";
+}
+
+function sortFindings(findings: StructuredReviewFinding[]): StructuredReviewFinding[] {
+  return [...findings].sort(
+    (left, right) =>
+      SEVERITY_ORDER.indexOf(left.severity) - SEVERITY_ORDER.indexOf(right.severity)
+  );
+}
+
+export function evaluatePullRequestReview(
+  input: ReviewEvaluationInput
+): ReviewEvaluationResult {
+  const classified = classifyPrFiles(input.files);
+  const inferred = inferWorkType(input.pr, classified.allFiles);
+  const workType = input.workType ?? inferred.workType;
+  const workTypeConfidence = input.workType ? "high" : inferred.confidence;
+  const workTypeReasoning = input.workType
+    ? `The caller explicitly selected the ${input.workType} work type.`
+    : inferred.reasoning;
+  const body = input.pr.body ?? "";
+  const findings: StructuredReviewFinding[] = [];
+  const standard = input.standard ?? "basic";
+  const totalChangedLines = classified.allFiles.reduce(
+    (total, file) => total + (file.changes ?? (file.additions ?? 0) + (file.deletions ?? 0)),
+    0
+  );
+
+  if (body.trim().length < 20) {
+    findings.push(
+      finding(
+        "high",
+        "MissingIntent",
+        "intent",
+        "The PR description does not provide enough intent for review.",
+        [],
+        "A short or empty body does not explain why the change is needed or how it should be evaluated.",
+        "Explain the problem, intended outcome, and relevant constraints in the PR description."
+      )
+    );
+  }
+
+  const testCoverageSignal = evaluateTestEvidence(workType, body, classified, findings);
+  addWorkTypeEvidenceFindings(workType, body, classified, findings);
+  if (standard === "strict" || standard === "security-focused") {
+    addStrictFindings(classified, totalChangedLines, findings);
+  }
+  if (standard === "security-focused") {
+    addSecurityFocusedFindings(classified, findings);
+  }
+
+  const sortedFindings = sortFindings(findings);
+  return {
+    workType,
+    workTypeConfidence,
+    workTypeReasoning,
+    findings: sortedFindings,
+    releaseRisk: calculateReleaseRisk(sortedFindings, classified),
+    testCoverageSignal,
+    conclusion: calculateConclusion(sortedFindings),
+    hasTests: classified.testFiles.length > 0,
+    totalChangedLines,
+  };
+}
