@@ -15,6 +15,7 @@ import {
   type CiEvidence,
   type GateSignal,
   type PullRequestEvidence,
+  type RequiredStatusCheck,
   type SignalBuckets,
 } from "../github/pull-request-evidence.js";
 import type { CheckStatus, RepoRef } from "../types.js";
@@ -58,11 +59,17 @@ const CheckStatusShape = z.object({
 const GateSignalShape = z.object({
   name: z.string(),
   source: z.enum(["check_run", "commit_status"]),
+  appId: z.number().int().nullable(),
   state: z.enum(["passing", "failing", "pending", "skipped"]),
   rawStatus: z.string().nullable(),
   rawConclusion: z.string().nullable(),
   rawState: z.string().nullable(),
   url: z.string().nullable(),
+});
+
+const RequiredStatusCheckShape = z.object({
+  context: z.string(),
+  appId: z.number().int().nullable(),
 });
 
 const SignalBucketsShape = z.object({
@@ -91,6 +98,7 @@ const QualityGateEvidenceShape = z.object({
     commitStatuses: SignalBucketsShape,
     totalSignals: z.number().int().nonnegative(),
     requiredContexts: z.array(z.string()),
+    requiredChecks: z.array(RequiredStatusCheckShape),
     missingRequiredContexts: z.array(z.string()),
   }),
   pullRequest: z
@@ -118,6 +126,10 @@ const QualityGateEvidenceShape = z.object({
     .object({
       classicEnabled: z.boolean(),
       rulesetRuleTypes: z.array(z.string()),
+      pullRequestRuleRequirements: z.object({
+        requiredReviewThreadResolution: z.boolean(),
+        requiredReviewersConfigured: z.boolean(),
+      }),
     })
     .nullable(),
   labels: z
@@ -191,6 +203,7 @@ export interface QualityGateEvidenceResult {
     commitStatuses: SignalBuckets;
     totalSignals: number;
     requiredContexts: string[];
+    requiredChecks: RequiredStatusCheck[];
     missingRequiredContexts: string[];
   };
   pullRequest: {
@@ -213,6 +226,7 @@ export interface QualityGateEvidenceResult {
   branchProtection: {
     classicEnabled: boolean;
     rulesetRuleTypes: string[];
+    pullRequestRuleRequirements: PullRequestEvidence["branchProtection"]["pullRequestRuleRequirements"];
   } | null;
   labels: { all: string[]; blocking: string[] } | null;
   linkedIssues: PullRequestEvidence["linkedIssues"];
@@ -365,22 +379,33 @@ function requiredContextsState(evidence: PullRequestEvidence): {
   missing: string[];
   satisfiedByPassingOrSkipped: boolean;
 } {
-  const required = uniqueCaseInsensitive(evidence.branchProtection.requiredStatusContexts);
-  const present = new Set(allSignals(evidence.ci).map((item) => item.name.toLocaleLowerCase()));
-  const satisfied = new Set(
-    [
-      ...evidence.ci.checkRuns.passing,
-      ...evidence.ci.checkRuns.skipped,
-      ...evidence.ci.commitStatuses.passing,
-      ...evidence.ci.commitStatuses.skipped,
-    ].map((item) => item.name.toLocaleLowerCase())
+  const requiredChecks =
+    evidence.branchProtection.requiredStatusChecks?.length > 0
+      ? evidence.branchProtection.requiredStatusChecks
+      : evidence.branchProtection.requiredStatusContexts.map((context) => ({
+          context,
+          appId: null,
+        }));
+  const required = uniqueCaseInsensitive(requiredChecks.map((check) => check.context));
+  const signals = allSignals(evidence.ci);
+  const satisfiedSignals = signals.filter(
+    (signal) => signal.state === "passing" || signal.state === "skipped"
+  );
+  const matches = (check: RequiredStatusCheck, signal: GateSignal): boolean =>
+    check.context.toLocaleLowerCase() === signal.name.toLocaleLowerCase() &&
+    (check.appId === null ||
+      (signal.source === "check_run" && signal.appId === check.appId));
+  const missingChecks = requiredChecks.filter(
+    (check) => !signals.some((signal) => matches(check, signal))
   );
   return {
     required,
-    missing: required.filter((context) => !present.has(context.toLocaleLowerCase())),
+    missing: uniqueCaseInsensitive(missingChecks.map((check) => check.context)),
     satisfiedByPassingOrSkipped:
-      required.length > 0 &&
-      required.every((context) => satisfied.has(context.toLocaleLowerCase())),
+      requiredChecks.length > 0 &&
+      requiredChecks.every((check) =>
+        satisfiedSignals.some((signal) => matches(check, signal))
+      ),
   };
 }
 
@@ -407,12 +432,19 @@ function mergePolicyState(evidence: PullRequestEvidence): {
 } {
   const reviewPolicyConfigured = hasReviewPolicy(evidence);
   const hasRequiredContexts = evidence.branchProtection.requiredStatusContexts.length > 0;
+  const pullRequestRequirements = evidence.branchProtection.pullRequestRuleRequirements;
   const unmodeledRules = evidence.branchProtection.rulesetRuleTypes.filter((type) => {
     const normalized = type.toLocaleLowerCase();
     if (normalized === "pull_request") return !reviewPolicyConfigured;
     if (normalized === "required_status_checks") return !hasRequiredContexts;
     return UNMODELED_MERGE_RULE_TYPES.has(normalized);
   });
+  if (pullRequestRequirements?.requiredReviewThreadResolution) {
+    unmodeledRules.push("pull_request.required_review_thread_resolution");
+  }
+  if (pullRequestRequirements?.requiredReviewersConfigured) {
+    unmodeledRules.push("pull_request.required_reviewers");
+  }
 
   return {
     hasModeledPolicy: reviewPolicyConfigured || hasRequiredContexts,
@@ -663,6 +695,7 @@ function buildPullRequestResult(
         requiredContexts: uniqueCaseInsensitive(
           evidence.branchProtection.requiredStatusContexts
         ),
+        requiredChecks: evidence.branchProtection.requiredStatusChecks,
         missingRequiredContexts: decision.missingRequiredContexts,
       },
       pullRequest: {
@@ -685,6 +718,8 @@ function buildPullRequestResult(
       branchProtection: {
         classicEnabled: evidence.branchProtection.classicEnabled,
         rulesetRuleTypes: evidence.branchProtection.rulesetRuleTypes,
+        pullRequestRuleRequirements:
+          evidence.branchProtection.pullRequestRuleRequirements,
       },
       labels: {
         all: evidence.pullRequest.labels,
@@ -720,6 +755,7 @@ function buildRefResult(
         commitStatuses: ci.commitStatuses,
         totalSignals: ci.totalSignals,
         requiredContexts: [],
+        requiredChecks: [],
         missingRequiredContexts: [],
       },
       pullRequest: null,

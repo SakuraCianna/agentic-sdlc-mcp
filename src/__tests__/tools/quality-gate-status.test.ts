@@ -49,11 +49,13 @@ const DEFAULT_BLOCKING_LABELS = [
 function signal(
   name: string,
   state: GateSignal["state"] = "passing",
-  source: GateSignal["source"] = "check_run"
+  source: GateSignal["source"] = "check_run",
+  appId?: number | null
 ): GateSignal {
   return {
     name,
     source,
+    appId: appId ?? null,
     state,
     rawStatus: source === "check_run" ? (state === "pending" ? "in_progress" : "completed") : null,
     rawConclusion:
@@ -144,6 +146,11 @@ function pullRequestEvidence(overrides: PullRequestOverrides = {}): PullRequestE
       classicEnabled: true,
       rulesetRuleTypes: [],
       requiredStatusContexts: [],
+      requiredStatusChecks: [],
+      pullRequestRuleRequirements: {
+        requiredReviewThreadResolution: false,
+        requiredReviewersConfigured: false,
+      },
       ...overrides.branchProtection,
     },
     linkedIssues:
@@ -263,6 +270,43 @@ describe("evaluateQualityGate PR policy", () => {
     });
 
     expect(evaluateQualityGate(evidence, DEFAULT_BLOCKING_LABELS).conclusion).toBe("needs_review");
+  });
+
+  it("fails closed when a PR ruleset requires unresolved review threads to be resolved", () => {
+    const evidence = pullRequestEvidence({
+      ci: ciEvidence(),
+      reviews: { reviewDecision: "APPROVED", requiredApprovals: 1 },
+      branchProtection: {
+        classicEnabled: false,
+        rulesetRuleTypes: ["pull_request"],
+        pullRequestRuleRequirements: {
+          requiredReviewThreadResolution: true,
+          requiredReviewersConfigured: false,
+        },
+      },
+    });
+
+    const decision = evaluateQualityGate(evidence, DEFAULT_BLOCKING_LABELS);
+
+    expect(decision.conclusion).toBe("policy_gap");
+    expect(decision.blockers.join(" ")).toMatch(/required_review_thread_resolution/i);
+  });
+
+  it("fails closed when a PR ruleset configures required reviewers", () => {
+    const evidence = pullRequestEvidence({
+      ci: ciEvidence(),
+      reviews: { reviewDecision: "APPROVED", requiredApprovals: 1 },
+      branchProtection: {
+        classicEnabled: false,
+        rulesetRuleTypes: ["pull_request"],
+        pullRequestRuleRequirements: {
+          requiredReviewThreadResolution: false,
+          requiredReviewersConfigured: true,
+        },
+      },
+    });
+
+    expect(evaluateQualityGate(evidence, DEFAULT_BLOCKING_LABELS).conclusion).toBe("policy_gap");
   });
 
   it("does not treat zero CI signals as passing", () => {
@@ -666,6 +710,50 @@ describe("warnings and required contexts", () => {
 
     expect(decision.conclusion).toBe("pending");
     expect(decision.missingRequiredContexts).toEqual(["Lint"]);
+  });
+
+  it("does not satisfy an App-bound required check with a same-name check from another App", () => {
+    const evidence = pullRequestEvidence({
+      ci: ciEvidence({ checkRuns: [signal("build", "passing", "check_run", 999)] }),
+      branchProtection: {
+        requiredStatusContexts: ["build"],
+        requiredStatusChecks: [{ context: "build", appId: 4242 }],
+      },
+    });
+
+    const decision = evaluateQualityGate(evidence, DEFAULT_BLOCKING_LABELS);
+
+    expect(decision.conclusion).toBe("pending");
+    expect(decision.missingRequiredContexts).toEqual(["build"]);
+  });
+
+  it("satisfies an App-bound required check only with the matching check-run provider", () => {
+    const evidence = pullRequestEvidence({
+      ci: ciEvidence({
+        checkRuns: [
+          signal("build", "passing", "check_run", 999),
+          signal("build", "passing", "check_run", 4242),
+        ],
+      }),
+      branchProtection: {
+        requiredStatusContexts: ["build"],
+        requiredStatusChecks: [{ context: "build", appId: 4242 }],
+      },
+    });
+
+    expect(evaluateQualityGate(evidence, DEFAULT_BLOCKING_LABELS).conclusion).toBe("passing");
+  });
+
+  it("does not satisfy an App-bound required check with a legacy commit status", () => {
+    const evidence = pullRequestEvidence({
+      ci: ciEvidence({ commitStatuses: [signal("build", "passing", "commit_status")] }),
+      branchProtection: {
+        requiredStatusContexts: ["build"],
+        requiredStatusChecks: [{ context: "build", appId: 4242 }],
+      },
+    });
+
+    expect(evaluateQualityGate(evidence, DEFAULT_BLOCKING_LABELS).conclusion).toBe("pending");
   });
 
   it("accepts a skipped or neutral signal when it satisfies a required context", () => {

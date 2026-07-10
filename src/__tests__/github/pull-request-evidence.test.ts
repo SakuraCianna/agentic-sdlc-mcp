@@ -64,7 +64,13 @@ describe("collectCiEvidence", () => {
         listForRef: vi.fn().mockResolvedValue({
           data: {
             check_runs: [
-              { name: "test", status: "completed", conclusion: "success", html_url: "check" },
+              {
+                name: "test",
+                status: "completed",
+                conclusion: "success",
+                html_url: "check",
+                app: { id: 15368 },
+              },
             ],
           },
         }),
@@ -79,6 +85,7 @@ describe("collectCiEvidence", () => {
     const evidence = await collectCiEvidence(ref, "abc123", octokit);
     expect(evidence.totalSignals).toBe(2);
     expect(evidence.checkRuns.passing).toHaveLength(1);
+    expect(evidence.checkRuns.passing[0]).toMatchObject({ appId: 15368 });
     expect(evidence.commitStatuses.passing).toHaveLength(1);
   });
 
@@ -296,11 +303,45 @@ describe("collectPullRequestEvidence", () => {
               required_approving_review_count: 2,
               require_code_owner_reviews: true,
             },
-            required_status_checks: { contexts: ["test", "lint"] },
+            required_status_checks: {
+              contexts: ["test", "lint", "legacy"],
+              checks: [
+                { context: "test", app_id: 15368 },
+                { context: "lint", app_id: null },
+              ],
+            },
           },
         }),
         getBranchRules: vi.fn().mockResolvedValue({
-          data: [{ type: "pull_request" }, { type: "required_status_checks" }],
+          data: [
+            {
+              type: "pull_request",
+              parameters: {
+                dismiss_stale_reviews_on_push: true,
+                require_code_owner_review: false,
+                require_last_push_approval: true,
+                required_approving_review_count: 1,
+                required_review_thread_resolution: true,
+                required_reviewers: [
+                  {
+                    file_patterns: ["src/**"],
+                    minimum_approvals: 1,
+                    reviewer: { id: 7, type: "Team" },
+                  },
+                ],
+              },
+            },
+            {
+              type: "required_status_checks",
+              parameters: {
+                required_status_checks: [
+                  { context: "build", integration_id: 4242 },
+                  { context: "portable" },
+                ],
+                strict_required_status_checks_policy: false,
+              },
+            },
+          ],
         }),
       },
     });
@@ -308,7 +349,18 @@ describe("collectPullRequestEvidence", () => {
     expect(evidence.branchProtection).toEqual({
       classicEnabled: true,
       rulesetRuleTypes: ["pull_request", "required_status_checks"],
-      requiredStatusContexts: ["test", "lint"],
+      requiredStatusContexts: ["test", "lint", "legacy", "build", "portable"],
+      requiredStatusChecks: [
+        { context: "test", appId: 15368 },
+        { context: "lint", appId: null },
+        { context: "legacy", appId: null },
+        { context: "build", appId: 4242 },
+        { context: "portable", appId: null },
+      ],
+      pullRequestRuleRequirements: {
+        requiredReviewThreadResolution: true,
+        requiredReviewersConfigured: true,
+      },
     });
     expect(evidence.reviews.requiredApprovals).toBe(2);
     expect(evidence.reviews.requireCodeOwnerReviews).toBe(true);

@@ -9,11 +9,26 @@ export type GateSignalState = "passing" | "failing" | "pending" | "skipped";
 export interface GateSignal {
   name: string;
   source: GateSignalSource;
+  /** GitHub App provider for check runs; commit statuses do not expose one. */
+  appId: number | null;
   state: GateSignalState;
   rawStatus: string | null;
   rawConclusion: string | null;
   rawState: string | null;
   url: string | null;
+}
+
+export interface RequiredStatusCheck {
+  context: string;
+  /** null means that any provider may satisfy the required context. */
+  appId: number | null;
+}
+
+export interface PullRequestRuleRequirements {
+  // Approval freshness and last-push approval are represented by reviewDecision.
+  // These requirements need evidence that this collector does not currently fetch.
+  requiredReviewThreadResolution: boolean;
+  requiredReviewersConfigured: boolean;
 }
 
 export interface SignalBuckets {
@@ -70,6 +85,8 @@ export interface PullRequestEvidence {
     classicEnabled: boolean;
     rulesetRuleTypes: string[];
     requiredStatusContexts: string[];
+    requiredStatusChecks: RequiredStatusCheck[];
+    pullRequestRuleRequirements: PullRequestRuleRequirements;
   };
   linkedIssues: Array<{ number: number; title: string; url: string }> | null;
   degraded: boolean;
@@ -198,6 +215,7 @@ async function collectCheckRuns(
         runs.items.map((run) => ({
           name: run.name,
           source: "check_run",
+          appId: run.app?.id ?? null,
           state: checkRunState(run),
           rawStatus: run.status,
           rawConclusion: run.conclusion,
@@ -241,6 +259,7 @@ async function collectCommitStatuses(
         statuses.items.map((status) => ({
           name: status.context,
           source: "commit_status",
+          appId: null,
           state: statusState(status),
           rawStatus: null,
           rawConclusion: null,
@@ -433,16 +452,31 @@ interface ClassicProtectionValue {
   requiredApprovals: number | null;
   requireCodeOwnerReviews: boolean | null;
   requiredStatusContexts: string[];
+  requiredStatusChecks: RequiredStatusCheck[];
 }
 
 function classicProtectionValue(protection: BranchProtection): ClassicProtectionValue {
+  const configuredChecks = protection.required_status_checks?.checks ?? [];
+  const checkedContexts = new Set(
+    configuredChecks.map((check) => check.context.toLocaleLowerCase())
+  );
+  const requiredStatusChecks: RequiredStatusCheck[] = [
+    ...configuredChecks.map((check) => ({
+      context: check.context,
+      appId: normalizeRequiredAppId(check.app_id),
+    })),
+    ...(protection.required_status_checks?.contexts ?? [])
+      .filter((context) => !checkedContexts.has(context.toLocaleLowerCase()))
+      .map((context) => ({ context, appId: null })),
+  ];
   return {
     enabled: true,
     requiredApprovals:
       protection.required_pull_request_reviews?.required_approving_review_count ?? null,
     requireCodeOwnerReviews:
       protection.required_pull_request_reviews?.require_code_owner_reviews ?? null,
-    requiredStatusContexts: protection.required_status_checks?.contexts ?? [],
+    requiredStatusContexts: requiredStatusChecks.map((check) => check.context),
+    requiredStatusChecks,
   };
 }
 
@@ -464,6 +498,7 @@ async function collectClassicProtection(
       requiredApprovals: null,
       requireCodeOwnerReviews: null,
       requiredStatusContexts: [],
+      requiredStatusChecks: [],
     };
     if (hasHttpStatus(error, 404)) return { value, errors: [], unverifiedSignals: [] };
     return {
@@ -479,21 +514,53 @@ interface RulesValue {
   requiredApprovals: number | null;
   requireCodeOwnerReviews: boolean | null;
   requiredStatusContexts: string[];
+  requiredStatusChecks: RequiredStatusCheck[];
+  pullRequestRuleRequirements: PullRequestRuleRequirements;
+}
+
+function normalizeRequiredAppId(appId: number | null | undefined): number | null {
+  return appId === undefined || appId === null || appId === -1 ? null : appId;
+}
+
+function hasBlockingRequiredReviewers(value: unknown): boolean {
+  if (!Array.isArray(value)) return false;
+  return value.some(
+    (reviewer) =>
+      typeof reviewer === "object" &&
+      reviewer !== null &&
+      "minimum_approvals" in reviewer &&
+      typeof reviewer.minimum_approvals === "number" &&
+      reviewer.minimum_approvals > 0
+  );
 }
 
 function rulesValue(rules: AppliedBranchRule[]): RulesValue {
   const approvalCounts: number[] = [];
   const codeOwnerRequirements: boolean[] = [];
-  const requiredStatusContexts: string[] = [];
+  const requiredStatusChecks: RequiredStatusCheck[] = [];
+  const pullRequestRuleRequirements: PullRequestRuleRequirements = {
+    requiredReviewThreadResolution: false,
+    requiredReviewersConfigured: false,
+  };
 
   for (const rule of rules) {
     if (rule.type === "pull_request" && rule.parameters) {
       approvalCounts.push(rule.parameters.required_approving_review_count);
       codeOwnerRequirements.push(rule.parameters.require_code_owner_review);
+      pullRequestRuleRequirements.requiredReviewThreadResolution ||=
+        rule.parameters.required_review_thread_resolution;
+      const runtimeParameters = rule.parameters as typeof rule.parameters & {
+        required_reviewers?: unknown;
+      };
+      pullRequestRuleRequirements.requiredReviewersConfigured ||=
+        hasBlockingRequiredReviewers(runtimeParameters.required_reviewers);
     }
     if (rule.type === "required_status_checks" && rule.parameters) {
-      requiredStatusContexts.push(
-        ...rule.parameters.required_status_checks.map((check) => check.context)
+      requiredStatusChecks.push(
+        ...rule.parameters.required_status_checks.map((check) => ({
+          context: check.context,
+          appId: normalizeRequiredAppId(check.integration_id),
+        }))
       );
     }
   }
@@ -503,7 +570,9 @@ function rulesValue(rules: AppliedBranchRule[]): RulesValue {
     requiredApprovals: approvalCounts.length > 0 ? Math.max(...approvalCounts) : null,
     requireCodeOwnerReviews:
       codeOwnerRequirements.length > 0 ? codeOwnerRequirements.some(Boolean) : null,
-    requiredStatusContexts,
+    requiredStatusContexts: requiredStatusChecks.map((check) => check.context),
+    requiredStatusChecks,
+    pullRequestRuleRequirements,
   };
 }
 
@@ -538,6 +607,11 @@ async function collectAppliedRules(
         requiredApprovals: null,
         requireCodeOwnerReviews: null,
         requiredStatusContexts: [],
+        requiredStatusChecks: [],
+        pullRequestRuleRequirements: {
+          requiredReviewThreadResolution: false,
+          requiredReviewersConfigured: false,
+        },
       },
       errors: [`branch_rules: ${handleGitHubError(error)}`],
       unverifiedSignals: ["branch_rules"],
@@ -666,10 +740,25 @@ export async function collectPullRequestEvidence(
     ...codeOwnerReviewUnverified,
   ].filter((signal, index, all) => all.indexOf(signal) === index);
   const reviewedUsers = reviews.value.reviewedUsers;
-  const requiredStatusContexts = [
-    ...classicProtection.value.requiredStatusContexts,
-    ...appliedRules.value.requiredStatusContexts,
-  ].filter((context, index, all) => all.indexOf(context) === index);
+  const requiredStatusChecks = [
+    ...classicProtection.value.requiredStatusChecks,
+    ...appliedRules.value.requiredStatusChecks,
+  ].filter(
+    (check, index, all) =>
+      all.findIndex(
+        (candidate) =>
+          candidate.context.toLocaleLowerCase() === check.context.toLocaleLowerCase() &&
+          candidate.appId === check.appId
+      ) === index
+  );
+  const requiredStatusContexts = requiredStatusChecks
+    .map((check) => check.context)
+    .filter(
+      (context, index, all) =>
+        all.findIndex(
+          (candidate) => candidate.toLocaleLowerCase() === context.toLocaleLowerCase()
+        ) === index
+    );
 
   return {
     pullRequest: {
@@ -710,6 +799,8 @@ export async function collectPullRequestEvidence(
       classicEnabled: classicProtection.value.enabled,
       rulesetRuleTypes: appliedRules.value.types,
       requiredStatusContexts,
+      requiredStatusChecks,
+      pullRequestRuleRequirements: appliedRules.value.pullRequestRuleRequirements,
     },
     linkedIssues: graphQl.value.linkedIssues,
     degraded: unverifiedSignals.length > 0,
