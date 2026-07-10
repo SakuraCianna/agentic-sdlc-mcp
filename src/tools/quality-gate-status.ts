@@ -1,19 +1,34 @@
 /**
  * Tool: quality_gate_status
  *
- * Core logic extracted as `categorizeChecks` and `handleQualityGateStatus`
- * for unit testing without MCP machinery.
+ * Evaluates real pull-request merge evidence while preserving ref-only CI
+ * compatibility and the legacy check-run summary fields.
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod";
-import { resolveRepo, getOctokit, paginateAll, handleGitHubError } from "../github/client.js";
-import type { CheckStatus, RepoRef } from "../types.js";
 import type { Octokit } from "@octokit/rest";
+import { z } from "zod";
+import { resolveRepo, getOctokit, handleGitHubError } from "../github/client.js";
+import {
+  collectCiEvidence,
+  collectPullRequestEvidence,
+  type CiEvidence,
+  type GateSignal,
+  type PullRequestEvidence,
+  type SignalBuckets,
+} from "../github/pull-request-evidence.js";
+import type { CheckStatus, RepoRef } from "../types.js";
 
 // ---------------------------------------------------------------------------
 // Schema
 // ---------------------------------------------------------------------------
+
+export const DEFAULT_BLOCKING_LABELS = [
+  "blocked",
+  "do-not-merge",
+  "release-blocker",
+  "security-blocker",
+] as const;
 
 export const QualityGateInputSchema = z.object({
   owner: z.string().optional().describe("GitHub owner. Falls back to GITHUB_OWNER."),
@@ -24,9 +39,14 @@ export const QualityGateInputSchema = z.object({
   ref: z
     .string().optional()
     .describe("Git ref (branch name, commit SHA). Ignored if pullNumber is set."),
+  blockingLabels: z
+    .array(z.string().min(1))
+    .max(50)
+    .default([...DEFAULT_BLOCKING_LABELS])
+    .describe("Exact, case-insensitive PR labels that block the gate. Pass [] to disable."),
 });
 
-export type QualityGateInput = z.infer<typeof QualityGateInputSchema>;
+export type QualityGateInput = z.input<typeof QualityGateInputSchema>;
 
 const CheckStatusShape = z.object({
   name: z.string(),
@@ -35,17 +55,105 @@ const CheckStatusShape = z.object({
   url: z.string().nullable(),
 });
 
+const GateSignalShape = z.object({
+  name: z.string(),
+  source: z.enum(["check_run", "commit_status"]),
+  state: z.enum(["passing", "failing", "pending", "skipped"]),
+  rawStatus: z.string().nullable(),
+  rawConclusion: z.string().nullable(),
+  rawState: z.string().nullable(),
+  url: z.string().nullable(),
+});
+
+const SignalBucketsShape = z.object({
+  passing: z.array(GateSignalShape),
+  failing: z.array(GateSignalShape),
+  pending: z.array(GateSignalShape),
+  skipped: z.array(GateSignalShape),
+  total: z.number().int().nonnegative(),
+});
+
+const LinkedIssueShape = z.object({
+  number: z.number().int().positive(),
+  title: z.string(),
+  url: z.string(),
+});
+
+const OwnershipGapShape = z.object({
+  owner: z.string(),
+  paths: z.array(z.string()),
+});
+
+const QualityGateEvidenceShape = z.object({
+  scope: z.enum(["pull_request", "ref"]),
+  checks: z.object({
+    checkRuns: SignalBucketsShape,
+    commitStatuses: SignalBucketsShape,
+    totalSignals: z.number().int().nonnegative(),
+    requiredContexts: z.array(z.string()),
+    missingRequiredContexts: z.array(z.string()),
+  }),
+  pullRequest: z
+    .object({
+      draft: z.boolean(),
+      mergeable: z.boolean().nullable(),
+      baseBranch: z.string(),
+    })
+    .nullable(),
+  reviews: z
+    .object({
+      reviewDecision: z.enum(["APPROVED", "CHANGES_REQUESTED", "REVIEW_REQUIRED"]).nullable(),
+      approved: z.number().int().nonnegative(),
+      approvedUsers: z.array(z.string()),
+      changesRequestedUsers: z.array(z.string()),
+      requestedUsers: z.array(z.string()),
+      requestedTeams: z.array(z.string()),
+      required: z.number().int().nonnegative().nullable(),
+      requireCodeOwnerReviews: z.boolean().nullable(),
+      codeOwnerReviewSatisfied: z.boolean().nullable(),
+      ownershipGaps: z.array(OwnershipGapShape),
+    })
+    .nullable(),
+  branchProtection: z
+    .object({
+      classicEnabled: z.boolean(),
+      rulesetRuleTypes: z.array(z.string()),
+    })
+    .nullable(),
+  labels: z
+    .object({
+      all: z.array(z.string()),
+      blocking: z.array(z.string()),
+    })
+    .nullable(),
+  linkedIssues: z.array(LinkedIssueShape).nullable(),
+});
+
 export const QualityGateOutputSchema = {
   contextLabel: z.string(),
   headSha: z.string(),
-  conclusion: z.enum(["passing", "failing", "pending"]),
+  conclusion: z.enum([
+    "passing",
+    "failing",
+    "pending",
+    "needs_review",
+    "policy_gap",
+    "no_evidence",
+  ]),
   categories: z.object({
     failing: z.array(CheckStatusShape),
     pending: z.array(CheckStatusShape),
     passing: z.array(CheckStatusShape),
     skipped: z.array(CheckStatusShape),
   }),
-  totalChecks: z.number().int(),
+  totalChecks: z.number().int().nonnegative(),
+  evidence: QualityGateEvidenceShape,
+  blockers: z.array(z.string()),
+  warnings: z.array(z.string()),
+  nextActions: z.array(z.string()),
+  degraded: z.boolean(),
+  unverifiedSignals: z.array(z.string()),
+  errors: z.array(z.string()),
 };
 
 // ---------------------------------------------------------------------------
@@ -59,16 +167,74 @@ export interface CheckCategories {
   skipped: CheckStatus[];
 }
 
+export type QualityGateConclusion =
+  | "passing"
+  | "failing"
+  | "pending"
+  | "needs_review"
+  | "policy_gap"
+  | "no_evidence";
+
+export interface QualityGateDecision {
+  conclusion: QualityGateConclusion;
+  blockers: string[];
+  warnings: string[];
+  nextActions: string[];
+  matchedBlockingLabels: string[];
+  missingRequiredContexts: string[];
+}
+
+export interface QualityGateEvidenceResult {
+  scope: "pull_request" | "ref";
+  checks: {
+    checkRuns: SignalBuckets;
+    commitStatuses: SignalBuckets;
+    totalSignals: number;
+    requiredContexts: string[];
+    missingRequiredContexts: string[];
+  };
+  pullRequest: {
+    draft: boolean;
+    mergeable: boolean | null;
+    baseBranch: string;
+  } | null;
+  reviews: {
+    reviewDecision: PullRequestEvidence["reviews"]["reviewDecision"];
+    approved: number;
+    approvedUsers: string[];
+    changesRequestedUsers: string[];
+    requestedUsers: string[];
+    requestedTeams: string[];
+    required: number | null;
+    requireCodeOwnerReviews: boolean | null;
+    codeOwnerReviewSatisfied: boolean | null;
+    ownershipGaps: PullRequestEvidence["reviews"]["ownershipGaps"];
+  } | null;
+  branchProtection: {
+    classicEnabled: boolean;
+    rulesetRuleTypes: string[];
+  } | null;
+  labels: { all: string[]; blocking: string[] } | null;
+  linkedIssues: PullRequestEvidence["linkedIssues"];
+}
+
 export interface QualityGateResult {
   contextLabel: string;
   headSha: string;
-  conclusion: "passing" | "failing" | "pending";
+  conclusion: QualityGateConclusion;
   categories: CheckCategories;
   totalChecks: number;
+  evidence: QualityGateEvidenceResult;
+  blockers: string[];
+  warnings: string[];
+  nextActions: string[];
+  degraded: boolean;
+  unverifiedSignals: string[];
+  errors: string[];
 }
 
 // ---------------------------------------------------------------------------
-// Pure helpers (exported for testing)
+// Pure helpers
 // ---------------------------------------------------------------------------
 
 /** Categorise raw check-run objects into pass/fail/pending/skipped buckets. */
@@ -82,147 +248,618 @@ export function categorizeChecks(
 ): CheckCategories {
   const toStatus = (run: (typeof checkRuns)[number]): CheckStatus => ({
     name: run.name,
-    status: (run.status as CheckStatus["status"]) ?? "unknown",
-    conclusion: (run.conclusion as CheckStatus["conclusion"]) ?? null,
+    status: toCheckRunStatus(run.status),
+    conclusion: toCheckRunConclusion(run.conclusion),
     url: run.html_url ?? null,
   });
 
   return {
     failing: checkRuns
-      .filter((c) => c.conclusion === "failure" || c.conclusion === "timed_out")
-      .map(toStatus),
-    pending: checkRuns
-      .filter(
-        (c) =>
-          c.status === "queued" || c.status === "in_progress" || c.status === "pending"
+      .filter((run) =>
+        ["failure", "timed_out", "cancelled", "action_required"].includes(
+          run.conclusion ?? ""
+        )
       )
       .map(toStatus),
-    passing: checkRuns.filter((c) => c.conclusion === "success").map(toStatus),
+    pending: checkRuns
+      .filter((run) => ["queued", "in_progress", "pending"].includes(run.status ?? ""))
+      .map(toStatus),
+    passing: checkRuns.filter((run) => run.conclusion === "success").map(toStatus),
     skipped: checkRuns
-      .filter((c) => c.conclusion === "skipped" || c.conclusion === "neutral")
+      .filter((run) => run.conclusion === "skipped" || run.conclusion === "neutral")
       .map(toStatus),
   };
 }
 
+function toCheckRunStatus(status: string | null): CheckStatus["status"] {
+  if (
+    status === "queued" ||
+    status === "in_progress" ||
+    status === "completed" ||
+    status === "pending"
+  ) {
+    return status;
+  }
+  return "unknown";
+}
+
+function toCheckRunConclusion(conclusion: string | null): CheckStatus["conclusion"] {
+  if (
+    conclusion === "success" ||
+    conclusion === "failure" ||
+    conclusion === "neutral" ||
+    conclusion === "cancelled" ||
+    conclusion === "skipped" ||
+    conclusion === "timed_out" ||
+    conclusion === "action_required"
+  ) {
+    return conclusion;
+  }
+  return null;
+}
+
+function signalToCheckStatus(signal: GateSignal): CheckStatus {
+  return {
+    name: signal.name,
+    status: toCheckRunStatus(signal.rawStatus),
+    conclusion: toCheckRunConclusion(signal.rawConclusion),
+    url: signal.url,
+  };
+}
+
+function categoriesFromCheckRuns(checkRuns: SignalBuckets): CheckCategories {
+  return {
+    failing: checkRuns.failing.map(signalToCheckStatus),
+    pending: checkRuns.pending.map(signalToCheckStatus),
+    passing: checkRuns.passing.map(signalToCheckStatus),
+    skipped: checkRuns.skipped.map(signalToCheckStatus),
+  };
+}
+
+function unique(values: string[]): string[] {
+  return values.filter((value, index, all) => all.indexOf(value) === index);
+}
+
+function uniqueCaseInsensitive(values: string[]): string[] {
+  const seen = new Set<string>();
+  return values.filter((value) => {
+    const normalized = value.toLocaleLowerCase();
+    if (seen.has(normalized)) return false;
+    seen.add(normalized);
+    return true;
+  });
+}
+
+function nextActionsFor(conclusion: QualityGateConclusion): string[] {
+  switch (conclusion) {
+    case "failing":
+      return ["Resolve the known failing merge blockers before proceeding."];
+    case "pending":
+      return ["Wait for pending signals or required contexts, then run the gate again."];
+    case "needs_review":
+      return ["Complete the required human review and approval steps."];
+    case "policy_gap":
+      return ["Restore evidence access or configure the missing merge protection policy."];
+    case "no_evidence":
+      return ["Run or configure verifiable CI signals before treating this revision as safe."];
+    case "passing":
+      return ["Request final human merge approval."];
+  }
+}
+
+function allSignals(ci: CiEvidence): GateSignal[] {
+  return [
+    ...ci.checkRuns.passing,
+    ...ci.checkRuns.failing,
+    ...ci.checkRuns.pending,
+    ...ci.checkRuns.skipped,
+    ...ci.commitStatuses.passing,
+    ...ci.commitStatuses.failing,
+    ...ci.commitStatuses.pending,
+    ...ci.commitStatuses.skipped,
+  ];
+}
+
+function requiredContextsState(evidence: PullRequestEvidence): {
+  required: string[];
+  missing: string[];
+  satisfiedByPassingOrSkipped: boolean;
+} {
+  const required = uniqueCaseInsensitive(evidence.branchProtection.requiredStatusContexts);
+  const present = new Set(allSignals(evidence.ci).map((item) => item.name.toLocaleLowerCase()));
+  const satisfied = new Set(
+    [
+      ...evidence.ci.checkRuns.passing,
+      ...evidence.ci.checkRuns.skipped,
+      ...evidence.ci.commitStatuses.passing,
+      ...evidence.ci.commitStatuses.skipped,
+    ].map((item) => item.name.toLocaleLowerCase())
+  );
+  return {
+    required,
+    missing: required.filter((context) => !present.has(context.toLocaleLowerCase())),
+    satisfiedByPassingOrSkipped:
+      required.length > 0 &&
+      required.every((context) => satisfied.has(context.toLocaleLowerCase())),
+  };
+}
+
+function hasReviewPolicy(evidence: PullRequestEvidence): boolean {
+  return (
+    (evidence.reviews.requiredApprovals ?? 0) > 0 ||
+    evidence.reviews.requireCodeOwnerReviews === true
+  );
+}
+
+const UNMODELED_MERGE_RULE_TYPES = new Set([
+  "merge_queue",
+  "required_deployments",
+  "required_signatures",
+  "required_linear_history",
+  "code_scanning",
+  "workflows",
+  "required_workflows",
+]);
+
+function mergePolicyState(evidence: PullRequestEvidence): {
+  hasModeledPolicy: boolean;
+  unmodeledRules: string[];
+} {
+  const reviewPolicyConfigured = hasReviewPolicy(evidence);
+  const hasRequiredContexts = evidence.branchProtection.requiredStatusContexts.length > 0;
+  const unmodeledRules = evidence.branchProtection.rulesetRuleTypes.filter((type) => {
+    const normalized = type.toLocaleLowerCase();
+    if (normalized === "pull_request") return !reviewPolicyConfigured;
+    if (normalized === "required_status_checks") return !hasRequiredContexts;
+    return UNMODELED_MERGE_RULE_TYPES.has(normalized);
+  });
+
+  return {
+    hasModeledPolicy: reviewPolicyConfigured || hasRequiredContexts,
+    unmodeledRules: uniqueCaseInsensitive(unmodeledRules),
+  };
+}
+
+function sourceWarnings(evidence: PullRequestEvidence): string[] {
+  const warnings: string[] = [];
+  const unverified = new Set(evidence.unverifiedSignals);
+
+  if (evidence.linkedIssues === null || unverified.has("linked_issues")) {
+    warnings.push("linked issue 证据无法验证。 ");
+  } else if (evidence.linkedIssues.length === 0) {
+    warnings.push("此 PR 未关联 issue；建议补充可追溯的工作项。 ");
+  }
+
+  if (
+    !unverified.has("branch_protection") &&
+    !unverified.has("branch_rules") &&
+    !hasReviewPolicy(evidence)
+  ) {
+    warnings.push("未配置 required review 规则；这在单维护者仓库中可能是合理选择。 ");
+  }
+
+  if (
+    evidence.reviews.requireCodeOwnerReviews !== true &&
+    evidence.reviews.ownershipGaps.length > 0
+  ) {
+    warnings.push("CODEOWNERS 路由存在缺口，但未配置强制 CODEOWNER 审查。 ");
+  }
+
+  for (const source of evidence.unverifiedSignals) {
+    warnings.push(`证据来源 ${source} 无法完整验证。`);
+  }
+
+  return unique(warnings.map((warning) => warning.trim()));
+}
+
+/**
+ * Evaluate PR evidence with a stable, explicit decision priority.
+ * Known failures always remain authoritative even when other evidence is degraded.
+ */
+export function evaluateQualityGate(
+  evidence: PullRequestEvidence,
+  blockingLabels: readonly string[]
+): QualityGateDecision {
+  const configuredLabels = new Set(blockingLabels.map((label) => label.toLocaleLowerCase()));
+  const matchedBlockingLabels = evidence.pullRequest.labels.filter((label) =>
+    configuredLabels.has(label.toLocaleLowerCase())
+  );
+  const contexts = requiredContextsState(evidence);
+  const reviewPolicyConfigured = hasReviewPolicy(evidence);
+  const mergePolicy = mergePolicyState(evidence);
+  const unverifiedSignals = unique([
+    ...evidence.unverifiedSignals,
+    ...evidence.ci.unverifiedSignals,
+  ]);
+  const unverified = new Set(unverifiedSignals);
+  const failingReasons: string[] = [];
+  const pendingReasons: string[] = [];
+  const reviewReasons: string[] = [];
+  const policyReasons: string[] = [];
+
+  for (const item of [
+    ...evidence.ci.checkRuns.failing,
+    ...evidence.ci.commitStatuses.failing,
+  ]) {
+    failingReasons.push(`CI signal failed: ${item.name} (${item.source}).`);
+  }
+  if (evidence.pullRequest.mergeable === false) {
+    failingReasons.push("GitHub reports that the PR is not mergeable.");
+  }
+  if (evidence.reviews.reviewDecision === "CHANGES_REQUESTED") {
+    failingReasons.push(
+      evidence.reviews.changesRequestedUsers.length > 0
+        ? `Changes requested by: ${evidence.reviews.changesRequestedUsers.join(", ")}.`
+        : "A reviewer requested changes."
+    );
+  }
+  for (const label of matchedBlockingLabels) {
+    failingReasons.push(`Blocking label matched: ${label}.`);
+  }
+
+  for (const item of [
+    ...evidence.ci.checkRuns.pending,
+    ...evidence.ci.commitStatuses.pending,
+  ]) {
+    pendingReasons.push(`CI signal is pending: ${item.name} (${item.source}).`);
+  }
+  if (evidence.pullRequest.mergeable === null) {
+    pendingReasons.push("GitHub has not finished computing PR mergeability.");
+  }
+  if (contexts.missing.length > 0) {
+    pendingReasons.push(`Required status contexts are missing: ${contexts.missing.join(", ")}.`);
+  }
+
+  if (evidence.pullRequest.draft) reviewReasons.push("The pull request is still a draft.");
+  if (evidence.reviews.reviewDecision === "REVIEW_REQUIRED") {
+    reviewReasons.push("GitHub reports that review is required.");
+  }
+  if (
+    evidence.reviews.reviewDecision === null &&
+    !unverified.has("reviews") &&
+    evidence.reviews.requiredApprovals !== null &&
+    evidence.reviews.requiredApprovals > evidence.reviews.approvedUsers.length
+  ) {
+    reviewReasons.push(
+      `Approvals are incomplete: ${evidence.reviews.approvedUsers.length}/${evidence.reviews.requiredApprovals}.`
+    );
+  }
+
+  const criticalSources = [
+    "branch_protection",
+    "branch_rules",
+    "check_runs",
+    "commit_statuses",
+  ];
+  if (reviewPolicyConfigured && evidence.reviews.reviewDecision === null) {
+    criticalSources.push("reviews", "review_decision");
+    policyReasons.push("Aggregate review decision is unavailable for the configured review policy.");
+  }
+  if (evidence.reviews.requireCodeOwnerReviews === true) {
+    criticalSources.push("code_owner_review", "codeowners", "changed_files");
+  }
+  const missingCriticalSources = unique(
+    criticalSources.filter((source) => unverified.has(source))
+  );
+  if (missingCriticalSources.length > 0) {
+    policyReasons.push(
+      `Critical evidence sources are incomplete: ${missingCriticalSources.join(", ")}.`
+    );
+  }
+  if (
+    evidence.reviews.requireCodeOwnerReviews === true &&
+    evidence.reviews.reviewDecision !== "APPROVED" &&
+    evidence.reviews.codeOwnerReviewSatisfied === null
+  ) {
+    policyReasons.push("Required CODEOWNER review 无法验证。 ");
+  }
+  if (mergePolicy.unmodeledRules.length > 0) {
+    policyReasons.push(
+      `Unmodeled merge rules cannot be verified: ${mergePolicy.unmodeledRules.join(", ")}.`
+    );
+  }
+  if (
+    !unverified.has("branch_protection") &&
+    !unverified.has("branch_rules") &&
+    !mergePolicy.hasModeledPolicy
+  ) {
+    policyReasons.push("No verified merge-relevant protection policy was found.");
+  }
+
+  let conclusion: QualityGateConclusion;
+  if (failingReasons.length > 0) conclusion = "failing";
+  else if (pendingReasons.length > 0) conclusion = "pending";
+  else if (reviewReasons.length > 0) conclusion = "needs_review";
+  else if (policyReasons.length > 0) conclusion = "policy_gap";
+  else if (
+    evidence.ci.checkRuns.passing.length === 0 &&
+    evidence.ci.commitStatuses.passing.length === 0 &&
+    !contexts.satisfiedByPassingOrSkipped &&
+    !(reviewPolicyConfigured && evidence.reviews.reviewDecision === "APPROVED")
+  ) {
+    conclusion = "no_evidence";
+  } else conclusion = "passing";
+
+  const noEvidenceReasons =
+    conclusion === "no_evidence"
+      ? ["No verified passing CI signal is available for this pull request."]
+      : [];
+  return {
+    conclusion,
+    blockers: unique([
+      ...failingReasons,
+      ...pendingReasons,
+      ...reviewReasons,
+      ...policyReasons.map((reason) => reason.trim()),
+      ...noEvidenceReasons,
+    ]),
+    warnings: sourceWarnings(evidence),
+    nextActions: nextActionsFor(conclusion),
+    matchedBlockingLabels,
+    missingRequiredContexts: contexts.missing,
+  };
+}
+
+function evaluateRefQualityGate(ci: CiEvidence): QualityGateDecision {
+  const failingReasons = [
+    ...ci.checkRuns.failing,
+    ...ci.commitStatuses.failing,
+  ].map((item) => `CI signal failed: ${item.name} (${item.source}).`);
+  const pendingReasons = [
+    ...ci.checkRuns.pending,
+    ...ci.commitStatuses.pending,
+  ].map((item) => `CI signal is pending: ${item.name} (${item.source}).`);
+  const warnings = ci.unverifiedSignals.map(
+    (source) => `CI evidence source ${source} could not be fully verified.`
+  );
+
+  let conclusion: QualityGateConclusion;
+  if (failingReasons.length > 0) conclusion = "failing";
+  else if (pendingReasons.length > 0) conclusion = "pending";
+  else if (
+    ci.unverifiedSignals.length > 0 ||
+    ci.totalSignals === 0 ||
+    (ci.checkRuns.passing.length === 0 && ci.commitStatuses.passing.length === 0)
+  ) {
+    conclusion = "no_evidence";
+  } else conclusion = "passing";
+
+  return {
+    conclusion,
+    blockers: unique([
+      ...failingReasons,
+      ...pendingReasons,
+      ...(conclusion === "no_evidence"
+        ? ["No complete, verified passing CI evidence is available for this ref."]
+        : []),
+    ]),
+    warnings,
+    nextActions: nextActionsFor(conclusion),
+    matchedBlockingLabels: [],
+    missingRequiredContexts: [],
+  };
+}
+
+function buildPullRequestResult(
+  evidence: PullRequestEvidence,
+  decision: QualityGateDecision
+): QualityGateResult {
+  const unverifiedSignals = unique([
+    ...evidence.unverifiedSignals,
+    ...evidence.ci.unverifiedSignals,
+  ]);
+  return {
+    contextLabel: `PR #${evidence.pullRequest.number} (${evidence.pullRequest.title})`,
+    headSha: evidence.pullRequest.headSha,
+    conclusion: decision.conclusion,
+    categories: categoriesFromCheckRuns(evidence.ci.checkRuns),
+    totalChecks: evidence.ci.checkRuns.total,
+    evidence: {
+      scope: "pull_request",
+      checks: {
+        checkRuns: evidence.ci.checkRuns,
+        commitStatuses: evidence.ci.commitStatuses,
+        totalSignals: evidence.ci.totalSignals,
+        requiredContexts: uniqueCaseInsensitive(
+          evidence.branchProtection.requiredStatusContexts
+        ),
+        missingRequiredContexts: decision.missingRequiredContexts,
+      },
+      pullRequest: {
+        draft: evidence.pullRequest.draft,
+        mergeable: evidence.pullRequest.mergeable,
+        baseBranch: evidence.pullRequest.baseBranch,
+      },
+      reviews: {
+        reviewDecision: evidence.reviews.reviewDecision,
+        approved: evidence.reviews.approvedUsers.length,
+        approvedUsers: evidence.reviews.approvedUsers,
+        changesRequestedUsers: evidence.reviews.changesRequestedUsers,
+        requestedUsers: evidence.reviews.requestedUsers,
+        requestedTeams: evidence.reviews.requestedTeams,
+        required: evidence.reviews.requiredApprovals,
+        requireCodeOwnerReviews: evidence.reviews.requireCodeOwnerReviews,
+        codeOwnerReviewSatisfied: evidence.reviews.codeOwnerReviewSatisfied,
+        ownershipGaps: evidence.reviews.ownershipGaps,
+      },
+      branchProtection: {
+        classicEnabled: evidence.branchProtection.classicEnabled,
+        rulesetRuleTypes: evidence.branchProtection.rulesetRuleTypes,
+      },
+      labels: {
+        all: evidence.pullRequest.labels,
+        blocking: decision.matchedBlockingLabels,
+      },
+      linkedIssues: evidence.linkedIssues,
+    },
+    blockers: decision.blockers,
+    warnings: decision.warnings,
+    nextActions: decision.nextActions,
+    degraded: evidence.degraded || unverifiedSignals.length > 0,
+    unverifiedSignals,
+    errors: evidence.errors,
+  };
+}
+
+function buildRefResult(
+  refName: string,
+  headSha: string,
+  ci: CiEvidence,
+  decision: QualityGateDecision
+): QualityGateResult {
+  return {
+    contextLabel: `ref: ${refName}`,
+    headSha,
+    conclusion: decision.conclusion,
+    categories: categoriesFromCheckRuns(ci.checkRuns),
+    totalChecks: ci.checkRuns.total,
+    evidence: {
+      scope: "ref",
+      checks: {
+        checkRuns: ci.checkRuns,
+        commitStatuses: ci.commitStatuses,
+        totalSignals: ci.totalSignals,
+        requiredContexts: [],
+        missingRequiredContexts: [],
+      },
+      pullRequest: null,
+      reviews: null,
+      branchProtection: null,
+      labels: null,
+      linkedIssues: null,
+    },
+    blockers: decision.blockers,
+    warnings: decision.warnings,
+    nextActions: decision.nextActions,
+    degraded: ci.unverifiedSignals.length > 0,
+    unverifiedSignals: unique(ci.unverifiedSignals),
+    errors: ci.errors,
+  };
+}
+
+function sanitizeMarkdownNote(error: string): string {
+  const sanitized = error
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/`/g, "'")
+    .trim();
+  return (sanitized || "Unknown evidence collection error").slice(0, 500);
+}
+
+function renderQualityGateMarkdown(result: QualityGateResult): string {
+  const lines = [
+    `# Quality Gate Status - ${result.contextLabel}`,
+    "",
+    `**Commit:** \`${result.headSha.slice(0, 8)}\``,
+    `**Conclusion:** ${result.conclusion}`,
+    `**Evidence degraded:** ${result.degraded ? "yes" : "no"}`,
+    "",
+    "| Check runs | Count |",
+    "|---|---:|",
+    `| Passing | ${result.categories.passing.length} |`,
+    `| Failing | ${result.categories.failing.length} |`,
+    `| Pending | ${result.categories.pending.length} |`,
+    `| Skipped | ${result.categories.skipped.length} |`,
+    `| Total | ${result.totalChecks} |`,
+    "",
+    `**All CI signals:** ${result.evidence.checks.totalSignals}`,
+  ];
+
+  const reviewDetails = result.evidence.reviews;
+  if (reviewDetails) {
+    const reviewLines = [
+      reviewDetails.approvedUsers.length > 0
+        ? `- Approved: ${reviewDetails.approvedUsers.join(", ")}`
+        : null,
+      reviewDetails.changesRequestedUsers.length > 0
+        ? `- Changes requested: ${reviewDetails.changesRequestedUsers.join(", ")}`
+        : null,
+      reviewDetails.requestedUsers.length > 0
+        ? `- Requested users: ${reviewDetails.requestedUsers.join(", ")}`
+        : null,
+      reviewDetails.requestedTeams.length > 0
+        ? `- Requested teams: ${reviewDetails.requestedTeams.join(", ")}`
+        : null,
+    ].filter((line): line is string => line !== null);
+    if (reviewLines.length > 0) lines.push("", "## Review Details", ...reviewLines);
+  }
+
+  if (result.blockers.length > 0) {
+    lines.push("", "## Blockers", ...result.blockers.map((item) => `- ${item}`));
+  }
+  if (result.warnings.length > 0) {
+    lines.push("", "## Warnings", ...result.warnings.map((item) => `- ${item}`));
+  }
+  if (result.errors.length > 0) {
+    lines.push(
+      "",
+      "## Notes",
+      ...result.errors.map((error) => `- ${sanitizeMarkdownNote(error)}`)
+    );
+  }
+  if (result.categories.failing.length > 0) {
+    lines.push(
+      "",
+      "## Failing Check Runs",
+      ...result.categories.failing.map((item) => `- **${item.name}**: ${item.conclusion}`)
+    );
+  }
+  if (result.categories.pending.length > 0) {
+    lines.push(
+      "",
+      "## Pending Check Runs",
+      ...result.categories.pending.map((item) => `- **${item.name}**: ${item.status}`)
+    );
+  }
+  lines.push("", "## Next Actions", ...result.nextActions.map((item) => `- ${item}`));
+  return lines.join("\n");
+}
+
 // ---------------------------------------------------------------------------
-// Core handler (exported for testing)
+// Core handler
 // ---------------------------------------------------------------------------
+
+function normalizeCommitRef(input: string): string {
+  return input.replace(/^refs\/(?=(?:heads|tags)\/)/, "");
+}
 
 export async function handleQualityGateStatus(
   params: QualityGateInput,
   ref: RepoRef,
   octokit: Octokit
 ): Promise<{ text: string; structured: QualityGateResult }> {
-  let headSha: string;
-  let contextLabel: string;
+  let structured: QualityGateResult;
 
   if (params.pullNumber) {
-    const { data: pr } = await octokit.pulls.get({
-      owner: ref.owner,
-      repo: ref.repo,
-      pull_number: params.pullNumber,
-    });
-    headSha = pr.head.sha;
-    contextLabel = `PR #${params.pullNumber} (${pr.title})`;
+    const evidence = await collectPullRequestEvidence(
+      { pullNumber: params.pullNumber },
+      ref,
+      octokit
+    );
+    const decision = evaluateQualityGate(
+      evidence,
+      params.blockingLabels ?? DEFAULT_BLOCKING_LABELS
+    );
+    structured = buildPullRequestResult(evidence, decision);
   } else if (params.ref) {
-    const { data: refData } = await octokit.git.getRef({
+    const { data: commit } = await octokit.repos.getCommit({
       owner: ref.owner,
       repo: ref.repo,
-      ref: params.ref.replace(/^refs\//, ""),
+      ref: normalizeCommitRef(params.ref),
     });
-    headSha = refData.object.sha;
-    contextLabel = `ref: ${params.ref}`;
+    const headSha = commit.sha;
+    const evidence = await collectCiEvidence(ref, headSha, octokit);
+    structured = buildRefResult(
+      params.ref,
+      headSha,
+      evidence,
+      evaluateRefQualityGate(evidence)
+    );
   } else {
     throw new Error("Either pullNumber or ref is required.");
   }
 
-  // Paginate check runs (repos with many checks can exceed 100)
-  const allRuns = await paginateAll(
-    (page, perPage) =>
-      octokit.checks
-        .listForRef({
-          owner: ref.owner,
-          repo: ref.repo,
-          ref: headSha,
-          per_page: perPage,
-          page,
-        })
-        .then((r) => r.data.check_runs),
-    300
-  );
-
-  const cats = categorizeChecks(allRuns);
-  const overallConclusion: QualityGateResult["conclusion"] =
-    cats.failing.length > 0
-      ? "failing"
-      : cats.pending.length > 0
-      ? "pending"
-      : "passing";
-
-  const conclusionLabel =
-    overallConclusion === "passing"
-      ? "[PASS] All checks passed"
-      : overallConclusion === "failing"
-      ? "[FAIL] Some checks are failing"
-      : "[PENDING] Checks are still running";
-
-  const structured: QualityGateResult = {
-    contextLabel,
-    headSha,
-    conclusion: overallConclusion,
-    categories: cats,
-    totalChecks: allRuns.length,
-  };
-
-  const lines: string[] = [
-    `# Quality Gate Status - ${contextLabel}`,
-    "",
-    `**Commit:** \`${headSha.slice(0, 8)}\``,
-    `**Conclusion:** ${conclusionLabel}`,
-    "",
-    `| | Count |`,
-    `|---|---|`,
-    `| Passing | ${cats.passing.length} |`,
-    `| Failing | ${cats.failing.length} |`,
-    `| Pending | ${cats.pending.length} |`,
-    `| Skipped | ${cats.skipped.length} |`,
-    `| Total   | ${allRuns.length} |`,
-  ];
-
-  if (cats.failing.length > 0) {
-    lines.push("", "## [FAIL] Failing Checks");
-    cats.failing.forEach((c) => {
-      const link = c.url ? ` - [view](${c.url})` : "";
-      lines.push(`- **${c.name}**: ${c.conclusion}${link}`);
-    });
-  }
-
-  if (cats.pending.length > 0) {
-    lines.push("", "## [PENDING] Pending Checks");
-    cats.pending.forEach((c) => lines.push(`- **${c.name}**: ${c.status}`));
-  }
-
-  if (cats.passing.length > 0) {
-    lines.push("", "## [PASS] Passing Checks");
-    cats.passing.forEach((c) => lines.push(`- ${c.name}`));
-  }
-
-  lines.push("", "## Next Actions");
-  if (cats.failing.length > 0) {
-    lines.push(
-      "- Fix the failing checks listed above before proceeding.",
-      "- Use `review_pr_against_standard` for deeper analysis of PR issues."
-    );
-  } else if (cats.pending.length > 0) {
-    lines.push("- Wait for pending checks to complete, then re-run this tool.");
-  } else {
-    lines.push(
-      "- All checks pass. Safe to request review or merge.",
-      "- Run `release_readiness_check` for a full pre-release assessment."
-    );
-  }
-
-  return { text: lines.join("\n"), structured };
+  return { text: renderQualityGateMarkdown(structured), structured };
 }
 
 // ---------------------------------------------------------------------------
@@ -234,14 +871,15 @@ export function registerQualityGateStatusTool(server: McpServer): void {
     "quality_gate_status",
     {
       title: "Quality Gate Status",
-      description: `Read check-run results for a pull request or git ref.
+      description: `Evaluate real merge-gate evidence for a pull request or CI evidence for a git ref.
 
 Args:
   - owner, repo: Repository coordinates.
-  - pullNumber (number?): PR number (preferred).
-  - ref (string?): Branch name or commit SHA.
+  - pullNumber (number?): PR number (preferred); evaluates CI, reviews, policy, labels, and mergeability.
+  - ref (string?): Branch name or commit SHA; evaluates CI only.
+  - blockingLabels (string[]): Exact case-insensitive PR labels that block merging. Pass [] to disable.
 
-Returns: Summary of all check runs with pass/fail/pending counts and next actions.`,
+Returns: A structured evidence packet, blockers, warnings, next actions, and a conservative conclusion.`,
       inputSchema: QualityGateInputSchema,
       outputSchema: QualityGateOutputSchema,
       annotations: {
