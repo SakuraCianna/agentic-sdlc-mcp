@@ -7,6 +7,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { resolveRepo, getOctokit, paginateAll, handleGitHubError } from "../github/client.js";
+import { collectCiEvidence } from "../github/pull-request-evidence.js";
 import { config } from "../config.js";
 import type { RepoRef } from "../types.js";
 import type { Octokit } from "@octokit/rest";
@@ -100,26 +101,31 @@ export async function handleReleaseReadiness(
       headSha = refData.object.sha;
     }
 
-    const allRuns = await paginateAll(
-      (page, perPage) =>
-        octokit.checks
-          .listForRef({ owner: ref.owner, repo: ref.repo, ref: headSha, per_page: perPage, page })
-          .then((r) => r.data.check_runs),
-      300
-    );
+    const ci = await collectCiEvidence(ref, headSha, octokit);
+    const bothSourcesUnverified =
+      ci.unverifiedSignals.includes("check_runs") &&
+      ci.unverifiedSignals.includes("commit_statuses");
+    const notes = ci.errors.length > 0 ? ` Notes: ${ci.errors.join("; ")}` : "";
 
-    const failing = allRuns.filter((c) => c.conclusion === "failure");
-    const pending = allRuns.filter((c) => c.status === "queued" || c.status === "in_progress");
-
-    if (failing.length > 0) {
+    if (ci.hasFailing) {
       ciStatus = "failing";
-      ciSummary = `[FAIL] ${failing.length} check(s) failing: ${failing.map((c) => c.name).join(", ")}`;
-    } else if (pending.length > 0) {
+      const failingNames = [
+        ...ci.checkRuns.failing.map((signal) => signal.name),
+        ...ci.commitStatuses.failing.map((signal) => signal.name),
+      ];
+      ciSummary = `[FAIL] ${failingNames.length} CI signal(s) failing: ${failingNames.join(", ")}.${notes}`;
+    } else if (ci.hasPending) {
       ciStatus = "pending";
-      ciSummary = `[PENDING] ${pending.length} check(s) still running`;
+      const pendingCount = ci.checkRuns.pending.length + ci.commitStatuses.pending.length;
+      ciSummary = `[PENDING] ${pendingCount} CI signal(s) still running.${notes}`;
+    } else if (ci.totalSignals === 0 || bothSourcesUnverified) {
+      ciStatus = "unknown";
+      ciSummary = `[WARN] CI evidence could not be verified: ${
+        ci.totalSignals === 0 ? "no check runs or commit statuses were found" : "both CI sources are unverified"
+      }.${notes} Ensure your token has the \`repo\` scope (or \`public_repo\` for public-only repos) to read CI evidence.`;
     } else {
       ciStatus = "passing";
-      ciSummary = `[PASS] All ${allRuns.length} check(s) passing`;
+      ciSummary = `[PASS] All ${ci.totalSignals} CI signal(s) passing or intentionally skipped.${notes}`;
     }
   } catch (err) {
     ciSummary = `[WARN] Could not fetch CI status: ${handleGitHubError(err)} -- ensure your token has the \`repo\` scope (or \`public_repo\` for public-only repos) to read check runs and refs.`;
@@ -153,10 +159,12 @@ export async function handleReleaseReadiness(
 
   const blockingIssues: string[] = [];
   if (ciStatus === "failing") blockingIssues.push("CI checks are failing");
+  if (ciStatus === "pending") blockingIssues.push("CI checks are still pending");
+  if (ciStatus === "unknown") blockingIssues.push("CI status could not be verified");
   if (bugIssues.length > 0)
     blockingIssues.push(`${bugIssues.length} open bug issue(s) - review before release`);
 
-  const isReady = blockingIssues.length === 0 && ciStatus !== "failing";
+  const isReady = blockingIssues.length === 0 && ciStatus === "passing";
 
   const structured: ReleaseReadinessResult = {
     repo: `${ref.owner}/${ref.repo}`,

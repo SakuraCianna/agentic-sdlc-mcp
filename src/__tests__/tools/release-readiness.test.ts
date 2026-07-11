@@ -25,10 +25,12 @@ const REF: RepoRef = { owner: "test-org", repo: "test-repo" };
 
 function makeMockOctokit(opts: {
   checks?: Array<{ name: string; status: string; conclusion: string | null }>;
+  statuses?: Array<{ context: string; state: string; target_url: string | null }>;
   bugIssues?: Array<{ number: number; title: string; html_url: string }>;
   hasChangelog?: boolean;
 } = {}) {
   const checks = opts.checks ?? [{ name: "CI", status: "completed", conclusion: "success" }];
+  const statuses = opts.statuses ?? [];
   const bugs = opts.bugIssues ?? [];
 
   return {
@@ -39,6 +41,7 @@ function makeMockOctokit(opts: {
       getContent: opts.hasChangelog
         ? vi.fn().mockResolvedValue({ data: {} })
         : vi.fn().mockRejectedValue({ status: 404 }),
+      getCombinedStatusForRef: vi.fn().mockResolvedValue({ data: { statuses } }),
     },
     git: {
       getRef: vi.fn().mockResolvedValue({
@@ -149,8 +152,31 @@ describe("handleReleaseReadiness", () => {
     const params: ReleaseReadinessInput = {};
     const { structured } = await handleReleaseReadiness(params, REF, octokit);
 
-    // Pending CI is reported but does NOT block release (only failing CI + open bugs block)
     expect(structured.ciStatus).toBe("pending");
+    expect(structured.isReady).toBe(false);
     expect(structured.openBugCount).toBe(0);
+  });
+
+  it("does not report zero CI signals as passing", async () => {
+    const octokit = makeMockOctokit({ checks: [], statuses: [] });
+
+    const { structured } = await handleReleaseReadiness({ headRef: "main" }, REF, octokit);
+
+    expect(structured.ciStatus).toBe("unknown");
+    expect(structured.isReady).toBe(false);
+  });
+
+  it("accepts status-only passing CI evidence", async () => {
+    const octokit = makeMockOctokit({
+      checks: [],
+      statuses: [{ context: "legacy-ci", state: "success", target_url: null }],
+    });
+
+    const { structured } = await handleReleaseReadiness({ headRef: "main" }, REF, octokit);
+
+    expect(structured.ciStatus).toBe("passing");
+    expect(structured.isReady).toBe(true);
+    expect(octokit.repos.getCombinedStatusForRef).toHaveBeenCalled();
+    expect(structured.ciSummary).toContain("1 CI signal");
   });
 });
