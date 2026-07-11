@@ -131,8 +131,11 @@ export async function handleReleaseReadiness(
       ciStatus = "passing";
       ciSummary = `[PASS] All ${ci.totalSignals} CI signal(s) passing or intentionally skipped.${notes}`;
     }
-  } catch (err) {
-    ciSummary = `[WARN] Could not fetch CI status: ${handleGitHubError(err)} -- ensure your token has the \`repo\` scope (or \`public_repo\` for public-only repos) to read check runs and refs.`;
+  } catch {
+    ciSummary =
+      "[WARN] Could not resolve the release head or collect CI evidence. " +
+      "Ensure your token has the `repo` scope (or `public_repo` for public-only repos) " +
+      "to read pull requests, refs, check runs, and commit statuses.";
   }
 
   // --- Open bug issues (paginated, capped at MAX_BUG_ISSUES) ---

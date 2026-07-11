@@ -30,6 +30,7 @@ function makeMockOctokit(opts: {
   statusPages?: Array<Array<{ context: string; state: string; target_url: string | null }>>;
   checksError?: unknown;
   statusesError?: unknown;
+  refError?: unknown;
   bugIssues?: Array<{ number: number; title: string; html_url: string }>;
   hasChangelog?: boolean;
 } = {}) {
@@ -54,9 +55,11 @@ function makeMockOctokit(opts: {
           ),
     },
     git: {
-      getRef: vi.fn().mockResolvedValue({
-        data: { object: { sha: "abc123456" } },
-      }),
+      getRef: opts.refError
+        ? vi.fn().mockRejectedValue(opts.refError)
+        : vi.fn().mockResolvedValue({
+            data: { object: { sha: "abc123456" } },
+          }),
     },
     checks: {
       listForRef: opts.checksError
@@ -263,6 +266,24 @@ describe("handleReleaseReadiness", () => {
     expect(structured.ciStatus).toBe("failing");
     expect(structured.ciSummary).not.toContain("forged");
     expect(structured.ciSummary).not.toContain("token_live_sensitive");
+    expect(structured.ciSummary).not.toContain("##");
+  });
+
+  it("does not echo raw errors while resolving the release head", async () => {
+    const octokit = makeMockOctokit({
+      refError: {
+        status: 403,
+        response: { data: { message: "token_live_sensitive\r\n## forged heading" } },
+      },
+    });
+
+    const { structured } = await handleReleaseReadiness({}, REF, octokit);
+
+    expect(structured.ciStatus).toBe("unknown");
+    expect(structured.isReady).toBe(false);
+    expect(structured.ciSummary).toContain("Could not resolve the release head or collect CI evidence");
+    expect(structured.ciSummary).not.toContain("token_live_sensitive");
+    expect(structured.ciSummary).not.toContain("forged");
     expect(structured.ciSummary).not.toContain("##");
   });
 
