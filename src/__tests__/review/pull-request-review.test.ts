@@ -1205,6 +1205,31 @@ describe("evaluatePullRequestReview", () => {
     }
   });
 
+  it("includes caller-supplied policy evidence in the unified risk and conclusion", () => {
+    const result = evaluatePullRequestReview({
+      pr: pr({ body: "## Validated\nRan `npm test`." }),
+      files: [file("README.md")],
+      workType: "docs",
+      policyFindings: [
+        {
+          severity: "critical",
+          category: "Workflow Permissions",
+          description: "The changed workflow grants write-all.",
+          suggestion: "Use explicit least-privilege scopes.",
+          dimension: "policy",
+          paths: [".github/workflows/release.yml"],
+          reason: "Complete workflow content contains permissions: write-all.",
+        },
+      ],
+    });
+
+    expect(result.findings).toContainEqual(
+      expect.objectContaining({ category: "Workflow Permissions", dimension: "policy" })
+    );
+    expect(result.releaseRisk).toBe("critical");
+    expect(result.conclusion).toBe("needs_changes");
+  });
+
   it("derives moderate risk from medium-only findings and low risk when clean", () => {
     const moderate = evaluatePullRequestReview({
       pr: pr({ body: "Documentation changed without a verification section." }),

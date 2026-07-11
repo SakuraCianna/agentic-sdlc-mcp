@@ -70,6 +70,17 @@ export interface WorkflowPermissionsAuditResult {
   conclusion: "least_privilege" | "needs_review" | "over_permissioned";
 }
 
+export interface WorkflowContent {
+  filename: string;
+  content: string;
+}
+
+export interface WorkflowContentEvaluation {
+  workflowsScanned: string[];
+  findings: Finding[];
+  errors: string[];
+}
+
 interface ParsedWorkflow {
   permissions: unknown;
   jobs: Record<string, { permissions?: unknown }>;
@@ -82,7 +93,7 @@ interface NormalizedPermissions {
 }
 
 /** Cap on how many workflow files a single audit will fetch and parse, to bound API calls on large repos. */
-const MAX_WORKFLOW_FILES = 50;
+export const MAX_WORKFLOW_FILES = 50;
 
 // ---------------------------------------------------------------------------
 // Pure helpers (exported for testing)
@@ -200,6 +211,29 @@ export function generatePermissionsFindings(fileName: string, parsed: ParsedWork
   return findings;
 }
 
+/** Evaluate complete workflow documents supplied by a caller without fetching repository content. */
+export function evaluateWorkflowContents(
+  workflows: WorkflowContent[]
+): WorkflowContentEvaluation {
+  const workflowsScanned: string[] = [];
+  const findings: Finding[] = [];
+  const errors: string[] = [];
+
+  for (const workflow of workflows) {
+    const parsed = parseWorkflowYaml(workflow.content);
+    if (!parsed) {
+      errors.push(
+        `${workflow.filename}: unable to parse as a GitHub Actions workflow (expected a YAML mapping at the document root).`
+      );
+      continue;
+    }
+    workflowsScanned.push(workflow.filename);
+    findings.push(...generatePermissionsFindings(workflow.filename, parsed));
+  }
+
+  return { workflowsScanned, findings, errors };
+}
+
 // ---------------------------------------------------------------------------
 // Core handler (exported for testing)
 // ---------------------------------------------------------------------------
@@ -212,6 +246,7 @@ export async function handleWorkflowPermissionsAudit(
   const errors: string[] = [];
   const findings: Finding[] = [];
   const workflowsScanned: string[] = [];
+  const workflowContents: WorkflowContent[] = [];
 
   let gitRef = params.ref;
   if (!gitRef) {
@@ -258,17 +293,16 @@ export async function handleWorkflowPermissionsAudit(
         continue;
       }
       const content = Buffer.from(data.content, "base64").toString("utf-8");
-      const parsed = parseWorkflowYaml(content);
-      if (!parsed) {
-        errors.push(`${file.path}: unable to parse as a GitHub Actions workflow (expected a YAML mapping at the document root).`);
-        continue;
-      }
-      workflowsScanned.push(file.path);
-      findings.push(...generatePermissionsFindings(file.path, parsed));
+      workflowContents.push({ filename: file.path, content });
     } catch (err) {
       errors.push(`${file.path}: ${handleGitHubError(err)}`);
     }
   }
+
+  const evaluated = evaluateWorkflowContents(workflowContents);
+  workflowsScanned.push(...evaluated.workflowsScanned);
+  findings.push(...evaluated.findings);
+  errors.push(...evaluated.errors);
 
   const hasCriticalOrHigh = findings.some((f) => f.severity === "critical" || f.severity === "high");
   const hasMedium = findings.some((f) => f.severity === "medium");

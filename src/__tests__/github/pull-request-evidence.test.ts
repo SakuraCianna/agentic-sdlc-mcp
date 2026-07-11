@@ -220,6 +220,41 @@ describe("collectPullRequestEvidence", () => {
     });
   });
 
+  it("retains the bounded changed-file details for downstream review without another listing", async () => {
+    const listFiles = vi.fn().mockResolvedValue({
+      data: [
+        {
+          filename: ".github/workflows/ci.yml",
+          previous_filename: ".github/workflows/old-ci.yml",
+          status: "renamed",
+          additions: 7,
+          deletions: 3,
+          changes: 10,
+          patch: "@@ -1 +1 @@\n-permissions: write-all\n+permissions: read-all",
+        },
+      ],
+    });
+
+    const evidence = await collectPullRequestEvidence(
+      { pullNumber: 42 },
+      ref,
+      makeOctokit({ pulls: { listFiles } })
+    );
+
+    expect(evidence.changedFiles).toEqual([
+      {
+        filename: ".github/workflows/ci.yml",
+        previousFilename: ".github/workflows/old-ci.yml",
+        status: "renamed",
+        additions: 7,
+        deletions: 3,
+        changes: 10,
+        patch: "@@ -1 +1 @@\n-permissions: write-all\n+permissions: read-all",
+      },
+    ]);
+    expect(listFiles).toHaveBeenCalledTimes(1);
+  });
+
   it("uses each reviewer's latest actionable state and lets DISMISSED clear it", async () => {
     const octokit = makeOctokit({
       pulls: {
@@ -546,6 +581,11 @@ describe("collectPullRequestEvidence", () => {
     expect(evidence.errors.some((error) => error.startsWith("branch_protection:"))).toBe(false);
   });
 
+  it("reports whether a CODEOWNERS source was found", async () => {
+    const absent = await collectPullRequestEvidence({ pullNumber: 42 }, ref, makeOctokit());
+    expect(absent.reviews.codeownersFound).toBe(false);
+  });
+
   it("finds CODEOWNERS routing gaps from changed files", async () => {
     const octokit = makeOctokit({
       repos: {
@@ -578,6 +618,7 @@ describe("collectPullRequestEvidence", () => {
     expect(evidence.reviews.ownershipGaps).toEqual([
       { owner: "@Platform", paths: ["src/gate.ts"] },
     ]);
+    expect(evidence.reviews.codeownersFound).toBe(true);
     expect(octokit.repos.getContent).toHaveBeenCalledWith(
       expect.objectContaining({ path: ".github/CODEOWNERS", ref: "base123" })
     );

@@ -7,8 +7,8 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { resolveRepo, getOctokit, paginateAll, handleGitHubError } from "../github/client.js";
-import { collectBounded, collectCiEvidence } from "../github/pull-request-evidence.js";
+import { resolveRepo, getOctokit, handleGitHubError } from "../github/client.js";
+import { collectPullRequestEvidence } from "../github/pull-request-evidence.js";
 import {
   fetchCodeownersRules,
   findOwnershipGaps,
@@ -20,10 +20,19 @@ import type { Octokit } from "@octokit/rest";
 import {
   evaluateSecretScannerEvidence,
   isSecretScannerPolicyPath,
-  secretScannerPolicyFinding,
   type SecretScannerEvidence,
 } from "../security/secret-scanner-evidence.js";
-import { scanPatchForSecrets as scanSharedPatchForSecrets } from "../review/pull-request-review.js";
+import {
+  evaluatePullRequestReview,
+  scanPatchForSecrets as scanSharedPatchForSecrets,
+  type ReviewDimension,
+  type StructuredReviewFinding,
+} from "../review/pull-request-review.js";
+import {
+  evaluateWorkflowContents,
+  MAX_WORKFLOW_FILES,
+  type WorkflowContent,
+} from "./workflow-permissions-audit.js";
 
 export {
   codeownersPatternMatches,
@@ -45,6 +54,10 @@ export const ReviewPrInputSchema = z.object({
     .enum(["basic", "strict", "security-focused"])
     .default("basic")
     .describe("Review standard: 'basic', 'strict', or 'security-focused'."),
+  workType: z
+    .enum(["docs", "feature", "bugfix", "refactor", "security", "release", "infra"])
+    .optional()
+    .describe("Optional explicit work type. When omitted, it is inferred from PR metadata and paths."),
   checkOwnership: z
     .boolean()
     .default(true)
@@ -69,12 +82,21 @@ export const ReviewPrOutputSchema = {
       severity: z.enum(["critical", "high", "medium", "low", "info"]),
       category: z.string(),
       description: z.string(),
-      suggestion: z.string().optional(),
+      suggestion: z.string(),
+      dimension: z.enum(["intent", "scope", "evidence", "ownership", "policy", "fallback", "security"]),
+      paths: z.array(z.string()),
+      reason: z.string(),
     })
   ),
   hasTests: z.boolean(),
   totalChangedLines: z.number().int(),
   codeownersFound: z.boolean(),
+  workType: z.enum(["docs", "feature", "bugfix", "refactor", "security", "release", "infra"]),
+  workTypeConfidence: z.enum(["high", "medium", "low"]),
+  workTypeReasoning: z.string(),
+  releaseRisk: z.enum(["low", "moderate", "high", "critical"]),
+  testCoverageSignal: z.enum(["adequate", "missing", "not_required", "insufficient_evidence"]),
+  ownershipRoutingGaps: z.array(z.object({ owner: z.string(), paths: z.array(z.string()) })),
   errors: z.array(z.string()),
   secretScannerEvidence: z
     .object({
@@ -121,10 +143,16 @@ export interface ReviewPrResult {
   title: string;
   standard: string;
   conclusion: "pass" | "needs_changes" | "risky_but_acceptable";
-  findings: Finding[];
+  findings: StructuredReviewFinding[];
   hasTests: boolean;
   totalChangedLines: number;
   codeownersFound: boolean;
+  workType: "docs" | "feature" | "bugfix" | "refactor" | "security" | "release" | "infra";
+  workTypeConfidence: "high" | "medium" | "low";
+  workTypeReasoning: string;
+  releaseRisk: "low" | "moderate" | "high" | "critical";
+  testCoverageSignal: "adequate" | "missing" | "not_required" | "insufficient_evidence";
+  ownershipRoutingGaps: OwnershipGap[];
   errors: string[];
   secretScannerEvidence: SecretScannerEvidence | null;
 }
@@ -443,185 +471,170 @@ export async function handleReviewPr(
   ref: RepoRef,
   octokit: Octokit
 ): Promise<{ text: string; structured: ReviewPrResult }> {
-  const { data: pr } = await octokit.pulls.get({
-    owner: ref.owner,
-    repo: ref.repo,
-    pull_number: params.pullNumber,
+  const evidence = await collectPullRequestEvidence(
+    { pullNumber: params.pullNumber },
+    ref,
+    octokit
+  );
+  const files: PrFile[] = evidence.changedFiles;
+  const errors = evidence.errors.map((error) => {
+    if (error.startsWith("requested_reviewers:")) {
+      return `Requested reviewers:${error.slice("requested_reviewers:".length)}`;
+    }
+    if (error.startsWith("reviews:")) return `Reviews:${error.slice("reviews:".length)}`;
+    if (error.startsWith("codeowners:")) return `CODEOWNERS:${error.slice("codeowners:".length)}`;
+    if (
+      params.standard === "security-focused" &&
+      (error.startsWith("check_runs:") || error.startsWith("commit_statuses:"))
+    ) {
+      return `Secret scanner CI: ${error}`;
+    }
+    return error;
   });
 
-  const changedFiles = await collectBounded(
-    (page, perPage) =>
-      octokit.pulls
-        .listFiles({
-          owner: ref.owner,
-          repo: ref.repo,
-          pull_number: params.pullNumber,
-          per_page: perPage,
-          page,
-        })
-        .then((r) => r.data),
-    300
+  const workflowContents: WorkflowContent[] = [];
+  const unverifiedWorkflowPaths: string[] = [];
+  const changedWorkflows = files.filter(
+    (file) =>
+      file.status !== "removed" &&
+      /^\.github\/workflows\/[^/]+\.ya?ml$/i.test(file.filename)
   );
-
-  const files: PrFile[] = changedFiles.items.map((f) => ({
-    filename: f.filename,
-    previousFilename: f.previous_filename,
-    status: f.status,
-    additions: f.additions,
-    deletions: f.deletions,
-    patch: f.patch,
-  }));
-
-  const prMeta: PrMeta = {
-    number: pr.number,
-    title: pr.title,
-    body: pr.body ?? null,
-    draft: pr.draft ?? false,
-    commits: pr.commits,
-    author: pr.user?.login ?? "",
-  };
-
-  const errors: string[] = [];
-  if (changedFiles.truncated) {
-    errors.push("Changed files: results truncated at 300 items");
+  if (changedWorkflows.length > MAX_WORKFLOW_FILES) {
+    errors.push(
+      `Workflow permissions: only the first ${MAX_WORKFLOW_FILES} of ${changedWorkflows.length} changed workflows were audited.`
+    );
+    unverifiedWorkflowPaths.push(
+      ...changedWorkflows.slice(MAX_WORKFLOW_FILES).map((file) => file.filename)
+    );
   }
-  let secretScannerEvidence: SecretScannerEvidence | null = null;
-  const secretScannerFindings: Finding[] = [];
-  let codeownersFound = false;
-  let ownershipFindings: Finding[] = [];
-
-  if (params.checkOwnership) {
-    const { rules, error: codeownersError } = await fetchCodeownersRules(ref, octokit);
-    if (codeownersError) errors.push(`CODEOWNERS: ${codeownersError}`);
-    codeownersFound = rules.length > 0;
-
-    if (rules.length > 0) {
-      let requestedUsers: string[] = [];
-      let requestedTeams: string[] = [];
-      try {
-        const { data: reviewers } = await octokit.pulls.listRequestedReviewers({
-          owner: ref.owner,
-          repo: ref.repo,
-          pull_number: params.pullNumber,
-        });
-        requestedUsers = reviewers.users?.map((u) => u.login) ?? [];
-        requestedTeams = reviewers.teams?.map((t) => `${ref.owner}/${t.slug}`) ?? [];
-      } catch (err) {
-        errors.push(`Requested reviewers: ${handleGitHubError(err)}`);
-      }
-
-      let reviewedUsers: string[] = [];
-      try {
-        const rawReviews = await paginateAll(
-          (page, perPage) =>
-            octokit.pulls
-              .listReviews({
-                owner: ref.owner,
-                repo: ref.repo,
-                pull_number: params.pullNumber,
-                per_page: perPage,
-                page,
-              })
-              .then((r) => r.data),
-          300
-        );
-        reviewedUsers = rawReviews
-          .map((r) => r.user?.login)
-          .filter((login): login is string => Boolean(login));
-      } catch (err) {
-        errors.push(`Reviews: ${handleGitHubError(err)}`);
-      }
-
-      ownershipFindings = ownershipGapsToFindings(
-        findOwnershipGaps(
-          files.map((file) => file.filename),
-          rules,
-          requestedUsers,
-          requestedTeams,
-          reviewedUsers,
-          prMeta.author
-        )
-      );
-    }
-  }
-
-  if (params.standard === "security-focused") {
-    const ci = await collectCiEvidence(ref, pr.head.sha, octokit);
-    secretScannerEvidence = evaluateSecretScannerEvidence(ci, {
-      policyFilesChanged: files.some(
-        (file) =>
-          isSecretScannerPolicyPath(file.filename) ||
-          (file.previousFilename !== undefined &&
-            isSecretScannerPolicyPath(file.previousFilename))
-      ),
-      incompleteReasons: changedFiles.truncated ? ["changed_files"] : [],
-    });
-    errors.push(...ci.errors.map((error) => `Secret scanner CI: ${error}`));
-    const policyFinding = secretScannerPolicyFinding(secretScannerEvidence);
-    if (policyFinding) {
-      secretScannerFindings.push({
-        severity: policyFinding.severity,
-        category: policyFinding.category,
-        description: policyFinding.description,
-        suggestion: policyFinding.suggestion,
+  for (const file of changedWorkflows.slice(0, MAX_WORKFLOW_FILES)) {
+    try {
+      const { data } = await octokit.repos.getContent({
+        owner: ref.owner,
+        repo: ref.repo,
+        path: file.filename,
+        ref: evidence.pullRequest.headSha,
       });
+      if (Array.isArray(data) || data.type !== "file" || !data.content) {
+        errors.push(`Workflow permissions: ${file.filename}: unexpected content response.`);
+        unverifiedWorkflowPaths.push(file.filename);
+        continue;
+      }
+      workflowContents.push({
+        filename: file.filename,
+        content: Buffer.from(data.content, "base64").toString("utf-8"),
+      });
+    } catch (error) {
+      errors.push(`Workflow permissions: ${file.filename}: ${handleGitHubError(error)}`);
+      unverifiedWorkflowPaths.push(file.filename);
     }
   }
-
-  const rawFindings = [
-    ...generateFindings(prMeta, files, params.standard),
-    ...ownershipFindings,
-    ...secretScannerFindings,
-  ];
-  const sorted = sortFindings(rawFindings);
-
-  const hasTests = files.some(
-    (f) =>
-      f.filename.includes("/test") ||
-      f.filename.includes("/spec") ||
-      f.filename.includes("__tests__") ||
-      /\.(test|spec)\.[jt]sx?$/.test(f.filename)
+  const workflowEvaluation = evaluateWorkflowContents(workflowContents);
+  errors.push(...workflowEvaluation.errors.map((error) => `Workflow permissions: ${error}`));
+  const scannedWorkflows = new Set(workflowEvaluation.workflowsScanned);
+  unverifiedWorkflowPaths.push(
+    ...workflowContents
+      .filter((workflow) => !scannedWorkflows.has(workflow.filename))
+      .map((workflow) => workflow.filename)
   );
 
-  const totalLines = files.reduce((s, f) => s + f.additions + f.deletions, 0);
-  const critical = sorted.filter((f) => f.severity === "critical");
-  const high = sorted.filter((f) => f.severity === "high");
-  const medium = sorted.filter((f) => f.severity === "medium");
+  const ownershipRoutingGaps = params.checkOwnership ? evidence.reviews.ownershipGaps : [];
+  const ownershipPolicyFindings: StructuredReviewFinding[] = ownershipRoutingGaps.map(
+    ({ owner, paths }) => ({
+      severity: "medium",
+      category: "Ownership",
+      description: `CODEOWNERS owner ${owner} was not requested as a reviewer and has not reviewed changes to: ${paths.join(", ")}.`,
+      suggestion: `Request a review from ${owner}, or confirm CODEOWNERS routing is still correct for these paths.`,
+      dimension: "ownership",
+      paths,
+      reason: "The shared PR evidence layer found an unsatisfied CODEOWNERS routing requirement.",
+    })
+  );
+  const workflowPolicyFindings: StructuredReviewFinding[] = workflowEvaluation.findings.map(
+    (finding) => {
+      const workflow = workflowContents.find((item) =>
+        finding.description.startsWith(`${item.filename}:`)
+      );
+      return {
+        ...finding,
+        suggestion: finding.suggestion ?? "Review and reduce the workflow token permissions.",
+        dimension: "policy",
+        paths: workflow ? [workflow.filename] : [],
+        reason: "The finding was derived from the complete workflow content at the PR head SHA.",
+      };
+    }
+  );
+  const uniqueUnverifiedWorkflowPaths = [...new Set(unverifiedWorkflowPaths)];
+  if (uniqueUnverifiedWorkflowPaths.length > 0) {
+    workflowPolicyFindings.push({
+      severity: "high",
+      category: "WorkflowPolicyEvidenceUnavailable",
+      description: "Complete workflow permission evidence could not be verified for every changed workflow.",
+      suggestion: "Restore repository content access and provide parseable complete workflow files at the PR head SHA before merge.",
+      dimension: "policy",
+      paths: uniqueUnverifiedWorkflowPaths,
+      reason: "Fetching, parsing, or the bounded workflow audit failed, so least-privilege policy cannot be confirmed.",
+    });
+  }
 
-  const conclusion: ReviewPrResult["conclusion"] =
-    critical.length > 0 || high.length > 0
-      ? "needs_changes"
-      : medium.length > 0
-      ? "risky_but_acceptable"
-      : "pass";
+  const secretScannerEvidence =
+    params.standard === "security-focused"
+      ? evaluateSecretScannerEvidence(evidence.ci, {
+          policyFilesChanged: files.some(
+            (file) =>
+              isSecretScannerPolicyPath(file.filename) ||
+              (file.previousFilename !== undefined &&
+                isSecretScannerPolicyPath(file.previousFilename))
+          ),
+          incompleteReasons: evidence.unverifiedSignals.includes("changed_files")
+            ? ["changed_files"]
+            : [],
+        })
+      : null;
 
-  const conclusionLabel =
-    conclusion === "pass"
-      ? "PASS"
-      : conclusion === "needs_changes"
-      ? "NEEDS CHANGES"
-      : "RISKY BUT ACCEPTABLE";
-
-  const structured: ReviewPrResult = {
-    pullNumber: pr.number,
-    title: pr.title,
+  const review = evaluatePullRequestReview({
+    pr: {
+      title: evidence.pullRequest.title,
+      body: evidence.pullRequest.body,
+      labels: evidence.pullRequest.labels,
+    },
+    files,
+    workType: params.workType,
     standard: params.standard,
-    conclusion,
-    findings: sorted,
-    hasTests,
-    totalChangedLines: totalLines,
-    codeownersFound,
+    secretScannerEvidence: secretScannerEvidence ?? undefined,
+    policyFindings: [...ownershipPolicyFindings, ...workflowPolicyFindings],
+  });
+  const structured: ReviewPrResult = {
+    pullNumber: evidence.pullRequest.number,
+    title: evidence.pullRequest.title,
+    standard: params.standard,
+    conclusion: review.conclusion,
+    findings: review.findings,
+    hasTests: review.hasTests,
+    totalChangedLines: review.totalChangedLines,
+    codeownersFound: params.checkOwnership && evidence.reviews.codeownersFound === true,
+    workType: review.workType,
+    workTypeConfidence: review.workTypeConfidence,
+    workTypeReasoning: review.workTypeReasoning,
+    releaseRisk: review.releaseRisk,
+    testCoverageSignal: review.testCoverageSignal,
+    ownershipRoutingGaps,
     errors,
-    secretScannerEvidence,
+    secretScannerEvidence: review.secretScannerEvidence,
   };
-
+  const conclusionLabel =
+    structured.conclusion === "pass"
+      ? "PASS"
+      : structured.conclusion === "needs_changes"
+        ? "NEEDS CHANGES"
+        : "RISKY BUT ACCEPTABLE";
   const lines: string[] = [
-    `# PR Review: #${pr.number} -- ${pr.title}`,
+    `# PR Review: #${structured.pullNumber} -- ${structured.title}`,
     "",
     `**Standard:** ${params.standard}`,
     `**Conclusion:** ${conclusionLabel}`,
-    `**Findings:** ${sorted.length} total (${critical.length} critical, ${high.length} high, ${medium.length} medium)`,
-    `**CODEOWNERS:** ${params.checkOwnership ? (codeownersFound ? "found, ownership checked" : "not found -- ownership not checked") : "checkOwnership disabled"}`,
+    `**Findings:** ${structured.findings.length} total`,
+    `**CODEOWNERS:** ${params.checkOwnership ? (structured.codeownersFound ? "found, ownership checked" : "not found -- ownership not checked") : "checkOwnership disabled"}`,
     "",
   ];
 
@@ -631,43 +644,49 @@ export async function handleReviewPr(
     lines.push("");
   }
 
-  if (secretScannerEvidence) {
+  lines.push(
+    "## Work Type",
+    "",
+    `**${structured.workType}** (${structured.workTypeConfidence} confidence) -- ${structured.workTypeReasoning}`,
+    ""
+  );
+  const renderSection = (title: string, dimensions: ReviewDimension[]): void => {
+    lines.push(`## ${title}`, "");
+    const findings = structured.findings.filter((finding) => dimensions.includes(finding.dimension));
+    if (findings.length === 0) lines.push("No findings.");
+    for (const finding of findings) {
+      lines.push(
+        `### ${severityIcon(finding.severity)} [${finding.severity.toUpperCase()}] ${finding.category}`,
+        finding.description,
+        `- Paths: ${finding.paths.join(", ") || "none"}`,
+        `- Reason: ${finding.reason}`,
+        `> Suggestion: ${finding.suggestion}`,
+        ""
+      );
+    }
+    lines.push("");
+  };
+  renderSection("Intent / Scope / Evidence", ["intent", "scope", "evidence"]);
+  renderSection("Ownership", ["ownership"]);
+  renderSection("Policy", ["policy"]);
+  renderSection("Fallback", ["fallback"]);
+  renderSection("Security", ["security"]);
+  if (structured.secretScannerEvidence) {
     lines.push(
-      "## Mature Secret Scanner Evidence",
-      "",
-      `- Status: **${secretScannerEvidence.status}**`,
-      `- Providers: ${secretScannerEvidence.providers.join(", ") || "none"}`,
-      `- Verified: ${secretScannerEvidence.verified ? "yes" : "no"}`,
-      `- Reason: ${secretScannerEvidence.reason}`,
+      "### Mature Secret Scanner Evidence",
+      `- Status: **${structured.secretScannerEvidence.status}**`,
+      `- Providers: ${structured.secretScannerEvidence.providers.join(", ") || "none"}`,
+      `- Verified: ${structured.secretScannerEvidence.verified ? "yes" : "no"}`,
+      `- Reason: ${structured.secretScannerEvidence.reason}`,
       ""
     );
   }
-
-  lines.push("## Findings");
-
-  if (sorted.length === 0) {
-    lines.push("", "No findings -- looks good!");
-  } else {
-    for (const f of sorted) {
-      lines.push(
-        "",
-        `### ${severityIcon(f.severity)} [${f.severity.toUpperCase()}] ${f.category}: ${f.description}`,
-        f.suggestion ? `> Suggestion: ${f.suggestion}` : ""
-      );
-    }
-  }
-
   lines.push(
-    "",
     "## Test Coverage",
-    hasTests ? "Tests included." : "No test files detected in this PR.",
+    `**${structured.testCoverageSignal}** -- ${structured.hasTests ? "test files changed" : "no test files changed"}.`,
     "",
     "## Release Risk",
-    conclusion === "pass"
-      ? "Low risk -- safe to merge after review."
-      : conclusion === "risky_but_acceptable"
-      ? "Moderate risk -- address medium findings before release."
-      : "High risk -- must fix critical/high findings before merging.",
+    `**${structured.releaseRisk}**`,
     "",
     "## Conclusion",
     conclusionLabel

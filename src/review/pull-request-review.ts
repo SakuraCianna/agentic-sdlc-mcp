@@ -77,6 +77,8 @@ export interface ReviewEvaluationInput {
   workType?: SdlcWorkType;
   standard?: ReviewStandard;
   secretScannerEvidence?: SecretScannerEvidence;
+  /** Complete policy evidence gathered by the orchestration layer, such as workflow permissions. */
+  policyFindings?: StructuredReviewFinding[];
 }
 
 export interface ReviewEvaluationResult {
@@ -1318,7 +1320,7 @@ export function evaluatePullRequestReview(
     ? `The caller explicitly selected the ${input.workType} work type.`
     : inferred.reasoning;
   const body = input.pr.body ?? "";
-  const findings: StructuredReviewFinding[] = [];
+  const findings: StructuredReviewFinding[] = [...(input.policyFindings ?? [])];
   const standard = input.standard ?? "basic";
   const suppliedSecretScannerEvidence =
     input.secretScannerEvidence ??

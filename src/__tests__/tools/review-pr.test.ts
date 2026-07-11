@@ -376,6 +376,8 @@ function makeMockOctokit(opts: {
       previous_filename?: string;
     }>
   >;
+  workflowContents?: Record<string, string>;
+  workflowContentError?: unknown;
 }) {
   return {
     checks: {
@@ -394,7 +396,10 @@ function makeMockOctokit(opts: {
           draft: false,
           commits: 1,
           user: { login: opts.prAuthor ?? "pr-author" },
-          head: { sha: "head-sha" },
+          head: { sha: "head-sha", ref: "feature/review" },
+          base: { sha: "base-sha", ref: "main" },
+          mergeable: true,
+          labels: [],
         },
       }),
       listFiles: vi.fn().mockImplementation(({ page = 1 }: { page?: number }) =>
@@ -431,6 +436,10 @@ function makeMockOctokit(opts: {
       getCombinedStatusForRef: vi.fn().mockResolvedValue({
         data: { statuses: opts.commitStatuses ?? [] },
       }),
+      getBranchProtection: vi.fn().mockRejectedValue(
+        Object.assign(new Error("Not Found"), { status: 404 })
+      ),
+      getBranchRules: vi.fn().mockResolvedValue({ data: [] }),
       getContent: opts.contentError
         ? vi.fn().mockRejectedValue(opts.contentError)
         : vi.fn().mockImplementation(({ path }: { path: string }) => {
@@ -442,9 +451,32 @@ function makeMockOctokit(opts: {
                 },
               });
             }
+            if (/^\.github\/workflows\/[^/]+\.ya?ml$/i.test(path)) {
+              if (opts.workflowContentError) return Promise.reject(opts.workflowContentError);
+              return Promise.resolve({
+                data: {
+                  type: "file",
+                  content: Buffer.from(
+                    opts.workflowContents?.[path] ??
+                      "permissions:\n  contents: read\njobs:\n  test:\n    steps: []"
+                  ).toString("base64"),
+                },
+              });
+            }
             return Promise.reject(Object.assign(new Error("Not Found"), { status: 404 }));
           }),
     },
+    graphql: vi.fn().mockResolvedValue({
+      repository: {
+        pullRequest: {
+          reviewDecision: null,
+          closingIssuesReferences: {
+            nodes: [],
+            pageInfo: { hasNextPage: false },
+          },
+        },
+      },
+    }),
   } as unknown as Parameters<typeof handleReviewPr>[2];
 }
 
@@ -514,6 +546,158 @@ describe("handleReviewPr — ownership check", () => {
     expect(structured.errors.some((e) => e.startsWith("Reviews:"))).toBe(true);
     // requestedReviewers still succeeded independently, so owner1 is still not flagged
     expect(structured.findings.find((f) => f.category === "Ownership")).toBeUndefined();
+  });
+});
+
+describe("handleReviewPr — structured review contract", () => {
+  it("accepts an explicit workType and preserves legacy fields", async () => {
+    const octokit = makeMockOctokit({
+      files: [
+        {
+          filename: "src/fix.ts",
+          status: "modified",
+          additions: 5,
+          deletions: 1,
+          patch: "@@ -1 +1 @@\n-return false\n+return true",
+        },
+      ],
+    });
+
+    const { structured } = await handleReviewPr(
+      { ...BASE_PARAMS, workType: "bugfix" },
+      REF,
+      octokit
+    );
+
+    expect(structured).toMatchObject({
+      pullNumber: 42,
+      title: "Test PR",
+      standard: "basic",
+      workType: "bugfix",
+      workTypeConfidence: "high",
+      workTypeReasoning: expect.any(String),
+      releaseRisk: "high",
+      testCoverageSignal: "missing",
+      ownershipRoutingGaps: expect.any(Array),
+      conclusion: expect.any(String),
+      hasTests: expect.any(Boolean),
+      totalChangedLines: expect.any(Number),
+      codeownersFound: expect.any(Boolean),
+      errors: expect.any(Array),
+      secretScannerEvidence: null,
+    });
+    expect(structured.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          dimension: expect.any(String),
+          paths: expect.any(Array),
+          reason: expect.any(String),
+        }),
+      ])
+    );
+  });
+
+  it("infers work type, lists changed files once, and audits complete workflow content at head SHA", async () => {
+    const octokit = makeMockOctokit({
+      files: [
+        {
+          filename: ".github/workflows/ci.yml",
+          status: "modified",
+          additions: 2,
+          deletions: 1,
+          patch: "@@ -1 +1 @@\n-permissions: write-all\n+permissions:\n+  contents: read",
+        },
+      ],
+    });
+
+    const { structured, text } = await handleReviewPr(
+      { ...BASE_PARAMS, standard: "strict", checkOwnership: false },
+      REF,
+      octokit
+    );
+
+    expect(structured.workType).toBe("infra");
+    expect(octokit.pulls.listFiles).toHaveBeenCalledTimes(1);
+    expect(octokit.repos.getContent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: ".github/workflows/ci.yml",
+        ref: "head-sha",
+      })
+    );
+    expect(text).toContain("## Work Type");
+    expect(text).toContain("## Intent / Scope / Evidence");
+    expect(text).toContain("## Ownership");
+    expect(text).toContain("## Policy");
+    expect(text).toContain("## Fallback");
+    expect(text).toContain("## Security");
+    expect(text).toContain("## Test Coverage");
+    expect(text).toContain("## Release Risk");
+    expect(text).toContain("## Conclusion");
+  });
+
+  it("uses complete workflow content rather than a safe-looking patch for permission findings", async () => {
+    const octokit = makeMockOctokit({
+      files: [
+        {
+          filename: ".github/workflows/release.yml",
+          status: "modified",
+          additions: 1,
+          deletions: 1,
+          patch: "@@ -1 +1 @@\n-name: Old\n+name: Release",
+        },
+      ],
+      workflowContents: {
+        ".github/workflows/release.yml":
+          "on: pull_request_target\npermissions: write-all\njobs: {}",
+      },
+    });
+
+    const { structured } = await handleReviewPr(
+      { ...BASE_PARAMS, standard: "strict", checkOwnership: false },
+      REF,
+      octokit
+    );
+
+    expect(structured.findings).toContainEqual(
+      expect.objectContaining({
+        category: "Workflow Permissions",
+        severity: "critical",
+        dimension: "policy",
+        paths: [".github/workflows/release.yml"],
+      })
+    );
+    expect(structured.releaseRisk).toBe("critical");
+    expect(structured.conclusion).toBe("needs_changes");
+  });
+
+  it("fails closed when complete workflow content cannot be verified", async () => {
+    const octokit = makeMockOctokit({
+      files: [
+        {
+          filename: ".github/workflows/release.yml",
+          status: "modified",
+          additions: 1,
+          deletions: 0,
+        },
+      ],
+      workflowContentError: Object.assign(new Error("Forbidden"), { status: 403 }),
+    });
+
+    const { structured } = await handleReviewPr(
+      { ...BASE_PARAMS, standard: "strict", checkOwnership: false },
+      REF,
+      octokit
+    );
+
+    expect(structured.findings).toContainEqual(
+      expect.objectContaining({
+        category: "WorkflowPolicyEvidenceUnavailable",
+        severity: "high",
+        dimension: "policy",
+        paths: [".github/workflows/release.yml"],
+      })
+    );
+    expect(structured.conclusion).toBe("needs_changes");
   });
 });
 

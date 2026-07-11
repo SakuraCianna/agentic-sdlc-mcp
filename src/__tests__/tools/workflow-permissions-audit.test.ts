@@ -22,6 +22,7 @@ const {
   parseWorkflowYaml,
   normalizePermissions,
   generatePermissionsFindings,
+  evaluateWorkflowContents,
   handleWorkflowPermissionsAudit,
 } = await import("../../tools/workflow-permissions-audit.js");
 
@@ -321,5 +322,32 @@ describe("handleWorkflowPermissionsAudit", () => {
     expect(structured.errors).toHaveLength(1);
     expect(structured.errors[0]).toContain("unable to parse");
     expect(structured.workflowsScanned).toHaveLength(0);
+  });
+});
+
+describe("evaluateWorkflowContents", () => {
+  it("evaluates supplied complete workflow content and reports parse errors", () => {
+    const result = evaluateWorkflowContents([
+      {
+        filename: ".github/workflows/safe.yml",
+        content: "permissions:\n  contents: read\njobs:\n  test:\n    steps: []",
+      },
+      {
+        filename: ".github/workflows/unsafe.yml",
+        content: "on: pull_request_target\npermissions: write-all\njobs: {}",
+      },
+      { filename: ".github/workflows/invalid.yml", content: "not: [valid" },
+    ]);
+
+    expect(result.workflowsScanned).toEqual([
+      ".github/workflows/safe.yml",
+      ".github/workflows/unsafe.yml",
+    ]);
+    expect(result.findings).toContainEqual(
+      expect.objectContaining({ severity: "critical", category: "Workflow Permissions" })
+    );
+    expect(result.errors).toEqual([
+      ".github/workflows/invalid.yml: unable to parse as a GitHub Actions workflow (expected a YAML mapping at the document root).",
+    ]);
   });
 });

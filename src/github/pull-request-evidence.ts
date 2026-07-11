@@ -64,6 +64,16 @@ export interface BoundedCollection<T> {
 
 export type ReviewDecision = "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | null;
 
+export interface PullRequestChangedFile {
+  filename: string;
+  previousFilename?: string;
+  status: string;
+  additions: number;
+  deletions: number;
+  changes: number;
+  patch?: string;
+}
+
 export interface PullRequestEvidence {
   pullRequest: {
     number: number;
@@ -77,6 +87,8 @@ export interface PullRequestEvidence {
     mergeable: boolean | null;
     labels: string[];
   };
+  /** Complete changed-file details from the same bounded listing used for ownership routing. */
+  changedFiles: PullRequestChangedFile[];
   ci: CiEvidence;
   reviews: {
     reviewDecision: ReviewDecision;
@@ -88,6 +100,7 @@ export interface PullRequestEvidence {
     requireCodeOwnerReviews: boolean | null;
     codeOwnerReviewSatisfied: boolean | null;
     ownershipGaps: OwnershipGap[];
+    codeownersFound: boolean;
   };
   branchProtection: {
     classicEnabled: boolean;
@@ -426,7 +439,7 @@ async function collectChangedFiles(
   params: CollectPullRequestEvidenceParams,
   ref: RepoRef,
   octokit: Octokit
-): Promise<SourceResult<string[]>> {
+): Promise<SourceResult<PullRequestChangedFile[]>> {
   try {
     const files = await collectBounded(
       (page, perPage) =>
@@ -442,7 +455,15 @@ async function collectChangedFiles(
       300
     );
     return {
-      value: files.items.map((file) => file.filename),
+      value: files.items.map((file) => ({
+        filename: file.filename,
+        previousFilename: file.previous_filename,
+        status: file.status,
+        additions: file.additions,
+        deletions: file.deletions,
+        changes: file.changes,
+        patch: file.patch,
+      })),
       errors: files.truncated ? ["changed_files: results truncated at 300 items"] : [],
       unverifiedSignals: files.truncated ? ["changed_files"] : [],
     };
@@ -863,14 +884,16 @@ export async function collectPullRequestEvidence(
       requireCodeOwnerReviews,
       codeOwnerReviewSatisfied,
       ownershipGaps: findOwnershipGaps(
-        changedFiles.value,
+        changedFiles.value.map((file) => file.filename),
         codeowners.rules,
         requestedReviewers.value.users,
         requestedReviewers.value.teams,
         reviewedUsers,
         pullRequest.user?.login ?? ""
       ),
+      codeownersFound: codeowners.rules.length > 0,
     },
+    changedFiles: changedFiles.value,
     branchProtection: {
       classicEnabled: classicProtection.value.enabled,
       rulesetRuleTypes: appliedRules.value.types,

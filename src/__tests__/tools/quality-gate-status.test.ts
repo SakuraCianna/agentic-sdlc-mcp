@@ -149,6 +149,7 @@ function pullRequestEvidence(overrides: PullRequestOverrides = {}): PullRequestE
       labels: [],
       ...overrides.pullRequest,
     },
+    changedFiles: [],
     ci: overrides.ci ?? ciEvidence({ checkRuns: [signal("test")] }),
     reviews: {
       reviewDecision: "APPROVED",
@@ -160,6 +161,7 @@ function pullRequestEvidence(overrides: PullRequestOverrides = {}): PullRequestE
       requireCodeOwnerReviews: false,
       codeOwnerReviewSatisfied: null,
       ownershipGaps: [],
+      codeownersFound: false,
       ...overrides.reviews,
     },
     branchProtection: {
