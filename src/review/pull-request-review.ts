@@ -473,38 +473,41 @@ function isHighConfidenceUnquotedSecret(value: string): boolean {
   return classes >= 3;
 }
 
-function stripCommentsFromLine(
-  line: string,
-  inBlockComment: boolean
-): { code: string; inBlockComment: boolean } {
-  if (!inBlockComment && /^(?:\s*#|\s*\*)/.test(line)) {
-    return { code: "", inBlockComment: false };
-  }
+type SecretLexicalMode = "code" | "block_comment" | "single" | "double" | "template";
 
+interface SecretLexicalState {
+  mode: SecretLexicalMode;
+  escaped: boolean;
+}
+
+function maskSecretCodeLine(line: string, state: SecretLexicalState): string {
+  if (state.mode === "code" && /^(?:\s*#|\s*\*)/.test(line)) return "";
   let code = "";
-  let quote: "'" | '"' | "`" | null = null;
-  let escaped = false;
   for (let index = 0; index < line.length; index += 1) {
     const character = line[index] ?? "";
     const next = line[index + 1] ?? "";
-    if (inBlockComment) {
+    if (state.mode === "block_comment") {
       if (character === "*" && next === "/") {
         code += "  ";
         index += 1;
-        inBlockComment = false;
+        state.mode = "code";
       } else {
         code += " ";
       }
       continue;
     }
-    if (quote) {
-      code += character;
-      if (escaped) {
-        escaped = false;
+    if (state.mode !== "code") {
+      code += " ";
+      if (state.escaped) {
+        state.escaped = false;
       } else if (character === "\\") {
-        escaped = true;
-      } else if (character === quote) {
-        quote = null;
+        state.escaped = true;
+      } else if (
+        (state.mode === "single" && character === "'") ||
+        (state.mode === "double" && character === '"') ||
+        (state.mode === "template" && character === "`")
+      ) {
+        state.mode = "code";
       }
       continue;
     }
@@ -512,15 +515,36 @@ function stripCommentsFromLine(
     if (character === "/" && next === "*") {
       code += "  ";
       index += 1;
-      inBlockComment = true;
+      state.mode = "block_comment";
     } else if (character === "'" || character === '"' || character === "`") {
-      quote = character;
-      code += character;
+      state.mode =
+        character === "'" ? "single" : character === '"' ? "double" : "template";
+      state.escaped = false;
+      code += " ";
     } else {
       code += character;
     }
   }
-  return { code, inBlockComment };
+  return code;
+}
+
+function assignmentIsInCode(match: RegExpMatchArray, rawLine: string, codeLine: string): boolean {
+  const value = match.slice(1).find((capture) => capture !== undefined);
+  if (!value || match.index === undefined) return false;
+  const valueOffset = match[0].lastIndexOf(value);
+  const prefix = valueOffset >= 0 ? match[0].slice(0, valueOffset) : match[0];
+  const operatorOffset = Math.max(prefix.lastIndexOf("="), prefix.lastIndexOf(":"));
+  if (operatorOffset < 0) return false;
+  const operatorIndex = match.index + operatorOffset;
+  if ((codeLine[operatorIndex] ?? " ").trim().length === 0) return false;
+
+  const keyMatches = [...prefix.matchAll(/[A-Za-z_$][\w$.-]*/g)];
+  const key = keyMatches.at(-1);
+  if (!key || key.index === undefined) return false;
+  const keyStart = match.index + key.index;
+  return Array.from({ length: key[0].length }, (_, offset) => keyStart + offset).some(
+    (index) => (codeLine[index] ?? " ") === rawLine[index] && /[A-Za-z0-9_$]/.test(rawLine[index] ?? "")
+  );
 }
 
 export function scanPatchForSecrets(
@@ -530,15 +554,15 @@ export function scanPatchForSecrets(
   if (!patch) return [];
   const normalizedFilename = normalizePath(filename);
   const findings: StructuredReviewFinding[] = [];
-  let inBlockComment = false;
+  const lexicalState: SecretLexicalState = { mode: "code", escaped: false };
 
   for (const line of newSidePatchLines(patch)) {
-    const stripped = stripCommentsFromLine(line.text, inBlockComment);
-    inBlockComment = stripped.inBlockComment;
+    const codeLine = maskSecretCodeLine(line.text, lexicalState);
     if (!line.added) continue;
 
     for (const { name, pattern } of SECRET_ASSIGNMENTS) {
-      const match = stripped.code.match(pattern);
+      const match = line.text.match(pattern);
+      if (!match || !assignmentIsInCode(match, line.text, codeLine)) continue;
       const quotedValue = match?.slice(1, 4).find((capture) => capture !== undefined);
       const unquotedValue = match?.[4];
       const value = quotedValue ?? unquotedValue;
@@ -596,11 +620,15 @@ function addedPatchLines(file: PrFile): string[] | null {
     .map((line) => line.text);
 }
 
-function stripCommentsAndStrings(content: string): string {
+function lexAssertionContent(
+  content: string,
+  added: boolean[]
+): { content: string; meaningfulAdded: boolean[] } {
   type LexicalState = "code" | "single" | "double" | "template" | "line_comment" | "block_comment";
   let state: LexicalState = "code";
   let escaped = false;
   let result = "";
+  const meaningfulAdded = Array.from({ length: content.length }, () => false);
 
   for (let index = 0; index < content.length; index += 1) {
     const character = content[index] ?? "";
@@ -627,6 +655,12 @@ function stripCommentsAndStrings(content: string): string {
     }
     if (state !== "code") {
       result += character === "\n" ? "\n" : " ";
+      if (
+        character !== "\n" &&
+        added[index]
+      ) {
+        meaningfulAdded[index] = true;
+      }
       if (escaped) {
         escaped = false;
       } else if (character === "\\") {
@@ -652,23 +686,27 @@ function stripCommentsAndStrings(content: string): string {
     } else if (character === "'") {
       result += " ";
       state = "single";
+      meaningfulAdded[index] = Boolean(added[index]);
     } else if (character === '"') {
       result += " ";
       state = "double";
+      meaningfulAdded[index] = Boolean(added[index]);
     } else if (character === "`") {
       result += " ";
       state = "template";
+      meaningfulAdded[index] = Boolean(added[index]);
     } else {
       result += character;
+      meaningfulAdded[index] = Boolean(added[index] && !/\s/.test(character));
     }
   }
 
-  return result;
+  return { content: result, meaningfulAdded };
 }
 
 interface NewSideCharacterStream {
   content: string;
-  added: boolean[];
+  meaningfulAdded: boolean[];
 }
 
 function buildNewSideCharacterStream(patch: string): NewSideCharacterStream {
@@ -679,7 +717,7 @@ function buildNewSideCharacterStream(patch: string): NewSideCharacterStream {
     content += segment;
     added.push(...Array.from({ length: segment.length }, () => line.added));
   }
-  return { content: stripCommentsAndStrings(content), added };
+  return lexAssertionContent(content, added);
 }
 
 function skipWhitespace(content: string, start: number): number {
@@ -701,9 +739,13 @@ function findClosingParenthesis(content: string, openingIndex: number): number |
   return null;
 }
 
-function spanContainsAdded(added: boolean[], start: number, end: number): boolean {
+function spanContainsMeaningfulAdded(
+  meaningfulAdded: boolean[],
+  start: number,
+  end: number
+): boolean {
   for (let cursor = start; cursor <= end; cursor += 1) {
-    if (added[cursor]) return true;
+    if (meaningfulAdded[cursor]) return true;
   }
   return false;
 }
@@ -733,7 +775,7 @@ function hasAddedExpectAssertion(stream: NewSideCharacterStream): boolean {
       if (matcherClose === null) break;
       if (
         !name.toLowerCase().includes("snapshot") &&
-        spanContainsAdded(stream.added, start, matcherClose)
+        spanContainsMeaningfulAdded(stream.meaningfulAdded, start, matcherClose)
       ) {
         return true;
       }
@@ -773,7 +815,7 @@ function hasAddedNodeAssertion(stream: NewSideCharacterStream): boolean {
     const closingIndex = findClosingParenthesis(stream.content, openingIndex);
     if (
       closingIndex !== null &&
-      spanContainsAdded(stream.added, start, closingIndex)
+      spanContainsMeaningfulAdded(stream.meaningfulAdded, start, closingIndex)
     ) {
       return true;
     }

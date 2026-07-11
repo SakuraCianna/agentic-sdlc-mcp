@@ -248,6 +248,36 @@ describe("scanPatchForSecrets", () => {
     ).toContainEqual(expect.objectContaining({ category: "SecretLikeAssignment" }));
   });
 
+  it.each(["`", '"', "'"])(
+    "does not scan an added dotenv example inside a context-opened %s string",
+    (quote) => {
+      expect(
+        scanPatchForSecrets(
+          "src/config.ts",
+          `@@ -1,2 +1,3 @@\n const example = ${quote}\n+API_TOKEN=ghp_1234567890abcdef\n ${quote};`
+        )
+      ).toEqual([]);
+    }
+  );
+
+  it("does not scan an assignment inside an added multiline template", () => {
+    expect(
+      scanPatchForSecrets(
+        "src/config.ts",
+        "+const example = `\n+API_TOKEN=ghp_1234567890abcdef\n+`;"
+      )
+    ).toEqual([]);
+  });
+
+  it("scans a real assignment after a context-opened string closes", () => {
+    expect(
+      scanPatchForSecrets(
+        "src/config.ts",
+        ' const example = `\n+`; const API_TOKEN = "live_1234567890abcdef";'
+      )
+    ).toContainEqual(expect.objectContaining({ category: "SecretLikeAssignment" }));
+  });
+
   it.each([
     "+AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE",
     "+OPENAI_API_KEY=sk-your-api-key-here",
@@ -607,6 +637,39 @@ describe("evaluatePullRequestReview", () => {
 
     expect(contextOnly.testCoverageSignal).toBe("insufficient_evidence");
     expect(partiallyAdded.testCoverageSignal).toBe("adequate");
+  });
+
+  it.each([
+    "@@ -1,4 +1,5 @@\n expect(\n+  // documents the existing assertion\n   actual\n ).toEqual(expected);",
+    "@@ -1,4 +1,5 @@\n expect(\n+    \n   actual\n ).toEqual(expected);",
+  ])("does not treat added comments or whitespace as meaningful assertion evidence", (patch) => {
+    const result = evaluatePullRequestReview({
+      pr: pr({ body: "## Reproduction\nBefore: malformed input crashed the parser." }),
+      files: [
+        file("src/parser.ts"),
+        file("src/__tests__/parser.test.ts", { patch }),
+      ],
+      workType: "bugfix",
+    });
+
+    expect(result.testCoverageSignal).toBe("insufficient_evidence");
+  });
+
+  it.each([
+    "@@ -1,4 +1,5 @@\n expect(\n+  \"fixed\"\n ).toEqual(expected);",
+    "@@ -1,4 +1,5 @@\n expect(\n+  42\n ).toEqual(expected);",
+    "@@ -1,4 +1,5 @@\n expect(\n+  actual\n ).toEqual(expected);",
+  ])("accepts a meaningful added assertion argument", (patch) => {
+    const result = evaluatePullRequestReview({
+      pr: pr({ body: "## Reproduction\nBefore: malformed input crashed the parser." }),
+      files: [
+        file("src/parser.ts"),
+        file("src/__tests__/parser.test.ts", { patch }),
+      ],
+      workType: "bugfix",
+    });
+
+    expect(result.testCoverageSignal).toBe("adequate");
   });
 
   it.each([
