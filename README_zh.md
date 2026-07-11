@@ -88,11 +88,10 @@ sequenceDiagram
 运行此服务器前，请确认你已准备好：
 1. 本地系统已安装 **Node.js >= 24**。
 2. **GitHub 个人访问令牌 (PAT)**：
-   * **必备权限范围 (Scopes)**：
-     * `repo`（读取仓库内容、Issues、Pull Requests、Checks 与 commit statuses；使用 fine-grained token 时应授予等价的最小权限）。
-     * **Administration** 元数据读取权限，用于读取分支保护和仓库 rulesets。
-     * Pull Request 元数据与 GraphQL 读取权限，用于 review decision 和关联 Issues。
-     * `security_events` (读取 Code Scanning 和 Dependabot 警报)。
+   * **Classic PAT scopes**：`repo` 与 `security_events`；需要解析组织/团队元数据时再增加 `read:org`。
+   * **Fine-grained PAT 仓库读取权限**：Contents、Pull requests、Issues、Checks、Commit statuses、Administration（classic branch protection）、Code scanning alerts、Dependabot alerts、Secret scanning alerts。Metadata read 会自动附带，读取仓库 rulesets 已足够。
+   * GraphQL 的 review decision 和关联 Issue 查询复用 Pull requests/Issues 权限；GitHub 不存在单独的“GraphQL read”权限开关。
+   * 只有准备以 `dryRun: false` 调用 `create_issue_set` 时才授予 **Issues: write**；v1.6 门禁/审查工具不需要写权限。
      * 注意：如果部分安全端点因权限报错，请以 [GitHub REST API 官方文档](https://docs.github.com/en/rest) 为准核实 Token 权限。
 
 ---

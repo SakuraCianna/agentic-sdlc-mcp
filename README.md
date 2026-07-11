@@ -86,11 +86,10 @@ sequenceDiagram
 Before running the server, ensure you have:
 1. **Node.js >= 24** installed on your system.
 2. **GitHub Personal Access Token (PAT)**:
-   * **Scopes required**:
-     * `repo` (Repository contents, issues, pull requests, checks, and commit statuses; use the narrowest fine-grained equivalent when possible).
-     * Read access to **Administration** metadata for branch protection and repository rulesets.
-     * Pull request metadata/GraphQL read access for review decisions and linked issues.
-     * `security_events` (To query Code Scanning and Dependabot alerts).
+   * **Classic PAT scopes**: `repo` plus `security_events`; add `read:org` when organization/team metadata must be resolved.
+   * **Fine-grained PAT repository permissions (read)**: Contents, Pull requests, Issues, Checks, Commit statuses, Administration (classic branch protection), Code scanning alerts, Dependabot alerts, and Secret scanning alerts. Metadata read is automatically included and is sufficient for repository rulesets.
+   * GraphQL review decisions and linked-issue queries reuse the underlying Pull requests and Issues permissions; GitHub has no separate "GraphQL read" permission switch.
+   * Grant **Issues: write** only when you intend to call `create_issue_set` with `dryRun: false`; the v1.6 gate/review tools do not need write access.
      * Note: Make sure to verify token permissions against [GitHub REST API Documentation](https://docs.github.com/en/rest) if security endpoints fail.
 
 ---
