@@ -161,7 +161,7 @@ node dist/index.js
 npx agentic-sdlc-mcp configure
 ```
 工具将启动引导，提示您输入：
-* `GITHUB_TOKEN` (核心凭证，[点击前往 GitHub 生成](https://github.com/settings/tokens)，需勾选 `repo` 和 `read:org` 权限)
+* `GITHUB_TOKEN`（核心凭证，[点击前往 GitHub 生成](https://github.com/settings/tokens)，并按上方[使用前提](#-使用前提)的最小权限矩阵配置）
 * `GITHUB_OWNER` (默认所有者，可选)
 * `GITHUB_REPO` (默认仓库名，可选)
 

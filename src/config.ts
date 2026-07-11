@@ -86,7 +86,9 @@ async function runInteractiveConfig(): Promise<string> {
   try {
     console.error("\n=== agentic-sdlc-mcp 交互式配置引导 ===");
     console.error("检测到未设置 GITHUB_TOKEN，此参数是与 GitHub 交互的核心凭证。");
-    console.error("生成地址: https://github.com/settings/tokens (需要勾选 repo, read:org 权限)\n");
+    console.error(
+      "生成地址: https://github.com/settings/tokens (请按目标操作授予最小权限，详见 README 的使用前提)\n"
+    );
 
     let token = "";
     while (!token) {

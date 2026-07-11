@@ -159,7 +159,7 @@ Run the configuration command:
 npx agentic-sdlc-mcp configure
 ```
 This guides you through configuring:
-* `GITHUB_TOKEN` (Primary token; [generate classic token here](https://github.com/settings/tokens) with `repo` and `read:org` scopes)
+* `GITHUB_TOKEN` (Primary token; [generate one here](https://github.com/settings/tokens) and follow the least-privilege matrix in [Prerequisites](#-prerequisites))
 * `GITHUB_OWNER` (Default repository owner name, optional)
 * `GITHUB_REPO` (Default repository name, optional)
 
