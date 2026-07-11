@@ -105,15 +105,19 @@ export async function handleReleaseReadiness(
     const bothSourcesUnverified =
       ci.unverifiedSignals.includes("check_runs") &&
       ci.unverifiedSignals.includes("commit_statuses");
-    const notes = ci.errors.length > 0 ? ` Notes: ${ci.errors.join("; ")}` : "";
+    const unavailableSources = [
+      ci.unverifiedSignals.includes("check_runs") ? "check runs unavailable or incomplete" : null,
+      ci.unverifiedSignals.includes("commit_statuses")
+        ? "commit statuses unavailable or incomplete"
+        : null,
+    ].filter((source): source is string => source !== null);
+    const notes =
+      unavailableSources.length > 0 ? ` Evidence notes: ${unavailableSources.join("; ")}.` : "";
 
     if (ci.hasFailing) {
       ciStatus = "failing";
-      const failingNames = [
-        ...ci.checkRuns.failing.map((signal) => signal.name),
-        ...ci.commitStatuses.failing.map((signal) => signal.name),
-      ];
-      ciSummary = `[FAIL] ${failingNames.length} CI signal(s) failing: ${failingNames.join(", ")}.${notes}`;
+      const failingCount = ci.checkRuns.failing.length + ci.commitStatuses.failing.length;
+      ciSummary = `[FAIL] ${failingCount} CI signal(s) failing.${notes}`;
     } else if (ci.hasPending) {
       ciStatus = "pending";
       const pendingCount = ci.checkRuns.pending.length + ci.commitStatuses.pending.length;
