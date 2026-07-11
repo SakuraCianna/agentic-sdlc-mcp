@@ -452,6 +452,57 @@ const SECRET_ASSIGNMENTS: SecretPattern[] = [
   },
 ];
 
+const DYNAMIC_SECRET_ASSIGNMENT = new RegExp(
+  String.raw`(?:^|[,{;]\s*|\b(?:const|let|var)\s+)\s*["']?[\w.-]*(?:api[_-]?key|auth(?:orization)?[_-]?(?:header|token)?|client[_-]?secret|credential|password|private[_-]?key|secret|token)[\w.-]*["']?\s*(?::[^=\n]{0,80}=|[:=])\s*([\s\S]*)$`,
+  "i"
+);
+
+const DYNAMIC_COMPUTED_SECRET_ASSIGNMENT = new RegExp(
+  String.raw`(?:^|[,{;]\s*)\s*(?:(?:credentials?|secrets?|tokens?)\s*\[[^\]]+\]|[\w$.-]+\s*\[\s*["'][^"']*(?:api[_-]?key|authorization|client[_-]?secret|credential|password|private[_-]?key|secret|token)[^"']*["']\s*\])\s*=\s*([\s\S]*)$`,
+  "i"
+);
+
+function assignmentOperatorIsInCode(match: RegExpMatchArray, codeLine: string): boolean {
+  if (match.index === undefined) return false;
+  const value = match[1] ?? "";
+  const valueOffset = value.length > 0 ? match[0].lastIndexOf(value) : match[0].length;
+  const prefix = match[0].slice(0, valueOffset);
+  const operatorOffset = Math.max(prefix.lastIndexOf("="), prefix.lastIndexOf(":"));
+  if (operatorOffset < 0) return false;
+  return (codeLine[match.index + operatorOffset] ?? " ").trim().length > 0;
+}
+
+function isCredentialMetadataAssignment(match: RegExpMatchArray): boolean {
+  const value = match[1] ?? "";
+  const valueOffset = value.length > 0 ? match[0].lastIndexOf(value) : match[0].length;
+  const target = match[0].slice(0, valueOffset);
+  return /(?:token|secret|password|credential)[_-]?(?:count|length|index|ttl|expir(?:y|es?)|type|name|id|status|strength|validator|parser|izer)\b/i.test(
+    target
+  );
+}
+
+function isTrustedRuntimeSecretExpression(value: string): boolean {
+  let remainder = value
+    .replace(/(?:process|import\.meta)\.env(?:\.[A-Za-z_$][\w$]*|\[["'][A-Za-z_$][\w$]*["']\])/g, "")
+    .replace(/\bsecrets\.[A-Za-z_$][\w$]*/g, "")
+    .replace(/(?:os\.)?getenv\s*\(\s*["'][A-Za-z_$][\w$]*["']\s*\)/gi, "")
+    .replace(/Deno\.env\.get\s*\(\s*["'][A-Za-z_$][\w$]*["']\s*\)/g, "")
+    .replace(/[\s+(){}$;,.?:|&!]+/g, "");
+  remainder = remainder.replace(/^(?:undefined|null)$/i, "");
+  return remainder.length === 0;
+}
+
+function isDynamicSecretExpression(value: string, codeValue: string): boolean {
+  const normalized = value.trim();
+  if (!normalized || isTrustedRuntimeSecretExpression(normalized)) return false;
+  return (
+    codeValue.includes("+") ||
+    /\.join\s*\(/.test(codeValue) ||
+    /\b(?:Buffer\.from|atob|btoa|String\.fromCharCode)\s*\(/.test(codeValue) ||
+    /`[^`]*\$\{[^}]+\}[^`]*`/s.test(normalized)
+  );
+}
+
 function isPlaceholderSecret(value: string): boolean {
   const normalized = value.trim();
   return (
@@ -565,10 +616,53 @@ export function scanPatchForSecrets(
   const normalizedFilename = normalizePath(filename);
   const findings: StructuredReviewFinding[] = [];
   const lexicalState: SecretLexicalState = { mode: "code", escaped: false };
+  const patchLines = newSidePatchLines(patch);
+  const scannedLines = patchLines.map((line) => ({
+    ...line,
+    code: maskSecretCodeLine(line.text, lexicalState),
+  }));
 
-  for (const line of newSidePatchLines(patch)) {
-    const codeLine = maskSecretCodeLine(line.text, lexicalState);
+  for (let lineIndex = 0; lineIndex < scannedLines.length; lineIndex += 1) {
+    const line = scannedLines[lineIndex];
+    if (!line) continue;
+    const codeLine = line.code;
     if (!line.added) continue;
+
+    const window = [line];
+    for (
+      let nextIndex = lineIndex + 1;
+      nextIndex < scannedLines.length && window.length < 6;
+      nextIndex += 1
+    ) {
+      const nextLine = scannedLines[nextIndex];
+      if (!nextLine?.added) break;
+      window.push(nextLine);
+      if (/;\s*$/.test(nextLine.text)) break;
+    }
+    const rawWindow = window.map((entry) => entry.text).join(" ");
+    const codeWindow = window.map((entry) => entry.code).join(" ");
+    const dynamicMatch =
+      rawWindow.match(DYNAMIC_SECRET_ASSIGNMENT) ??
+      rawWindow.match(DYNAMIC_COMPUTED_SECRET_ASSIGNMENT);
+    if (
+      dynamicMatch &&
+      assignmentOperatorIsInCode(dynamicMatch, codeWindow) &&
+      !isCredentialMetadataAssignment(dynamicMatch) &&
+      isDynamicSecretExpression(dynamicMatch[1] ?? "", codeWindow)
+    ) {
+      findings.push(
+        finding(
+          "high",
+          "DynamicSecretConstruction",
+          "security",
+          `Credential-like value is dynamically constructed in \`${normalizedFilename}\`.`,
+          [normalizedFilename],
+          "The added assignment combines, interpolates, joins, or decodes values into a credential-like target, so a literal-only heuristic cannot establish whether the result is safe.",
+          "Verify every input source, remove hardcoded fragments, prefer a secret manager or environment variable, and require trusted mature-scanner evidence plus manual review."
+        )
+      );
+      continue;
+    }
 
     for (const { name, pattern } of SECRET_ASSIGNMENTS) {
       const match = line.text.match(pattern);

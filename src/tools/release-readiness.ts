@@ -6,9 +6,10 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { resolveRepo, getOctokit, paginateAll, handleGitHubError } from "../github/client.js";
-import { collectCiEvidence } from "../github/pull-request-evidence.js";
+import { resolveRepo, getOctokit, handleGitHubError } from "../github/client.js";
+import { collectBounded, collectCiEvidence } from "../github/pull-request-evidence.js";
 import { config } from "../config.js";
+import { safeMarkdownInline } from "../rendering/markdown.js";
 import type { RepoRef } from "../types.js";
 import type { Octokit } from "@octokit/rest";
 
@@ -16,8 +17,8 @@ import type { Octokit } from "@octokit/rest";
 // Constants
 // ---------------------------------------------------------------------------
 
-/** Max bug issues to page through before stopping. */
-const MAX_BUG_ISSUES = 100;
+/** Max raw issue-or-PR entries to inspect before failing closed. */
+const MAX_BUG_RESULTS = 300;
 /** Max bug issues to list in the markdown output before truncating. */
 const MAX_BUGS_IN_MARKDOWN = 20;
 
@@ -28,8 +29,8 @@ const MAX_BUGS_IN_MARKDOWN = 20;
 export const ReleaseReadinessInputSchema = z.object({
   owner: z.string().optional().describe("GitHub owner. Falls back to GITHUB_OWNER."),
   repo: z.string().optional().describe("GitHub repo. Falls back to GITHUB_REPO."),
-  baseRef: z.string().optional().describe("Base ref for comparison. Defaults to default branch."),
-  headRef: z.string().optional().describe("Head ref to release. Defaults to default branch."),
+  baseRef: z.string().optional().describe("Deprecated compatibility field; currently ignored."),
+  headRef: z.string().optional().describe("Branch, tag, or commit SHA to release. Defaults to default branch."),
   pullNumber: z.number().int().positive().optional()
     .describe("If provided, checks the PR's head commit CI status."),
 });
@@ -93,18 +94,16 @@ export async function handleReleaseReadiness(
       });
       headSha = pr.head.sha;
     } else {
-      const { data: refData } = await octokit.git.getRef({
+      const { data: commit } = await octokit.repos.getCommit({
         owner: ref.owner,
         repo: ref.repo,
-        ref: `heads/${headRef}`,
+        ref: headRef,
       });
-      headSha = refData.object.sha;
+      headSha = commit.sha;
     }
 
     const ci = await collectCiEvidence(ref, headSha, octokit);
-    const bothSourcesUnverified =
-      ci.unverifiedSignals.includes("check_runs") &&
-      ci.unverifiedSignals.includes("commit_statuses");
+    const anySourceUnverified = ci.unverifiedSignals.length > 0;
     const unavailableSources = [
       ci.unverifiedSignals.includes("check_runs") ? "check runs unavailable or incomplete" : null,
       ci.unverifiedSignals.includes("commit_statuses")
@@ -122,10 +121,10 @@ export async function handleReleaseReadiness(
       ciStatus = "pending";
       const pendingCount = ci.checkRuns.pending.length + ci.commitStatuses.pending.length;
       ciSummary = `[PENDING] ${pendingCount} CI signal(s) still running.${notes}`;
-    } else if (ci.totalSignals === 0 || bothSourcesUnverified) {
+    } else if (ci.totalSignals === 0 || anySourceUnverified) {
       ciStatus = "unknown";
       ciSummary = `[WARN] CI evidence could not be verified: ${
-        ci.totalSignals === 0 ? "no check runs or commit statuses were found" : "both CI sources are unverified"
+        ci.totalSignals === 0 ? "no check runs or commit statuses were found" : "one or more CI sources are unverified"
       }.${notes} Ensure your token has the \`repo\` scope (or \`public_repo\` for public-only repos) to read CI evidence.`;
     } else {
       ciStatus = "passing";
@@ -138,22 +137,31 @@ export async function handleReleaseReadiness(
       "to read pull requests, refs, check runs, and commit statuses.";
   }
 
-  // --- Open bug issues (paginated, capped at MAX_BUG_ISSUES) ---
-  const allOpenIssues = await paginateAll(
-    (page, perPage) =>
-      octokit.issues
-        .listForRepo({
-          owner: ref.owner,
-          repo: ref.repo,
-          state: "open",
-          labels: "bug",
-          per_page: perPage,
-          page,
-        })
-        .then((r) => r.data),
-    MAX_BUG_ISSUES
-  );
-  const bugIssues = allOpenIssues.filter((i) => !i.pull_request);
+  // --- Open bug issues (the REST endpoint mixes issues and pull requests) ---
+  let bugIssues: Array<{ number: number; title: string; html_url: string }> = [];
+  let bugEvidenceIncomplete = false;
+  try {
+    const issueEvidence = await collectBounded(
+      (page, perPage) =>
+        octokit.issues
+          .listForRepo({
+            owner: ref.owner,
+            repo: ref.repo,
+            state: "open",
+            labels: "bug",
+            per_page: perPage,
+            page,
+          })
+          .then((response) => response.data),
+      MAX_BUG_RESULTS
+    );
+    bugIssues = issueEvidence.items
+      .filter((issue) => !issue.pull_request)
+      .map((issue) => ({ number: issue.number, title: issue.title, html_url: issue.html_url }));
+    bugEvidenceIncomplete = issueEvidence.truncated;
+  } catch {
+    bugEvidenceIncomplete = true;
+  }
 
   // --- CHANGELOG check ---
   let hasChangelog = false;
@@ -168,6 +176,7 @@ export async function handleReleaseReadiness(
   if (ciStatus === "failing") blockingIssues.push("CI checks are failing");
   if (ciStatus === "pending") blockingIssues.push("CI checks are still pending");
   if (ciStatus === "unknown") blockingIssues.push("CI status could not be verified");
+  if (bugEvidenceIncomplete) blockingIssues.push("Open bug issues could not be fully verified");
   if (bugIssues.length > 0)
     blockingIssues.push(`${bugIssues.length} open bug issue(s) - review before release`);
 
@@ -184,10 +193,13 @@ export async function handleReleaseReadiness(
     hasChangelog,
   };
 
+  const renderedRepo = safeMarkdownInline(`${ref.owner}/${ref.repo}`, { maxLength: 200 });
+  const renderedHeadRef = safeMarkdownInline(headRef, { maxLength: 200 });
+
   const lines: string[] = [
-    `# Release Readiness Check: ${ref.owner}/${ref.repo}`,
+    `# Release Readiness Check: ${renderedRepo}`,
     "",
-    `**Head ref:** \`${headRef}\``,
+    `**Head ref:** ${renderedHeadRef}`,
     `**Ready to release:** ${isReady ? "[YES]" : "[NO] - see blocking issues below"}`,
     "",
     "## CI Status",
@@ -196,13 +208,19 @@ export async function handleReleaseReadiness(
     "## Open Bugs",
   ];
 
-  if (bugIssues.length === 0) {
+  if (bugEvidenceIncomplete) {
+    lines.push("[WARN] Open bug issue evidence is incomplete; release remains blocked.");
+  } else if (bugIssues.length === 0) {
     lines.push("[PASS] No open bug issues.");
   } else {
     lines.push(`[WARN] **${bugIssues.length}** open bug issue(s):`);
     bugIssues
       .slice(0, MAX_BUGS_IN_MARKDOWN)
-      .forEach((i) => lines.push(`  - #${i.number} ${i.title} - ${i.html_url}`));
+      .forEach((issue) =>
+        lines.push(
+          `  - #${issue.number} ${safeMarkdownInline(issue.title, { maxLength: 200 })} - ${safeMarkdownInline(issue.html_url, { maxLength: 500 })}`
+        )
+      );
     if (bugIssues.length > MAX_BUGS_IN_MARKDOWN) {
       lines.push(
         `  - _(showing first ${MAX_BUGS_IN_MARKDOWN} of ${bugIssues.length}; ${
@@ -244,7 +262,7 @@ export async function handleReleaseReadiness(
     "## Rollback Plan",
     "",
     `**Release:** <tag>`,
-    `**Repo:** ${ref.owner}/${ref.repo}`,
+    `**Repo:** ${renderedRepo}`,
     `**Date:** ${new Date().toISOString().slice(0, 10)}`,
     "",
     "### Steps to rollback",

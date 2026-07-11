@@ -531,6 +531,7 @@
 > - v1.6 的 `blockingLabels` 使用可覆盖的内置默认值，仓库级配置留到 v1.7 `.agentic-sdlc.yml`。
 > - 发布就绪度同步修复：零信号、pending、unknown 均不可发布，只有明确 passing CI 才可 ready。
 > - 密钥检测采用“成熟 Gitleaks CI 证据为主、内置启发式为辅”的分层方案；同名 status、未知 App、不完整证据或扫描策略自修改均不能证明 clean scan。
+> - 补充启发式覆盖 credential 字段的动态拼接、模板插值、join、解码、多行和可识别计算属性，并以 `DynamicSecretConstruction` 表达风险；它不替代跨文件数据流分析、CodeQL/SAST 或人工审查。
 
 #### 1. 扩展 PR 门禁信号
 

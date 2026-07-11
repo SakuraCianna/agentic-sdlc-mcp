@@ -31,7 +31,8 @@ function makeMockOctokit(opts: {
   checksError?: unknown;
   statusesError?: unknown;
   refError?: unknown;
-  bugIssues?: Array<{ number: number; title: string; html_url: string }>;
+  bugIssues?: Array<{ number: number; title: string; html_url: string; pull_request?: object }>;
+  bugPages?: Array<Array<{ number: number; title: string; html_url: string; pull_request?: object }>>;
   hasChangelog?: boolean;
 } = {}) {
   const checks = opts.checks ?? [{ name: "CI", status: "completed", conclusion: "success" }];
@@ -43,6 +44,9 @@ function makeMockOctokit(opts: {
       get: vi.fn().mockResolvedValue({
         data: { default_branch: "main", language: "TypeScript" },
       }),
+      getCommit: opts.refError
+        ? vi.fn().mockRejectedValue(opts.refError)
+        : vi.fn().mockResolvedValue({ data: { sha: "abc123456" } }),
       getContent: opts.hasChangelog
         ? vi.fn().mockResolvedValue({ data: {} })
         : vi.fn().mockRejectedValue({ status: 404 }),
@@ -54,13 +58,6 @@ function makeMockOctokit(opts: {
             })
           ),
     },
-    git: {
-      getRef: opts.refError
-        ? vi.fn().mockRejectedValue(opts.refError)
-        : vi.fn().mockResolvedValue({
-            data: { object: { sha: "abc123456" } },
-          }),
-    },
     checks: {
       listForRef: opts.checksError
         ? vi.fn().mockRejectedValue(opts.checksError)
@@ -71,7 +68,9 @@ function makeMockOctokit(opts: {
           ),
     },
     issues: {
-      listForRepo: vi.fn().mockResolvedValue({ data: bugs }),
+      listForRepo: vi.fn().mockImplementation(({ page = 1 }: { page?: number }) =>
+        Promise.resolve({ data: opts.bugPages ? (opts.bugPages[page - 1] ?? []) : bugs })
+      ),
     },
   } as unknown as Parameters<typeof handleReleaseReadiness>[2];
 }
@@ -239,7 +238,7 @@ describe("handleReleaseReadiness", () => {
     expect(structured.isReady).toBe(false);
   });
 
-  it("accepts verified passing statuses when check runs are unavailable", async () => {
+  it("fails closed when check runs are unavailable despite passing statuses", async () => {
     const octokit = makeMockOctokit({
       checksError: { status: 403, response: { data: { message: "checks denied" } } },
       statuses: [{ context: "legacy-ci", state: "success", target_url: null }],
@@ -247,8 +246,8 @@ describe("handleReleaseReadiness", () => {
 
     const { structured } = await handleReleaseReadiness({}, REF, octokit);
 
-    expect(structured.ciStatus).toBe("passing");
-    expect(structured.isReady).toBe(true);
+    expect(structured.ciStatus).toBe("unknown");
+    expect(structured.isReady).toBe(false);
   });
 
   it("does not echo externally controlled CI names or raw error details", async () => {
@@ -287,7 +286,7 @@ describe("handleReleaseReadiness", () => {
     expect(structured.ciSummary).not.toContain("##");
   });
 
-  it("keeps passing when one truncated source is backed by another verified source", async () => {
+  it("fails closed when one CI source is truncated", async () => {
     const checkPage = (page: number) =>
       Array.from({ length: 100 }, (_, index) => ({
         name: `check-${page}-${index}`,
@@ -301,8 +300,8 @@ describe("handleReleaseReadiness", () => {
 
     const { structured } = await handleReleaseReadiness({}, REF, octokit);
 
-    expect(structured.ciStatus).toBe("passing");
-    expect(structured.isReady).toBe(true);
+    expect(structured.ciStatus).toBe("unknown");
+    expect(structured.isReady).toBe(false);
     expect(structured.ciSummary).toContain("check runs unavailable or incomplete");
   });
 
@@ -328,6 +327,89 @@ describe("handleReleaseReadiness", () => {
 
     expect(structured.ciStatus).toBe("unknown");
     expect(structured.isReady).toBe(false);
-    expect(structured.ciSummary).toContain("both CI sources are unverified");
+    expect(structured.ciSummary).toContain("one or more CI sources are unverified");
+  });
+
+  it("continues past bug-labelled pull requests to find real bug issues", async () => {
+    const pullRequestPage = Array.from({ length: 100 }, (_, index) => ({
+      number: index + 1,
+      title: `PR ${index + 1}`,
+      html_url: `https://github.com/t/r/pull/${index + 1}`,
+      pull_request: {},
+    }));
+    const octokit = makeMockOctokit({
+      bugPages: [
+        pullRequestPage,
+        [{ number: 101, title: "Real bug", html_url: "https://github.com/t/r/issues/101" }],
+      ],
+    });
+
+    const { structured } = await handleReleaseReadiness({}, REF, octokit);
+
+    expect(octokit.issues.listForRepo).toHaveBeenCalledTimes(2);
+    expect(structured.openBugCount).toBe(1);
+    expect(structured.isReady).toBe(false);
+  });
+
+  it("blocks release when bug issue evidence is truncated", async () => {
+    const pullRequestPage = (page: number) =>
+      Array.from({ length: 100 }, (_, index) => ({
+        number: page * 100 + index,
+        title: `PR ${page}-${index}`,
+        html_url: `https://github.com/t/r/pull/${page * 100 + index}`,
+        pull_request: {},
+      }));
+    const octokit = makeMockOctokit({
+      bugPages: [
+        pullRequestPage(0),
+        pullRequestPage(1),
+        pullRequestPage(2),
+        [pullRequestPage(3)[0]],
+      ],
+    });
+
+    const { structured, text } = await handleReleaseReadiness({}, REF, octokit);
+
+    expect(octokit.issues.listForRepo).toHaveBeenCalledTimes(4);
+    expect(structured.isReady).toBe(false);
+    expect(structured.blockingIssues).toContain("Open bug issues could not be fully verified");
+    expect(text).not.toContain("[PASS] No open bug issues.");
+  });
+
+  it("resolves branch, tag, or SHA headRef through the commits API", async () => {
+    const octokit = makeMockOctokit();
+
+    await handleReleaseReadiness({ headRef: "v1.6.0" }, REF, octokit);
+
+    expect(octokit.repos.getCommit).toHaveBeenCalledWith(
+      expect.objectContaining({ ref: "v1.6.0" })
+    );
+  });
+
+  it("escapes and bounds external values in Markdown while preserving structured values", async () => {
+    const maliciousRef = "main\r\n## forged `section`";
+    const maliciousTitle = "Bug\r\n## [PASS] forged *result*";
+    const octokit = makeMockOctokit({
+      bugIssues: [
+        {
+          number: 7,
+          title: maliciousTitle,
+          html_url: "https://example.test/x)\r\n## injected",
+        },
+      ],
+    });
+
+    const { structured, text } = await handleReleaseReadiness(
+      { headRef: maliciousRef },
+      REF,
+      octokit
+    );
+
+    expect(structured.headRef).toBe(maliciousRef);
+    expect(text).not.toContain("\n## forged");
+    expect(text).not.toContain("\n## [PASS]");
+    expect(text).not.toContain("\n## injected");
+    expect(text).toContain("\\#\\# forged");
+    expect(text.length).toBeLessThan(20_000);
   });
 });

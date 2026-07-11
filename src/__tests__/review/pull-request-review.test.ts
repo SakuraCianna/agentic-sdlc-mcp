@@ -43,6 +43,7 @@ function secretScannerEvidence(state: GateSignal["state"]) {
     rawConclusion: state === "passing" ? "success" : state === "failing" ? "failure" : null,
     rawState: null,
     url: "https://github.com/example/checks/1",
+    provenanceVerified: true,
   };
   const bucket = {
     passing: state === "passing" ? [scanner] : [],
@@ -351,6 +352,48 @@ describe("scanPatchForSecrets", () => {
     "+token: secrets.API_TOKEN",
   ])("ignores placeholder or indirect secret value %s", (patch) => {
     expect(scanPatchForSecrets("config/service.env", patch)).toEqual([]);
+  });
+
+  it.each([
+    '+const token = "gh" + "p_" + accountSuffix;',
+    '+const apiKey = `live_${tenantId}_${signature}`;',
+    '+const clientSecret = [prefix, tenantId, signature].join(".");',
+    '+const password = Buffer.from(encodedPassword, "base64").toString("utf8");',
+    '+const privateKey = String.fromCharCode(...keyBytes);',
+    '+const authorizationHeader = prefix + accountId + signature;',
+    '+headers["authorization"] = "Bearer " + sessionToken;',
+    '+credentials[fieldName] = prefix + accountId + signature;',
+  ])("flags a dynamically constructed credential expression %s", (patch) => {
+    expect(scanPatchForSecrets("src/config.ts", patch)).toContainEqual(
+      expect.objectContaining({
+        category: "DynamicSecretConstruction",
+        severity: "high",
+        dimension: "security",
+        paths: ["src/config.ts"],
+      })
+    );
+  });
+
+  it("flags a credential dynamically assembled across added lines", () => {
+    expect(
+      scanPatchForSecrets(
+        "src/config.ts",
+        "+const apiToken =\n+  tokenPrefix +\n+  accountId +\n+  signature;"
+      )
+    ).toContainEqual(expect.objectContaining({ category: "DynamicSecretConstruction" }));
+  });
+
+  it.each([
+    "+const token = process.env.TOKEN_PREFIX + process.env.TOKEN_SUFFIX;",
+    "+const apiKey = secrets.API_KEY_PREFIX + secrets.API_KEY_SUFFIX;",
+    "+const password = os.getenv(\"PASSWORD_PREFIX\") + os.getenv(\"PASSWORD_SUFFIX\");",
+    "+const tokenCount = previousCount + 1;",
+    "+const passwordStrength = entropyScore + policyBonus;",
+    '+const secretName = "tenant/" + tenantId;',
+    "+// const token = prefix + accountId + signature;",
+    "-const token = prefix + accountId + signature;",
+  ])("does not flag trusted runtime sources, comments, or removed dynamic code %s", (patch) => {
+    expect(scanPatchForSecrets("src/config.ts", patch)).toEqual([]);
   });
 
   it("ignores removed assignments, context lines, prose keywords, placeholders, and env references", () => {

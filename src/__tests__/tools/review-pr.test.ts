@@ -793,6 +793,30 @@ describe("handleReviewPr — mature secret scanner evidence", () => {
     checkOwnership: false,
   };
 
+  it("reports dynamically constructed credential values in the real handler", async () => {
+    const octokit = makeMockOctokit({
+      files: [
+        {
+          filename: "src/config.ts",
+          status: "modified",
+          additions: 1,
+          deletions: 0,
+          patch: '+const authorizationHeader = prefix + accountId + signature;',
+        },
+      ],
+    });
+
+    const { structured } = await handleReviewPr(securityParams, REF, octokit);
+
+    expect(structured.findings).toContainEqual(
+      expect.objectContaining({
+        category: "DynamicSecretConstruction",
+        severity: "high",
+        paths: ["src/config.ts"],
+      })
+    );
+  });
+
   it("fails closed and exposes unverified evidence when no mature scanner ran", async () => {
     const octokit = makeMockOctokit({});
 
