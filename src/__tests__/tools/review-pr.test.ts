@@ -380,6 +380,7 @@ function makeMockOctokit(opts: {
   workflowContentError?: unknown;
   prDraft?: boolean;
   commits?: number;
+  prTitle?: string;
 }) {
   return {
     checks: {
@@ -393,7 +394,7 @@ function makeMockOctokit(opts: {
       get: vi.fn().mockResolvedValue({
         data: {
           number: 42,
-          title: "Test PR",
+          title: opts.prTitle ?? "Test PR",
           body: "A sufficiently long description for basic checks to pass cleanly.",
           draft: opts.prDraft ?? false,
           commits: opts.commits ?? 1,
@@ -401,6 +402,7 @@ function makeMockOctokit(opts: {
           head: { sha: "head-sha", ref: "feature/review" },
           base: { sha: "base-sha", ref: "main" },
           mergeable: true,
+          mergeable_state: "clean",
           labels: [],
         },
       }),
@@ -552,6 +554,32 @@ describe("handleReviewPr — ownership check", () => {
 });
 
 describe("handleReviewPr — structured review contract", () => {
+  it("keeps raw external values structured while rendering safe bounded single-line Markdown", async () => {
+    const title = "Review\n## forged [link](javascript:alert(1))" + "x".repeat(500);
+    const filename = "src/unsafe\n## path.ts";
+    const { structured, text } = await handleReviewPr(
+      { ...BASE_PARAMS, workType: "feature", checkOwnership: false },
+      REF,
+      makeMockOctokit({
+        prTitle: title,
+        files: [
+          {
+            filename,
+            status: "modified",
+            additions: 1,
+            deletions: 0,
+          },
+        ],
+      })
+    );
+
+    expect(structured.title).toBe(title);
+    expect(structured.findings.some((finding) => finding.paths.includes(filename))).toBe(true);
+    expect(text).not.toContain("\n## forged");
+    expect(text).not.toContain("\n## path.ts");
+    expect(text).toContain("\\[link\\]\\(javascript:alert\\(1\\)\\)");
+    expect(text.length).toBeLessThan(5000);
+  });
   it("maps draft and large commit-count compatibility checks into structured findings", async () => {
     const { structured } = await handleReviewPr(
       { ...BASE_PARAMS, checkOwnership: false },

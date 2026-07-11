@@ -34,6 +34,7 @@ import {
   MAX_WORKFLOW_FILES,
   type WorkflowContent,
 } from "./workflow-permissions-audit.js";
+import { safeMarkdownInline } from "../rendering/markdown.js";
 
 export {
   codeownersPatternMatches,
@@ -651,8 +652,10 @@ export async function handleReviewPr(
       : structured.conclusion === "needs_changes"
         ? "NEEDS CHANGES"
         : "RISKY BUT ACCEPTABLE";
+  const inline = (value: string, maxLength = 300): string =>
+    safeMarkdownInline(value, { maxLength });
   const lines: string[] = [
-    `# PR Review: #${structured.pullNumber} -- ${structured.title}`,
+    `# PR Review: #${structured.pullNumber} -- ${inline(structured.title, 400)}`,
     "",
     `**Standard:** ${params.standard}`,
     `**Conclusion:** ${conclusionLabel}`,
@@ -663,14 +666,14 @@ export async function handleReviewPr(
 
   if (errors.length > 0) {
     lines.push("## Notes", "");
-    errors.forEach((e) => lines.push(`- ${e}`));
+    errors.forEach((error) => lines.push(`- ${inline(error, 500)}`));
     lines.push("");
   }
 
   lines.push(
     "## Work Type",
     "",
-    `**${structured.workType}** (${structured.workTypeConfidence} confidence) -- ${structured.workTypeReasoning}`,
+    `**${inline(structured.workType)}** (${inline(structured.workTypeConfidence)} confidence) -- ${inline(structured.workTypeReasoning, 500)}`,
     ""
   );
   const renderSection = (title: string, dimensions: ReviewDimension[]): void => {
@@ -679,11 +682,11 @@ export async function handleReviewPr(
     if (findings.length === 0) lines.push("No findings.");
     for (const finding of findings) {
       lines.push(
-        `### ${severityIcon(finding.severity)} [${finding.severity.toUpperCase()}] ${finding.category}`,
-        finding.description,
-        `- Paths: ${finding.paths.join(", ") || "none"}`,
-        `- Reason: ${finding.reason}`,
-        `> Suggestion: ${finding.suggestion}`,
+        `### ${severityIcon(finding.severity)} [${finding.severity.toUpperCase()}] ${inline(finding.category)}`,
+        inline(finding.description, 500),
+        `- Paths: ${finding.paths.length > 0 ? finding.paths.map((path) => inline(path)).join(", ") : "none"}`,
+        `- Reason: ${inline(finding.reason, 500)}`,
+        `> Suggestion: ${inline(finding.suggestion, 500)}`,
         ""
       );
     }
@@ -698,9 +701,9 @@ export async function handleReviewPr(
     lines.push(
       "### Mature Secret Scanner Evidence",
       `- Status: **${structured.secretScannerEvidence.status}**`,
-      `- Providers: ${structured.secretScannerEvidence.providers.join(", ") || "none"}`,
+      `- Providers: ${structured.secretScannerEvidence.providers.map((provider) => inline(provider)).join(", ") || "none"}`,
       `- Verified: ${structured.secretScannerEvidence.verified ? "yes" : "no"}`,
-      `- Reason: ${structured.secretScannerEvidence.reason}`,
+      `- Reason: ${inline(structured.secretScannerEvidence.reason, 500)}`,
       ""
     );
   }

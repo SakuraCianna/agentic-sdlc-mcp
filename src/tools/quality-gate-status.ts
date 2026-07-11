@@ -19,6 +19,7 @@ import {
   type SignalBuckets,
 } from "../github/pull-request-evidence.js";
 import type { CheckStatus, RepoRef } from "../types.js";
+import { safeMarkdownInline } from "../rendering/markdown.js";
 
 // ---------------------------------------------------------------------------
 // Schema
@@ -105,6 +106,7 @@ const QualityGateEvidenceShape = z.object({
     .object({
       draft: z.boolean(),
       mergeable: z.boolean().nullable(),
+      mergeableState: z.string().nullable(),
       baseBranch: z.string(),
     })
     .nullable(),
@@ -217,6 +219,7 @@ export interface QualityGateEvidenceResult {
   pullRequest: {
     draft: boolean;
     mergeable: boolean | null;
+    mergeableState: string | null;
     baseBranch: string;
   } | null;
   reviews: {
@@ -541,6 +544,8 @@ export function evaluateQualityGate(
   const pendingReasons: string[] = [];
   const reviewReasons: string[] = [];
   const policyReasons: string[] = [];
+  const mergeableState = evidence.pullRequest.mergeableState?.toLocaleLowerCase() ?? null;
+  const computingMergeableStates = new Set(["unknown", "queued", "checking", "pending"]);
 
   for (const item of [
     ...evidence.ci.checkRuns.failing,
@@ -550,6 +555,13 @@ export function evaluateQualityGate(
   }
   if (evidence.pullRequest.mergeable === false) {
     failingReasons.push("GitHub reports that the PR is not mergeable.");
+  }
+  if (
+    mergeableState !== null &&
+    mergeableState !== "clean" &&
+    !computingMergeableStates.has(mergeableState)
+  ) {
+    failingReasons.push(`GitHub reports a non-clean mergeability state: ${mergeableState}.`);
   }
   if (evidence.reviews.reviewDecision === "CHANGES_REQUESTED") {
     failingReasons.push(
@@ -579,6 +591,9 @@ export function evaluateQualityGate(
   }
   if (evidence.pullRequest.mergeable === null) {
     pendingReasons.push("GitHub has not finished computing PR mergeability.");
+  }
+  if (mergeableState !== null && computingMergeableStates.has(mergeableState)) {
+    pendingReasons.push(`GitHub mergeability state is still computing: ${mergeableState}.`);
   }
   if (contexts.missing.length > 0) {
     pendingReasons.push(`Required status contexts are missing: ${contexts.missing.join(", ")}.`);
@@ -750,6 +765,7 @@ function buildPullRequestResult(
       pullRequest: {
         draft: evidence.pullRequest.draft,
         mergeable: evidence.pullRequest.mergeable,
+        mergeableState: evidence.pullRequest.mergeableState,
         baseBranch: evidence.pullRequest.baseBranch,
       },
       reviews: {
@@ -822,21 +838,14 @@ function buildRefResult(
   };
 }
 
-function sanitizeMarkdownNote(error: string): string {
-  const sanitized = error
-    .replace(/[\r\n\t]+/g, " ")
-    .replace(/\s+/g, " ")
-    .replace(/`/g, "'")
-    .trim();
-  return (sanitized || "Unknown evidence collection error").slice(0, 500);
-}
-
 function renderQualityGateMarkdown(result: QualityGateResult): string {
+  const inline = (value: string, maxLength = 300): string =>
+    safeMarkdownInline(value, { maxLength });
   const lines = [
-    `# Quality Gate Status - ${result.contextLabel}`,
+    `# Quality Gate Status - ${inline(result.contextLabel, 400)}`,
     "",
-    `**Commit:** \`${result.headSha.slice(0, 8)}\``,
-    `**Conclusion:** ${result.conclusion}`,
+    `**Commit:** ${inline(result.headSha.slice(0, 40), 80)}`,
+    `**Conclusion:** ${inline(result.conclusion)}`,
     `**Evidence degraded:** ${result.degraded ? "yes" : "no"}`,
     "",
     "| Check runs | Count |",
@@ -854,49 +863,57 @@ function renderQualityGateMarkdown(result: QualityGateResult): string {
   if (reviewDetails) {
     const reviewLines = [
       reviewDetails.approvedUsers.length > 0
-        ? `- Approved: ${reviewDetails.approvedUsers.join(", ")}`
+        ? `- Approved: ${reviewDetails.approvedUsers.map((user) => inline(user)).join(", ")}`
         : null,
       reviewDetails.changesRequestedUsers.length > 0
-        ? `- Changes requested: ${reviewDetails.changesRequestedUsers.join(", ")}`
+        ? `- Changes requested: ${reviewDetails.changesRequestedUsers.map((user) => inline(user)).join(", ")}`
         : null,
       reviewDetails.requestedUsers.length > 0
-        ? `- Requested users: ${reviewDetails.requestedUsers.join(", ")}`
+        ? `- Requested users: ${reviewDetails.requestedUsers.map((user) => inline(user)).join(", ")}`
         : null,
       reviewDetails.requestedTeams.length > 0
-        ? `- Requested teams: ${reviewDetails.requestedTeams.join(", ")}`
+        ? `- Requested teams: ${reviewDetails.requestedTeams.map((team) => inline(team)).join(", ")}`
         : null,
     ].filter((line): line is string => line !== null);
     if (reviewLines.length > 0) lines.push("", "## Review Details", ...reviewLines);
   }
 
   if (result.blockers.length > 0) {
-    lines.push("", "## Blockers", ...result.blockers.map((item) => `- ${item}`));
+    lines.push("", "## Blockers", ...result.blockers.map((item) => `- ${inline(item, 500)}`));
   }
   if (result.warnings.length > 0) {
-    lines.push("", "## Warnings", ...result.warnings.map((item) => `- ${item}`));
+    lines.push("", "## Warnings", ...result.warnings.map((item) => `- ${inline(item, 500)}`));
   }
   if (result.errors.length > 0) {
     lines.push(
       "",
       "## Notes",
-      ...result.errors.map((error) => `- ${sanitizeMarkdownNote(error)}`)
+      ...result.errors.map((error) => `- ${inline(error, 500)}`)
     );
   }
   if (result.categories.failing.length > 0) {
     lines.push(
       "",
       "## Failing Check Runs",
-      ...result.categories.failing.map((item) => `- **${item.name}**: ${item.conclusion}`)
+      ...result.categories.failing.map(
+        (item) => `- **${inline(item.name)}**: ${inline(item.conclusion ?? "unknown")}`
+      )
     );
   }
   if (result.categories.pending.length > 0) {
     lines.push(
       "",
       "## Pending Check Runs",
-      ...result.categories.pending.map((item) => `- **${item.name}**: ${item.status}`)
+      ...result.categories.pending.map(
+        (item) => `- **${inline(item.name)}**: ${inline(item.status ?? "unknown")}`
+      )
     );
   }
-  lines.push("", "## Next Actions", ...result.nextActions.map((item) => `- ${item}`));
+  lines.push(
+    "",
+    "## Next Actions",
+    ...result.nextActions.map((item) => `- ${inline(item, 500)}`)
+  );
   return lines.join("\n");
 }
 

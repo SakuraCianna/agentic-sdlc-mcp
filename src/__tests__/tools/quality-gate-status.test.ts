@@ -147,6 +147,7 @@ function pullRequestEvidence(overrides: PullRequestOverrides = {}): PullRequestE
       draft: false,
       commits: 1,
       mergeable: true,
+      mergeableState: "clean",
       labels: [],
       ...overrides.pullRequest,
     },
@@ -216,6 +217,31 @@ describe("categorizeChecks", () => {
 });
 
 describe("evaluateQualityGate conclusion priority", () => {
+  it.each(["unknown", "queued", "checking", "pending"])(
+    "treats computing mergeable_state %s as pending",
+    (mergeableState) => {
+      const decision = evaluateQualityGate(
+        pullRequestEvidence({ pullRequest: { mergeableState } }),
+        DEFAULT_BLOCKING_LABELS
+      );
+
+      expect(decision.conclusion).toBe("pending");
+      expect(decision.blockers.join(" ")).toMatch(/mergeability state/i);
+    }
+  );
+
+  it.each(["dirty", "blocked", "unstable", "behind", "has_hooks", "future_state"])(
+    "conservatively blocks non-clean mergeable_state %s",
+    (mergeableState) => {
+      const decision = evaluateQualityGate(
+        pullRequestEvidence({ pullRequest: { mergeableState } }),
+        DEFAULT_BLOCKING_LABELS
+      );
+
+      expect(decision.conclusion).toBe("failing");
+      expect(decision.blockers.join(" ")).toContain(mergeableState);
+    }
+  );
   it("returns failing ahead of pending, review, and policy gaps", () => {
     const evidence = pullRequestEvidence({
       ci: ciEvidence({ checkRuns: [signal("failed", "failing"), signal("wait", "pending")] }),
@@ -1070,6 +1096,23 @@ describe("warnings and required contexts", () => {
 });
 
 describe("handleQualityGateStatus ref compatibility", () => {
+  it("keeps a raw ref in structured output but renders it as safe inline Markdown", async () => {
+    const maliciousRef = "heads/main\n## forged [ref](javascript:alert(1))";
+    evidenceMocks.collectCiEvidence.mockResolvedValueOnce(
+      ciEvidence({ checkRuns: [signal("test")] })
+    );
+
+    const { structured, text } = await handleQualityGateStatus(
+      { ref: maliciousRef },
+      REF,
+      makeOctokit()
+    );
+
+    expect(structured.contextLabel).toBe(`ref: ${maliciousRef}`);
+    expect(text).not.toContain("\n## forged");
+    expect(text).toContain("\\[ref\\]\\(javascript:alert\\(1\\)\\)");
+  });
+
   it.each([
     { input: "main", normalized: "main" },
     { input: "0123456789abcdef0123456789abcdef01234567", normalized: "0123456789abcdef0123456789abcdef01234567" },
@@ -1202,6 +1245,7 @@ describe("handleQualityGateStatus output", () => {
     expect(structured.categories.passing).toHaveLength(1);
     expect(structured.totalChecks).toBe(1);
     expect(structured.evidence.checks.totalSignals).toBe(1);
+    expect(structured.evidence.pullRequest?.mergeableState).toBe("clean");
     expect(structured).toEqual(
       expect.objectContaining({
         blockers: expect.any(Array),
@@ -1300,8 +1344,35 @@ describe("handleQualityGateStatus output", () => {
     expect(structured.errors).toEqual([diagnostic]);
     expect(() => z.object(QualityGateOutputSchema).parse(structured)).not.toThrow();
     expect(text).toContain("## Notes");
-    expect(text).toContain("branch_rules: permission denied ## forged heading");
+    expect(text).toContain("branch\\_rules: permission denied \\#\\# forged heading");
     expect(text).not.toContain("\n## forged heading");
+  });
+
+  it("keeps structured external values raw while rendering bounded safe inline Markdown", async () => {
+    const title = "Gate\r\n## forged [link](javascript:alert(1))" + "x".repeat(500);
+    const reviewer = "Eve\n- injected";
+    const checkName = "build\n## fake";
+    evidenceMocks.collectPullRequestEvidence.mockResolvedValueOnce(
+      pullRequestEvidence({
+        pullRequest: { title },
+        reviews: { approvedUsers: [reviewer] },
+        ci: ciEvidence({ checkRuns: [signal(checkName, "failing")] }),
+      })
+    );
+
+    const { structured, text } = await handleQualityGateStatus(
+      { pullNumber: 42 },
+      REF,
+      makeOctokit()
+    );
+
+    expect(structured.contextLabel).toContain(title);
+    expect(structured.evidence.reviews?.approvedUsers).toEqual([reviewer]);
+    expect(structured.categories.failing[0]?.name).toBe(checkName);
+    expect(text).not.toContain("\n## forged");
+    expect(text).not.toContain("\n- injected");
+    expect(text).toContain("\\[link\\]\\(javascript:alert\\(1\\)\\)");
+    expect(text.length).toBeLessThan(5000);
   });
 
   it("exposes ref CI collection errors", async () => {

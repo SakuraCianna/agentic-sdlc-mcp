@@ -90,6 +90,7 @@ export interface PullRequestEvidence {
     draft: boolean;
     commits: number;
     mergeable: boolean | null;
+    mergeableState: string | null;
     labels: string[];
   };
   /** Complete changed-file details from the same bounded listing used for ownership routing. */
@@ -875,6 +876,7 @@ export async function collectPullRequestEvidence(
       baseSha: pullRequest.base.sha,
       commits: pullRequest.commits,
       mergeable: pullRequest.mergeable,
+      mergeableState: pullRequest.mergeable_state ?? null,
       labels: pullRequest.labels.map((label) => label.name),
     },
     ci,
