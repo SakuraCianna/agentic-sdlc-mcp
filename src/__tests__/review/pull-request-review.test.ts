@@ -185,6 +185,43 @@ describe("scanPatchForSecrets", () => {
   });
 
   it.each([
+    "+API_TOKEN=github_pat_11AA22BB33CC44DD55EE",
+    "+OPENAI_API_KEY=sk-1234567890abcdefghijklmnop",
+    "+SLACK_TOKEN=xoxb-1234567890-abcdefghijkl",
+    "+JWT_TOKEN=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.signature123",
+    "+PRIVATE_KEY=Ab9!xQ2#mN7$pL4@vR8%",
+  ])("detects a high-confidence unquoted credential literal %s", (patch) => {
+    expect(scanPatchForSecrets("config/service.env", patch)).toContainEqual(
+      expect.objectContaining({ category: "SecretLikeAssignment", severity: "high" })
+    );
+  });
+
+  it.each([
+    "+API_TOKEN=config.token",
+    "+API_TOKEN=getToken()",
+    "+API_TOKEN=undefined",
+    "+API_TOKEN=null",
+    "+API_TOKEN=true",
+    "+API_TOKEN=TOKEN_IDENTIFIER",
+    "+API_TOKEN=veryLongTokenIdentifier2",
+    "+// API_TOKEN=ghp_1234567890abcdef",
+    "+# API_TOKEN=ghp_1234567890abcdef",
+    "+/* API_TOKEN=ghp_1234567890abcdef */",
+    "+* API_TOKEN=ghp_1234567890abcdef",
+  ])("ignores unquoted expressions and commented assignments %s", (patch) => {
+    expect(scanPatchForSecrets("config/service.env", patch)).toEqual([]);
+  });
+
+  it("ignores assignments inside an added block comment", () => {
+    expect(
+      scanPatchForSecrets(
+        "src/config.ts",
+        "+/* credentials for local setup\n+API_TOKEN=ghp_1234567890abcdef\n+*/"
+      )
+    ).toEqual([]);
+  });
+
+  it.each([
     "+API_TOKEN=REDACTED",
     "+API_TOKEN=fake-token-value",
     "+API_TOKEN=dummy-token-value",
@@ -280,6 +317,16 @@ describe("evaluatePullRequestReview", () => {
     expect(result.testCoverageSignal).toBe("not_required");
   });
 
+  it("accepts a specific manual Markdown validation", () => {
+    const result = evaluatePullRequestReview({
+      pr: pr({ body: "## Validated\nValidated Markdown formatting and headings manually." }),
+      files: [file("docs/guide.md")],
+      workType: "docs",
+    });
+
+    expect(result.testCoverageSignal).toBe("not_required");
+  });
+
   it("reports a high finding when a feature has neither tests nor a qualified no-test reason", () => {
     const result = evaluatePullRequestReview({
       pr: pr({ body: "Implements the requested behavior. No tests: trivial." }),
@@ -355,6 +402,41 @@ describe("evaluatePullRequestReview", () => {
     expect(result.findings).toContainEqual(
       expect.objectContaining({ category: "MissingRegressionTest", severity: "high" })
     );
+  });
+
+  it.each(["toMatchFileSnapshot", "toThrowErrorMatchingSnapshot"])(
+    "rejects any snapshot-named matcher: %s",
+    (matcher) => {
+      const result = evaluatePullRequestReview({
+        pr: pr({ body: "## Reproduction\nBefore: malformed input crashed the parser." }),
+        files: [
+          file("src/parser.ts"),
+          file("src/__tests__/parser.test.ts", {
+            patch: `+expect(parseSafely("bad")).${matcher}();`,
+          }),
+        ],
+        workType: "bugfix",
+      });
+
+      expect(result.testCoverageSignal).toBe("insufficient_evidence");
+      expect(result.findings).toContainEqual(
+        expect.objectContaining({ category: "MissingRegressionTest", severity: "high" })
+      );
+    }
+  );
+
+  it.each([
+    "+// expect(parseSafely(input)).toEqual({ ok: false });",
+    "+/* expect(parseSafely(input)).toEqual({ ok: false }); */",
+    '+const example = "expect(parseSafely(input)).toEqual({ ok: false })";',
+  ])("ignores assertion-like text in comments or strings: %s", (patch) => {
+    const result = evaluatePullRequestReview({
+      pr: pr({ body: "## Reproduction\nBefore: malformed input crashed the parser." }),
+      files: [file("src/parser.ts"), file("src/__tests__/parser.test.ts", { patch })],
+      workType: "bugfix",
+    });
+
+    expect(result.testCoverageSignal).toBe("insufficient_evidence");
   });
 
   it("does not infer regression evidence from a test filename when its patch is unavailable", () => {
@@ -660,6 +742,73 @@ describe("evaluatePullRequestReview", () => {
       )
     ).toBe(false);
     expect(result.releaseRisk).toBe("high");
+  });
+
+  it("uses an explicit release title instead of a rollback version as the target", () => {
+    const result = evaluatePullRequestReview({
+      pr: pr({
+        title: "Release v1.6.0",
+        body:
+          "## Verification\nRan `npm test`.\n## Rollback\nRestore version 1.5.0 and republish the prior artifact.",
+      }),
+      files: [
+        file("package.json", { patch: '+  "version": "1.5.0",' }),
+        file("src/__tests__/publish.test.ts"),
+      ],
+      workType: "release",
+    });
+
+    expect(result.findings).toContainEqual(
+      expect.objectContaining({ category: "ReleaseVersionMismatch", paths: ["package.json"] })
+    );
+    expect(result.findings.some((finding) => finding.category === "MissingReleaseVersion")).toBe(
+      false
+    );
+  });
+
+  it("does not treat a rollback-only old version as a release target", () => {
+    const result = evaluatePullRequestReview({
+      pr: pr({
+        title: "Prepare artifact publication",
+        body:
+          "## Verification\nRan `npm test`.\n## Rollback\nRestore version 1.5.0 and republish the prior artifact.",
+      }),
+      files: [
+        file("package.json", { patch: '+  "typescript": "^6.0.0",' }),
+        file("src/__tests__/publish.test.ts"),
+      ],
+      workType: "release",
+    });
+
+    expect(result.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ category: "MissingReleaseVersion", severity: "high" }),
+        expect.objectContaining({ category: "UnverifiedReleaseVersion", severity: "high" }),
+      ])
+    );
+    expect(result.findings.some((finding) => finding.category === "ReleaseVersionMismatch")).toBe(
+      false
+    );
+  });
+
+  it("fails closed when explicit release targets conflict", () => {
+    const result = evaluatePullRequestReview({
+      pr: pr({
+        title: "Release v1.6.0",
+        body:
+          "Release target: 1.6.1\n## Verification\nRan `npm test`.\n## Rollback\nRestore v1.5.0 and republish the prior artifact.",
+      }),
+      files: [
+        file("package.json", { patch: '+  "version": "1.6.0",' }),
+        file("src/__tests__/publish.test.ts"),
+      ],
+      workType: "release",
+    });
+
+    expect(result.findings).toContainEqual(
+      expect.objectContaining({ category: "ConflictingReleaseTargets", severity: "high" })
+    );
+    expect(result.conclusion).toBe("needs_changes");
   });
 
   it("requires workflow work to document triggers and failure behavior", () => {

@@ -387,7 +387,7 @@ function hasConcreteVerificationMethod(content: string): boolean {
     /\b(?:build|built)\b[^.\n]*\b(?:doc(?:umentation)?|example|page|site)\b/i.test(
       content
     ) ||
-    /\b(?:checked|validated|verified)\b[^.\n]*\b(?:example|link|render(?:ed)?|output)\b/i.test(
+    /\b(?:checked|validated|verified)\b[^.\n]*\b(?:example|link|markdown|render(?:ed)?|output)\b/i.test(
       content
     )
   );
@@ -426,7 +426,7 @@ const SECRET_ASSIGNMENTS: SecretPattern[] = [
   {
     name: "credential assignment",
     pattern:
-      /(?:^|[,{;]\s*|\b(?:const|let|var)\s+)\s*["']?[\w.-]*(?:api[_-]?key|client[_-]?secret|credential|password|private[_-]?key|secret|token)[\w.-]*["']?\s*[:=]\s*(?:"([^"]+)"|'([^']+)'|`([^`]+)`|([^\s,;#]+))/i,
+      /(?:^|[,{;]\s*|\b(?:const|let|var)\s+)\s*["']?[\w.-]*(?:api[_-]?key|client[_-]?secret|credential|password|private[_-]?key|secret|token)[\w.-]*["']?\s*[:=]\s*(?:"([^"]+)"|'([^']+)'|`([^`]+)`|([^\s,;]+))/i,
   },
   {
     name: "AWS access key assignment",
@@ -438,14 +438,36 @@ function isPlaceholderSecret(value: string): boolean {
   const normalized = value.trim();
   return (
     normalized.length < 8 ||
-    /(?:process|import\.meta)\.env|\bsecrets\.|(?:os\.)?getenv\s*\(|\$\{?[A-Z_][A-Z0-9_]*\}?/i.test(
+    /(?:process|import\.meta)\.env|\bsecrets\.|(?:os\.)?getenv\s*\(|\$\{[A-Za-z_][A-Za-z0-9_]*\}|\$[A-Z_][A-Z0-9_]*\b/.test(
       normalized
     ) ||
-    /^(?:<[^>]+>|\*+|x+|redacted|fake|your[_ -]|change[_ -]?me|dummy|example|placeholder|sample|test)/i.test(
+    /^(?:<[^>]+>|\*+|redacted|fake|your[_ -]|change[_ -]?me|dummy|example|placeholder|sample|test)/i.test(
       normalized
     ) ||
+    /^x+$/i.test(normalized) ||
     /(?:_example|example_|your[_ -]?token|not[_ -]?a[_ -]?secret)/i.test(normalized)
   );
+}
+
+function isHighConfidenceUnquotedSecret(value: string): boolean {
+  const normalized = value.trim();
+  if (/^(?:ghp_|github_pat_|sk-|AKIA[0-9A-Z]|xox[a-z]-|eyJ[a-zA-Z0-9_-]*\.)/.test(normalized)) {
+    return true;
+  }
+  if (
+    /^(?:undefined|null|true|false)$/i.test(normalized) ||
+    /^[A-Za-z_$][\w$]*$/.test(normalized) ||
+    /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+$/.test(normalized) ||
+    /[(){}[\]]/.test(normalized)
+  ) {
+    return false;
+  }
+  if (normalized.length < 20) return false;
+
+  const classes = [/[a-z]/, /[A-Z]/, /\d/, /[^A-Za-z0-9]/].filter((pattern) =>
+    pattern.test(normalized)
+  ).length;
+  return classes >= 3;
 }
 
 export function scanPatchForSecrets(
@@ -455,15 +477,35 @@ export function scanPatchForSecrets(
   if (!patch) return [];
   const normalizedFilename = normalizePath(filename);
   const findings: StructuredReviewFinding[] = [];
+  let inBlockComment = false;
 
   for (const rawLine of patch.split(/\r?\n/)) {
     if (!rawLine.startsWith("+") || rawLine.startsWith("+++")) continue;
     const addedLine = rawLine.slice(1);
+    const trimmed = addedLine.trimStart();
+    if (inBlockComment) {
+      if (trimmed.includes("*/")) inBlockComment = false;
+      continue;
+    }
+    if (trimmed.startsWith("/*")) {
+      if (!trimmed.includes("*/")) inBlockComment = true;
+      continue;
+    }
+    if (
+      trimmed.startsWith("//") ||
+      trimmed.startsWith("#") ||
+      trimmed.startsWith("*")
+    ) {
+      continue;
+    }
 
     for (const { name, pattern } of SECRET_ASSIGNMENTS) {
       const match = addedLine.match(pattern);
-      const value = match?.slice(1).find((capture) => capture !== undefined);
+      const quotedValue = match?.slice(1, 4).find((capture) => capture !== undefined);
+      const unquotedValue = match?.[4];
+      const value = quotedValue ?? unquotedValue;
       if (!value || isPlaceholderSecret(value)) continue;
+      if (!quotedValue && !isHighConfidenceUnquotedSecret(value)) continue;
 
       findings.push(
         finding(
@@ -491,14 +533,86 @@ function addedPatchLines(file: PrFile): string[] | null {
     .map((line) => line.slice(1));
 }
 
+function stripCommentsAndStrings(content: string): string {
+  type LexicalState = "code" | "single" | "double" | "template" | "line_comment" | "block_comment";
+  let state: LexicalState = "code";
+  let escaped = false;
+  let result = "";
+
+  for (let index = 0; index < content.length; index += 1) {
+    const character = content[index] ?? "";
+    const next = content[index + 1] ?? "";
+
+    if (state === "line_comment") {
+      if (character === "\n") {
+        state = "code";
+        result += "\n";
+      } else {
+        result += " ";
+      }
+      continue;
+    }
+    if (state === "block_comment") {
+      if (character === "*" && next === "/") {
+        result += "  ";
+        index += 1;
+        state = "code";
+      } else {
+        result += character === "\n" ? "\n" : " ";
+      }
+      continue;
+    }
+    if (state !== "code") {
+      result += character === "\n" ? "\n" : " ";
+      if (escaped) {
+        escaped = false;
+      } else if (character === "\\") {
+        escaped = true;
+      } else if (
+        (state === "single" && character === "'") ||
+        (state === "double" && character === '"') ||
+        (state === "template" && character === "`")
+      ) {
+        state = "code";
+      }
+      continue;
+    }
+
+    if (character === "/" && next === "/") {
+      result += "  ";
+      index += 1;
+      state = "line_comment";
+    } else if (character === "/" && next === "*") {
+      result += "  ";
+      index += 1;
+      state = "block_comment";
+    } else if (character === "'") {
+      result += " ";
+      state = "single";
+    } else if (character === '"') {
+      result += " ";
+      state = "double";
+    } else if (character === "`") {
+      result += " ";
+      state = "template";
+    } else {
+      result += character;
+    }
+  }
+
+  return result;
+}
+
 function hasNonSnapshotAssertion(file: PrFile): boolean {
   const addedLines = addedPatchLines(file);
   if (!addedLines) return false;
-  const content = addedLines.join("\n");
+  const content = stripCommentsAndStrings(addedLines.join("\n"));
+  const expectMatcher = /\bexpect\s*\([^;]*?\)\s*(?:\.\s*(?:not|resolves|rejects)\s*)*\.\s*([A-Za-z_$][\w$]*)\b/g;
+  for (const match of content.matchAll(expectMatcher)) {
+    const matcher = match[1];
+    if (matcher && !matcher.toLowerCase().includes("snapshot")) return true;
+  }
   return (
-    /\bexpect\s*\([^;]+?\)\s*\.\s*(?:not\s*\.\s*)?(?:to(?!Match(?:Inline)?Snapshot\b)[A-Z]\w*|resolves|rejects)\b/.test(
-      content
-    ) ||
     /\bassert(?:\.(?:deepEqual|deepStrictEqual|doesNotMatch|doesNotReject|doesNotThrow|equal|fail|ifError|match|notDeepEqual|notDeepStrictEqual|notEqual|notStrictEqual|ok|rejects|strictEqual|throws))?\s*\(/.test(
       content
     )
@@ -612,12 +726,23 @@ function isReleaseVersionSource(filename: string): boolean {
   );
 }
 
-function extractReleaseTargetVersion(body: string): string | null {
-  const target = new RegExp(
-    `\\b(?:release(?: target)?|publish(?:ing)?(?: version)?|target(?: version)?|version)\\s*(?::|=|is|to)?\\s*\`?v?${SEMVER_SOURCE}`,
+function extractReleaseTargetVersions(title: string, body: string): string[] {
+  const versions: string[] = [];
+  const titleTarget = new RegExp(
+    `^\\s*(?:release|publish)\\b[^\\n]*?\\bv?${SEMVER_SOURCE}\\b`,
     "i"
   );
-  return body.match(target)?.[1] ?? null;
+  const titleMatch = title.match(titleTarget);
+  if (titleMatch?.[1]) versions.push(titleMatch[1]);
+
+  const declaration = new RegExp(
+    `^\\s*(?:[-*]\\s*)?(?:release target|target version|publish version|release version)\\s*:\\s*v?${SEMVER_SOURCE}\\s*$`,
+    "gim"
+  );
+  for (const match of body.matchAll(declaration)) {
+    if (match[1]) versions.push(match[1]);
+  }
+  return versions;
 }
 
 function extractAddedReleaseVersion(file: PrFile): string | null {
@@ -641,6 +766,7 @@ function extractAddedReleaseVersion(file: PrFile): string | null {
 }
 
 function addReleaseVersionFindings(
+  title: string,
   body: string,
   classified: ClassifiedPrFiles,
   findings: StructuredReviewFinding[]
@@ -686,7 +812,9 @@ function addReleaseVersionFindings(
     );
   }
 
-  const target = extractReleaseTargetVersion(body);
+  const targets = [...new Set(extractReleaseTargetVersions(title, body))];
+  if (targets.length !== 1) return;
+  const target = targets[0];
   if (!target) return;
   const mismatched = verified.filter((source) => source.version !== target);
   if (mismatched.length > 0) {
@@ -706,6 +834,7 @@ function addReleaseVersionFindings(
 
 function addWorkTypeEvidenceFindings(
   workType: SdlcWorkType,
+  title: string,
   body: string,
   classified: ClassifiedPrFiles,
   findings: StructuredReviewFinding[]
@@ -740,22 +869,34 @@ function addWorkTypeEvidenceFindings(
     );
   }
 
-  if (workType === "release" && !extractReleaseTargetVersion(body)) {
-    findings.push(
-      finding(
-        "high",
-        "MissingReleaseVersion",
-        "policy",
-        "Release work does not identify the version being published.",
-        paths,
-        "The version is required to compare source metadata, release configuration, and the intended artifact.",
-        "Name the exact semantic version in the PR description and verify it matches the release metadata."
-      )
-    );
-  }
-
   if (workType === "release") {
-    addReleaseVersionFindings(body, classified, findings);
+    const targets = [...new Set(extractReleaseTargetVersions(title, body))];
+    if (targets.length === 0) {
+      findings.push(
+        finding(
+          "high",
+          "MissingReleaseVersion",
+          "policy",
+          "Release work does not identify the version being published.",
+          paths,
+          "The version is required to compare source metadata, release configuration, and the intended artifact.",
+          "Declare `Release target: x.y.z` in the PR body or name the release version explicitly in the title."
+        )
+      );
+    } else if (targets.length > 1) {
+      findings.push(
+        finding(
+          "high",
+          "ConflictingReleaseTargets",
+          "policy",
+          "The PR declares more than one release target version.",
+          paths,
+          `Explicit release targets conflict: ${targets.join(", ")}.`,
+          "Choose one release target and align the PR title, body declaration, and changed version sources."
+        )
+      );
+    }
+    addReleaseVersionFindings(title, body, classified, findings);
   }
 
   if (workType === "infra" && classified.workflowFiles.length > 0) {
@@ -961,7 +1102,7 @@ export function evaluatePullRequestReview(
   }
 
   const testCoverageSignal = evaluateTestEvidence(workType, body, classified, findings);
-  addWorkTypeEvidenceFindings(workType, body, classified, findings);
+  addWorkTypeEvidenceFindings(workType, input.pr.title, body, classified, findings);
   if (standard === "strict" || standard === "security-focused") {
     addStrictFindings(classified, totalChangedLines, findings);
   }
