@@ -87,7 +87,9 @@ Before running the server, ensure you have:
 1. **Node.js >= 24** installed on your system.
 2. **GitHub Personal Access Token (PAT)**:
    * **Scopes required**:
-     * `repo` (Full control of private/public repositories, issues, PRs, and checks).
+     * `repo` (Repository contents, issues, pull requests, checks, and commit statuses; use the narrowest fine-grained equivalent when possible).
+     * Read access to **Administration** metadata for branch protection and repository rulesets.
+     * Pull request metadata/GraphQL read access for review decisions and linked issues.
      * `security_events` (To query Code Scanning and Dependabot alerts).
      * Note: Make sure to verify token permissions against [GitHub REST API Documentation](https://docs.github.com/en/rest) if security endpoints fail.
 
@@ -247,11 +249,12 @@ Generates an agent-ready brief for a specific issue containing goals, non-goals,
   * `includeRecentPRs` (boolean, default: `false`): Scan up to 5 merged PRs that touched these paths.
 
 ### `quality_gate_status`
-Audits the check-runs (CI status, build status, linting status) for a given PR or git ref.
+Aggregates check runs and commit statuses. In PR mode it also evaluates reviews, CODEOWNERS routing, draft/mergeability, branch protection/rulesets, blocking labels, and linked issues. Its six conclusions are `passing`, `failing`, `pending`, `needs_review`, `policy_gap`, and `no_evidence`. Permission failures and bounded/truncated sources are exposed through `degraded`, `unverifiedSignals`, and safe `errors`; missing evidence is never invented as a pass.
 * **Arguments:**
   * `owner` / `repo` (string, optional): Repo coordinates.
   * `pullNumber` (number, optional): Query checks by PR number.
   * `ref` (string, optional): Query checks by branch, tag, or SHA.
+  * `blockingLabels` (string[], default: `blocked`, `do-not-merge`, `release-blocker`, `security-blocker`): Exact, case-insensitive PR labels that block the gate; pass `[]` to disable this built-in list.
 
 ### `create_pr_summary`
 Generates a structured pull request description and changelog draft.
@@ -262,12 +265,15 @@ Generates a structured pull request description and changelog draft.
 ### `review_pr_against_standard`
 Reviews pull request code changes against SDLC governance levels (`basic` / `strict` / `security-focused`).
 
+The caller may explicitly set `workType` to `docs`, `feature`, `bugfix`, `refactor`, `security`, `release`, or `infra`; otherwise the tool returns a conservative inference with confidence and reasoning. Structured output includes `dimension`, `paths`, and `reason` per finding plus `releaseRisk`, `testCoverageSignal`, and `ownershipRoutingGaps`. Docs-only work requires document verification rather than code unit tests; bug fixes require reproduction/regression evidence; workflow/infra work audits complete workflow content, triggers, least-privilege permissions, failure paths, and rollback evidence.
+
 `security-focused` treats a passing, app-backed mature secret-scanner CI check (Gitleaks, TruffleHog, Secretlint, detect-secrets, or an explicit GitHub Secret Scanning check) as the primary scan evidence. Same-name commit statuses and checks from unknown Apps are not trusted as clean-scan proof. If evidence is incomplete, scanner policy changes in the PR, no recognized scanner ran, or the scan is pending/failed, the review fails closed. The built-in added-line assignment heuristic is supplemental and is never reported as proof that a repository is secret-free.
 
 * **Arguments:**
   * `owner` / `repo` (string, optional): Repo coordinates.
   * `pullNumber` (number, required): The pull request ID.
   * `standard` (string, default: `"basic"`): Standard level.
+  * `workType` (string, optional): Explicit work type; omit to infer it from PR metadata and paths.
   * `checkOwnership` (boolean, default: `true`): Validates file ownership changes against `.github/CODEOWNERS` and flags unassigned reviewers.
 
 ### `security_triage`
@@ -276,7 +282,7 @@ Retrieves and triages Code Scanning, Dependabot, and Secret Scanning alerts.
   * `owner` / `repo` (string, optional): Repo coordinates.
 
 ### `release_readiness_check`
-Assesses pre-release health (tests, open bugs, changelogs) and generates rollback instructions.
+Assesses pre-release health (combined check runs and commit statuses, open bugs, and changelog presence) and generates rollback instructions. A release is ready only when CI is explicitly `passing`; `pending`, `unknown`, zero-signal, or failing CI blocks readiness.
 * **Arguments:**
   * `owner` / `repo` (string, optional): Repo coordinates.
   * `headRef` (string, optional): Target release branch/tag.
@@ -324,6 +330,7 @@ To prevent AI coding agents from performing destructive or unintended actions on
 * **Zero Self-Merge Policy**: No tools exist to auto-merge pull requests. Human approval is required on all merge gates.
 * **Access Restraints**: The server does not support force-pushing or deleting branch rules.
 * **CODEOWNERS Enforced Review**: Special paths (such as workflows under `.github/` and core files under `src/`) require owner approvals.
+* **Read-only Decision Tools**: v1.6 gate, PR review, workflow audit, security triage, and release-readiness tools only read evidence. They never approve or merge PRs and never modify branch protection, rulesets, or repository policy. The separate issue-creation tool remains protected by `dryRun: true` by default.
 
 ---
 
@@ -337,6 +344,15 @@ To prevent AI coding agents from performing destructive or unintended actions on
 
 ### OIDC Trusted Publishing (For Maintainers)
 This package is securely published to npm via GitHub Actions using **Trusted Publishing (OIDC)**, eliminating the need to store static `NPM_TOKEN` secrets in the repository. Publishing is triggered by creating a GitHub Release or manually running the Action.
+
+### GitHub Actions Workflows
+
+| Workflow | Trigger | Purpose |
+|---|---|---|
+| `.github/workflows/ci.yml` | Pull requests and pushes to `main` | Runs typecheck, build, tests, smoke, and coverage on Node 24 |
+| `.github/workflows/secret-scan.yml` | Pull requests, pushes to `main`, and manual dispatch | Runs pinned Gitleaks with read-only permissions; this is the primary mature secret-scanner evidence |
+| `.github/workflows/publish.yml` | Published GitHub Release or manual dispatch | Publishes to npm through OIDC Trusted Publishing |
+| `.github/dependabot.yml` | Weekly | Opens npm and GitHub Actions dependency update PRs |
 
 ---
 
