@@ -20,6 +20,7 @@ import type { Octokit } from "@octokit/rest";
 import {
   evaluateSecretScannerEvidence,
   isSecretScannerPolicyPath,
+  verifySecretScannerProvenance,
   type SecretScannerEvidence,
 } from "../security/secret-scanner-evidence.js";
 import {
@@ -588,9 +589,18 @@ export async function handleReviewPr(
     });
   }
 
-  const secretScannerEvidence =
-    params.standard === "security-focused"
-      ? evaluateSecretScannerEvidence(evidence.ci, {
+  let secretScannerEvidence: SecretScannerEvidence | null = null;
+  if (params.standard === "security-focused") {
+    const provenance = await verifySecretScannerProvenance(evidence.ci, {
+      ref,
+      headSha: evidence.pullRequest.headSha,
+      baseRef: evidence.pullRequest.baseSha ?? evidence.pullRequest.baseBranch,
+      octokit,
+    });
+    errors.push(
+      ...provenance.errors.map((error) => `Secret scanner provenance: ${error}`)
+    );
+    secretScannerEvidence = evaluateSecretScannerEvidence(provenance.ci, {
           policyFilesChanged: files.some(
             (file) =>
               isSecretScannerPolicyPath(file.filename) ||
@@ -600,8 +610,8 @@ export async function handleReviewPr(
           incompleteReasons: evidence.unverifiedSignals.includes("changed_files")
             ? ["changed_files"]
             : [],
-        })
-      : null;
+        });
+  }
 
   const review = evaluatePullRequestReview({
     pr: {

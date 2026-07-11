@@ -15,7 +15,8 @@ function signal(
   name: string,
   state: GateSignalState,
   source: GateSignal["source"] = "check_run",
-  appId: number | null = source === "check_run" ? 15368 : null
+  appId: number | null = source === "check_run" ? 15368 : null,
+  provenanceVerified = false
 ): GateSignal {
   return {
     name,
@@ -26,6 +27,7 @@ function signal(
     rawConclusion: state === "passing" ? "success" : state === "failing" ? "failure" : null,
     rawState: source === "commit_status" ? state : null,
     url: null,
+    provenanceVerified,
   };
 }
 
@@ -64,7 +66,7 @@ describe("evaluateSecretScannerEvidence", () => {
     ["detect-secrets", "detect-secrets"],
     ["GitHub Secret Scanning", "github-secret-scanning"],
   ] as const)("recognizes a passing mature scanner check: %s", (name, provider) => {
-    const evidence = evaluateSecretScannerEvidence(ci([signal(name, "passing")]));
+    const evidence = evaluateSecretScannerEvidence(ci([signal(name, "passing", "check_run", 15368, true)]));
 
     expectStatus(evidence, "passing");
     expect(evidence.providers).toContain(provider);
@@ -72,7 +74,10 @@ describe("evaluateSecretScannerEvidence", () => {
 
   it("makes a failing mature scanner outrank a passing scanner", () => {
     const evidence = evaluateSecretScannerEvidence(
-      ci([signal("gitleaks", "passing"), signal("TruffleHog", "failing")])
+      ci([
+        signal("gitleaks", "passing", "check_run", 15368, true),
+        signal("TruffleHog", "failing", "check_run", 15368, true),
+      ])
     );
 
     expectStatus(evidence, "failing");
@@ -80,7 +85,9 @@ describe("evaluateSecretScannerEvidence", () => {
   });
 
   it("reports pending while a recognized scanner is incomplete", () => {
-    const evidence = evaluateSecretScannerEvidence(ci([signal("secretlint", "pending")]));
+    const evidence = evaluateSecretScannerEvidence(
+      ci([signal("secretlint", "pending", "check_run", 15368, true)])
+    );
 
     expectStatus(evidence, "pending");
   });
@@ -114,9 +121,23 @@ describe("evaluateSecretScannerEvidence", () => {
     expect(evidence.reason).toMatch(/untrusted/i);
   });
 
+  it("does not trust a same-name Actions check without explicit workflow provenance", () => {
+    const evidence = evaluateSecretScannerEvidence(
+      ci([signal("gitleaks", "passing", "check_run", 15368)])
+    );
+
+    expectStatus(evidence, "unverified");
+    expect(evidence.signals[0]).toMatchObject({
+      appId: 15368,
+      trusted: false,
+      provenanceVerified: false,
+    });
+    expect(evidence.reason).toMatch(/provenance|untrusted/i);
+  });
+
   it("fails closed when any CI source is unavailable or truncated", () => {
     const evidence = evaluateSecretScannerEvidence(
-      ci([signal("gitleaks", "passing")], ["commit_statuses"])
+      ci([signal("gitleaks", "passing", "check_run", 15368, true)], ["commit_statuses"])
     );
 
     expectStatus(evidence, "unverified");
@@ -125,9 +146,11 @@ describe("evaluateSecretScannerEvidence", () => {
   });
 
   it("does not trust a passing check while scanner policy files are modified", () => {
-    const evidence = evaluateSecretScannerEvidence(ci([signal("gitleaks", "passing")]), {
+    const evidence = evaluateSecretScannerEvidence(
+      ci([signal("gitleaks", "passing", "check_run", 15368, true)]), {
       policyFilesChanged: true,
-    });
+      }
+    );
 
     expectStatus(evidence, "unverified");
     expect(evidence.reason).toMatch(/policy/i);
@@ -136,7 +159,7 @@ describe("evaluateSecretScannerEvidence", () => {
   it("keeps a recognized failure highest priority even from an untrusted source", () => {
     const evidence = evaluateSecretScannerEvidence(
       ci([
-        signal("gitleaks", "passing"),
+        signal("gitleaks", "passing", "check_run", 15368, true),
         signal("TruffleHog", "failing", "commit_status"),
       ])
     );

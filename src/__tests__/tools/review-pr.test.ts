@@ -782,7 +782,7 @@ describe("handleReviewPr — mature secret scanner evidence", () => {
     expect(text).toContain("Mature Secret Scanner Evidence");
   });
 
-  it("accepts a passing Gitleaks check as verified mature scanner evidence", async () => {
+  it("does not trust a passing Gitleaks check without workflow provenance", async () => {
     const octokit = makeMockOctokit({
       checkRuns: [
         {
@@ -799,13 +799,13 @@ describe("handleReviewPr — mature secret scanner evidence", () => {
     const { structured } = await handleReviewPr(securityParams, REF, octokit);
 
     expect(structured.secretScannerEvidence).toMatchObject({
-      status: "passing",
-      verified: true,
+      status: "unverified",
+      verified: false,
       providers: ["gitleaks"],
     });
-    expect(
-      structured.findings.some((finding) => finding.category === "MissingMatureSecretScannerEvidence")
-    ).toBe(false);
+    expect(structured.findings).toContainEqual(
+      expect.objectContaining({ category: "MissingMatureSecretScannerEvidence", severity: "high" })
+    );
   });
 
   it("turns a failing TruffleHog check into a critical blocker", async () => {

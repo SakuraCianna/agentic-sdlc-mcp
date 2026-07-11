@@ -308,7 +308,7 @@ export async function handleWorkflowPermissionsAudit(
   const hasMedium = findings.some((f) => f.severity === "medium");
   const conclusion: WorkflowPermissionsAuditResult["conclusion"] = hasCriticalOrHigh
     ? "over_permissioned"
-    : hasMedium
+    : hasMedium || errors.length > 0 || workflowsScanned.length === 0
     ? "needs_review"
     : "least_privilege";
 
@@ -343,8 +343,12 @@ export async function handleWorkflowPermissionsAudit(
   }
 
   lines.push("## Findings", "");
-  if (findings.length === 0) {
+  if (findings.length === 0 && conclusion === "least_privilege") {
     lines.push("No findings -- scanned workflows declare explicit, least-privilege permissions.");
+  } else if (findings.length === 0) {
+    lines.push(
+      "No permission findings were produced, but audit evidence is incomplete; review the notes and successfully scan at least one target workflow."
+    );
   } else {
     for (const f of findings) {
       lines.push(

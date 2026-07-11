@@ -5,6 +5,10 @@ import type {
   GateSignalState,
 } from "../github/pull-request-evidence.js";
 import type { Severity } from "../types.js";
+import type { RepoRef } from "../types.js";
+import type { Octokit } from "@octokit/rest";
+import { parse as parseYaml } from "yaml";
+import { handleGitHubError } from "../github/client.js";
 
 export type SecretScannerProvider =
   | "gitleaks"
@@ -21,6 +25,7 @@ export interface SecretScannerSignal {
   source: GateSignalSource;
   appId: number | null;
   trusted: boolean;
+  provenanceVerified: boolean;
   state: GateSignalState;
   url: string | null;
 }
@@ -120,7 +125,8 @@ export function evaluateSecretScannerEvidence(
     const trusted =
       signal.source === "check_run" &&
       signal.appId !== null &&
-      trustedAppIds.has(signal.appId);
+      trustedAppIds.has(signal.appId) &&
+      signal.provenanceVerified === true;
     return provider
       ? [
           {
@@ -129,6 +135,7 @@ export function evaluateSecretScannerEvidence(
             source: signal.source,
             appId: signal.appId,
             trusted,
+            provenanceVerified: signal.provenanceVerified === true,
             state: signal.state,
             url: signal.url,
           },
@@ -153,7 +160,7 @@ export function evaluateSecretScannerEvidence(
       providers,
       signals,
       reason: trustedFailure
-        ? "At least one trusted app-backed mature secret scanner reported a failure."
+        ? "At least one provenance-verified mature secret scanner reported a failure."
         : "An untrusted scanner claim reported a failure; treat it as blocking until independently verified.",
     };
   }
@@ -168,7 +175,7 @@ export function evaluateSecretScannerEvidence(
       providers,
       signals,
       reason: trustedPending
-        ? "A trusted app-backed mature secret scanner has not completed yet."
+        ? "A provenance-verified mature secret scanner has not completed yet."
         : "An untrusted scanner claim is pending; it cannot establish clean-scan evidence.",
     };
   }
@@ -182,7 +189,7 @@ export function evaluateSecretScannerEvidence(
       degraded: false,
       providers,
       signals,
-      reason: "At least one trusted app-backed mature secret scanner completed successfully.",
+      reason: "At least one provenance-verified mature secret scanner completed successfully.",
     };
   }
 
@@ -207,7 +214,7 @@ export function evaluateSecretScannerEvidence(
   if (signals.some((signal) => signal.state === "passing")) {
     return {
       ...unverifiedSecretScannerEvidence(
-        "Recognized passing scanner claims came from untrusted sources rather than a trusted app-backed check run."
+        "Recognized passing scanner claims lack verified workflow provenance or came from an untrusted source."
       ),
       providers,
       signals,
@@ -223,6 +230,177 @@ export function evaluateSecretScannerEvidence(
     ),
     providers,
     signals,
+  };
+}
+
+const TRUSTED_SCANNER_ACTIONS: Readonly<Record<SecretScannerProvider, readonly string[]>> = {
+  gitleaks: ["gitleaks/gitleaks-action"],
+  trufflehog: ["trufflesecurity/trufflehog"],
+  secretlint: [],
+  "detect-secrets": [],
+  "github-secret-scanning": [],
+};
+
+export interface SecretScannerProvenanceParams {
+  ref: RepoRef;
+  headSha: string;
+  baseRef: string;
+  octokit: Octokit;
+}
+
+export interface SecretScannerProvenanceResult {
+  ci: CiEvidence;
+  errors: string[];
+}
+
+function actionsRunId(url: string | null, ref: RepoRef): number | null {
+  if (!url) return null;
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "https:" || parsed.hostname.toLowerCase() !== "github.com") return null;
+    const parts = parsed.pathname.split("/").filter(Boolean);
+    if (
+      parts.length < 5 ||
+      parts[0]?.toLowerCase() !== ref.owner.toLowerCase() ||
+      parts[1]?.toLowerCase() !== ref.repo.toLowerCase() ||
+      parts[2] !== "actions" ||
+      parts[3] !== "runs" ||
+      !/^\d+$/.test(parts[4] ?? "")
+    ) {
+      return null;
+    }
+    const runId = Number(parts[4]);
+    return Number.isSafeInteger(runId) && runId > 0 ? runId : null;
+  } catch {
+    return null;
+  }
+}
+
+function pinnedScannerActionFound(
+  workflowContent: string,
+  provider: SecretScannerProvider
+): boolean {
+  let document: unknown;
+  try {
+    document = parseYaml(workflowContent);
+  } catch {
+    return false;
+  }
+  if (!document || typeof document !== "object" || Array.isArray(document)) return false;
+  const jobs = (document as Record<string, unknown>)["jobs"];
+  if (!jobs || typeof jobs !== "object" || Array.isArray(jobs)) return false;
+  const trustedActions = new Set(TRUSTED_SCANNER_ACTIONS[provider]);
+
+  for (const job of Object.values(jobs as Record<string, unknown>)) {
+    if (!job || typeof job !== "object" || Array.isArray(job)) continue;
+    const steps = (job as Record<string, unknown>)["steps"];
+    if (!Array.isArray(steps)) continue;
+    for (const step of steps) {
+      if (!step || typeof step !== "object" || Array.isArray(step)) continue;
+      const uses = (step as Record<string, unknown>)["uses"];
+      if (typeof uses !== "string") continue;
+      const separator = uses.lastIndexOf("@");
+      if (separator <= 0) continue;
+      const action = uses.slice(0, separator).toLowerCase();
+      const revision = uses.slice(separator + 1);
+      if (trustedActions.has(action) && /^[0-9a-f]{40}$/i.test(revision)) return true;
+    }
+  }
+  return false;
+}
+
+async function verifySignalProvenance(
+  signal: GateSignal,
+  provider: SecretScannerProvider,
+  params: SecretScannerProvenanceParams
+): Promise<{ verified: boolean; error: string | null }> {
+  if (signal.source !== "check_run" || signal.appId !== GITHUB_ACTIONS_APP_ID) {
+    return { verified: false, error: null };
+  }
+  const runId = actionsRunId(signal.url, params.ref);
+  if (runId === null) {
+    return {
+      verified: false,
+      error: `check \`${signal.name}\` does not link to a verifiable GitHub Actions workflow run.`,
+    };
+  }
+
+  try {
+    const { data: run } = await params.octokit.actions.getWorkflowRun({
+      owner: params.ref.owner,
+      repo: params.ref.repo,
+      run_id: runId,
+    });
+    const workflowPath = typeof run.path === "string" ? run.path.replace(/^\.\//, "") : "";
+    if (
+      run.head_sha !== params.headSha ||
+      !/^\.github\/workflows\/[^/]+\.ya?ml$/i.test(workflowPath)
+    ) {
+      return {
+        verified: false,
+        error: `check \`${signal.name}\` is not tied to the reviewed head and a repository workflow path.`,
+      };
+    }
+    const { data } = await params.octokit.repos.getContent({
+      owner: params.ref.owner,
+      repo: params.ref.repo,
+      path: workflowPath,
+      ref: params.baseRef,
+    });
+    if (Array.isArray(data) || data.type !== "file" || !data.content) {
+      return {
+        verified: false,
+        error: `base workflow provenance for check \`${signal.name}\` is unavailable.`,
+      };
+    }
+    const content = Buffer.from(data.content, "base64").toString("utf-8");
+    if (!pinnedScannerActionFound(content, provider)) {
+      return {
+        verified: false,
+        error: `base workflow for check \`${signal.name}\` does not use the recognized scanner action pinned to a full commit SHA.`,
+      };
+    }
+    return { verified: true, error: null };
+  } catch (error) {
+    return {
+      verified: false,
+      error: `check \`${signal.name}\` provenance: ${handleGitHubError(error)}`,
+    };
+  }
+}
+
+/** Verify check-run provenance without mutating the caller-owned CI evidence. */
+export async function verifySecretScannerProvenance(
+  ci: CiEvidence,
+  params: SecretScannerProvenanceParams
+): Promise<SecretScannerProvenanceResult> {
+  const verifiedSignals = new Set<GateSignal>();
+  const errors: string[] = [];
+  for (const signal of allSignals(ci)) {
+    const provider = providerForSignal(signal.name);
+    if (!provider) continue;
+    const result = await verifySignalProvenance(signal, provider, params);
+    if (result.verified) verifiedSignals.add(signal);
+    if (result.error) errors.push(result.error);
+  }
+  const mark = (signal: GateSignal): GateSignal => ({
+    ...signal,
+    provenanceVerified: verifiedSignals.has(signal),
+  });
+  const mapBuckets = (buckets: CiEvidence["checkRuns"]): CiEvidence["checkRuns"] => ({
+    passing: buckets.passing.map(mark),
+    failing: buckets.failing.map(mark),
+    pending: buckets.pending.map(mark),
+    skipped: buckets.skipped.map(mark),
+    total: buckets.total,
+  });
+  return {
+    ci: {
+      ...ci,
+      checkRuns: mapBuckets(ci.checkRuns),
+      commitStatuses: mapBuckets(ci.commitStatuses),
+    },
+    errors,
   };
 }
 

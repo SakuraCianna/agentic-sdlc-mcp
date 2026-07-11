@@ -299,10 +299,12 @@ describe("handleWorkflowPermissionsAudit", () => {
     } as any;
 
     const params: WorkflowPermissionsAuditInput = {};
-    const { structured } = await handleWorkflowPermissionsAudit(params, REF, octokit);
+    const { structured, text } = await handleWorkflowPermissionsAudit(params, REF, octokit);
 
     expect(structured.errors).toHaveLength(1);
     expect(structured.errors[0]).toContain("Internal server error");
+    expect(structured.conclusion).toBe("needs_review");
+    expect(text).not.toContain("No findings -- scanned workflows declare explicit, least-privilege permissions.");
   });
 
   it("logs errors when encountering invalid YAML format", async () => {
@@ -317,11 +319,24 @@ describe("handleWorkflowPermissionsAudit", () => {
     });
 
     const params: WorkflowPermissionsAuditInput = {};
-    const { structured } = await handleWorkflowPermissionsAudit(params, REF, octokit);
+    const { structured, text } = await handleWorkflowPermissionsAudit(params, REF, octokit);
 
     expect(structured.errors).toHaveLength(1);
     expect(structured.errors[0]).toContain("unable to parse");
     expect(structured.workflowsScanned).toHaveLength(0);
+    expect(structured.conclusion).toBe("needs_review");
+    expect(text).not.toContain("No findings -- scanned workflows declare explicit, least-privilege permissions.");
+  });
+
+  it("does not claim least privilege when no workflow was scanned", async () => {
+    const octokit = makeMockOctokit({ files: [] });
+
+    const { structured, text } = await handleWorkflowPermissionsAudit({}, REF, octokit);
+
+    expect(structured.workflowsScanned).toEqual([]);
+    expect(structured.conclusion).toBe("needs_review");
+    expect(text).toContain("audit evidence is incomplete");
+    expect(text).not.toContain("No findings -- scanned workflows declare explicit, least-privilege permissions.");
   });
 });
 

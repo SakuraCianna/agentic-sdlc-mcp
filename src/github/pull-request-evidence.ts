@@ -16,6 +16,8 @@ export interface GateSignal {
   rawConclusion: string | null;
   rawState: string | null;
   url: string | null;
+  /** Set only after the orchestration layer verifies the originating workflow and pinned scanner action. */
+  provenanceVerified?: boolean;
 }
 
 export interface RequiredStatusCheck {
@@ -83,6 +85,8 @@ export interface PullRequestEvidence {
     headSha: string;
     headRef: string;
     baseBranch: string;
+    /** Immutable base commit used for policy provenance checks when available. */
+    baseSha?: string;
     draft: boolean;
     commits: number;
     mergeable: boolean | null;
@@ -242,7 +246,7 @@ async function collectCheckRuns(
           rawStatus: run.status,
           rawConclusion: run.conclusion,
           rawState: null,
-          url: run.html_url ?? null,
+          url: run.details_url ?? run.html_url ?? null,
         }))
       ),
       errors: runs.truncated ? ["check_runs: results truncated at 300 items"] : [],
@@ -868,6 +872,7 @@ export async function collectPullRequestEvidence(
       headRef: pullRequest.head.ref,
       baseBranch: pullRequest.base.ref,
       draft: pullRequest.draft ?? false,
+      baseSha: pullRequest.base.sha,
       commits: pullRequest.commits,
       mergeable: pullRequest.mergeable,
       labels: pullRequest.labels.map((label) => label.name),
