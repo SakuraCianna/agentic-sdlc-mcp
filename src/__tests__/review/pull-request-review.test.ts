@@ -221,6 +221,43 @@ describe("scanPatchForSecrets", () => {
     ).toEqual([]);
   });
 
+  it("carries block-comment state from context lines before scanning added secrets", () => {
+    expect(
+      scanPatchForSecrets(
+        "src/config.ts",
+        "@@ -1,2 +1,3 @@\n /* credentials for local setup\n+API_TOKEN=ghp_1234567890abcdef\n */"
+      )
+    ).toEqual([]);
+  });
+
+  it("carries a block comment opened after context code", () => {
+    expect(
+      scanPatchForSecrets(
+        "src/config.ts",
+        "@@ -1,2 +1,3 @@\n const setup = true; /* credentials\n+API_TOKEN=ghp_1234567890abcdef\n */"
+      )
+    ).toEqual([]);
+  });
+
+  it("still scans added code before an inline block comment", () => {
+    expect(
+      scanPatchForSecrets(
+        "src/config.ts",
+        "+const API_TOKEN = ghp_1234567890abcdef; /* rotate before production */"
+      )
+    ).toContainEqual(expect.objectContaining({ category: "SecretLikeAssignment" }));
+  });
+
+  it.each([
+    "+AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE",
+    "+OPENAI_API_KEY=sk-your-api-key-here",
+    "+GITHUB_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxx",
+    "+GITHUB_TOKEN=github_pat_example-token",
+    "+SLACK_TOKEN=xoxb-dummy-token-value",
+  ])("ignores a known-prefix placeholder token %s", (patch) => {
+    expect(scanPatchForSecrets("config/service.env", patch)).toEqual([]);
+  });
+
   it.each([
     "+API_TOKEN=REDACTED",
     "+API_TOKEN=fake-token-value",
@@ -498,6 +535,78 @@ describe("evaluatePullRequestReview", () => {
     });
 
     expect(result.testCoverageSignal).toBe("adequate");
+  });
+
+  it("accepts a context expect call completed by an added matcher", () => {
+    const result = evaluatePullRequestReview({
+      pr: pr({ body: "## Reproduction\nBefore: malformed input crashed the parser." }),
+      files: [
+        file("src/parser.ts"),
+        file("src/__tests__/parser.test.ts", {
+          patch: "@@ -1,2 +1,3 @@\n expect(parseSafely(input))\n+  .toEqual({ ok: false });",
+        }),
+      ],
+      workType: "bugfix",
+    });
+
+    expect(result.testCoverageSignal).toBe("adequate");
+  });
+
+  it("accepts an added expect assertion whose arrow body contains a semicolon", () => {
+    const result = evaluatePullRequestReview({
+      pr: pr({ body: "## Reproduction\nBefore: malformed input crashed the parser." }),
+      files: [
+        file("src/parser.ts"),
+        file("src/__tests__/parser.test.ts", {
+          patch: "+expect(() => { fail(); }).toThrow();",
+        }),
+      ],
+      workType: "bugfix",
+    });
+
+    expect(result.testCoverageSignal).toBe("adequate");
+  });
+
+  it("does not accept a context-only expect assertion plus an unrelated added line", () => {
+    const result = evaluatePullRequestReview({
+      pr: pr({ body: "## Reproduction\nBefore: malformed input crashed the parser." }),
+      files: [
+        file("src/parser.ts"),
+        file("src/__tests__/parser.test.ts", {
+          patch:
+            "@@ -1,2 +1,3 @@\n expect(parseSafely(input)).toEqual({ ok: false });\n+const note = true;",
+        }),
+      ],
+      workType: "bugfix",
+    });
+
+    expect(result.testCoverageSignal).toBe("insufficient_evidence");
+  });
+
+  it("requires a Node assert call span to include an added segment", () => {
+    const contextOnly = evaluatePullRequestReview({
+      pr: pr({ body: "## Reproduction\nBefore: malformed input crashed the parser." }),
+      files: [
+        file("src/parser.ts"),
+        file("test/parser.test.ts", {
+          patch: "@@ -1,2 +1,3 @@\n assert.deepStrictEqual(actual, expected);\n+const note = true;",
+        }),
+      ],
+      workType: "bugfix",
+    });
+    const partiallyAdded = evaluatePullRequestReview({
+      pr: pr({ body: "## Reproduction\nBefore: malformed input crashed the parser." }),
+      files: [
+        file("src/parser.ts"),
+        file("test/parser.test.ts", {
+          patch: "@@ -1,3 +1,4 @@\n assert.deepStrictEqual(\n+  actual,\n   expected\n );",
+        }),
+      ],
+      workType: "bugfix",
+    });
+
+    expect(contextOnly.testCoverageSignal).toBe("insufficient_evidence");
+    expect(partiallyAdded.testCoverageSignal).toBe("adequate");
   });
 
   it.each([
@@ -809,6 +918,49 @@ describe("evaluatePullRequestReview", () => {
       expect.objectContaining({ category: "ConflictingReleaseTargets", severity: "high" })
     );
     expect(result.conclusion).toBe("needs_changes");
+  });
+
+  it.each(["chore(release): v1.6.0", "build(release): v1.6.0", "release: v1.6.0"])(
+    "accepts a conventional release title target: %s",
+    (title) => {
+      const result = evaluatePullRequestReview({
+        pr: pr({
+          title,
+          body:
+            "## Verification\nRan `npm test`.\n## Rollback\nRestore v1.5.0 and republish the prior artifact.",
+        }),
+        files: [
+          file("package.json", { patch: '+  "version": "1.6.0",' }),
+          file("src/__tests__/publish.test.ts"),
+        ],
+        workType: "release",
+      });
+
+      expect(
+        result.findings.some((finding) =>
+          ["MissingReleaseVersion", "ReleaseVersionMismatch"].includes(finding.category)
+        )
+      ).toBe(false);
+    }
+  );
+
+  it("does not treat a generic conventional version bump as a release target", () => {
+    const result = evaluatePullRequestReview({
+      pr: pr({
+        title: "chore: bump 1.6.0",
+        body:
+          "## Verification\nRan `npm test`.\n## Rollback\nRestore v1.5.0 and republish the prior artifact.",
+      }),
+      files: [
+        file("package.json", { patch: '+  "version": "1.6.0",' }),
+        file("src/__tests__/publish.test.ts"),
+      ],
+      workType: "release",
+    });
+
+    expect(result.findings).toContainEqual(
+      expect.objectContaining({ category: "MissingReleaseVersion", severity: "high" })
+    );
   });
 
   it("requires workflow work to document triggers and failure behavior", () => {

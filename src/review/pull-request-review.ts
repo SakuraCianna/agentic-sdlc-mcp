@@ -445,6 +445,9 @@ function isPlaceholderSecret(value: string): boolean {
       normalized
     ) ||
     /^x+$/i.test(normalized) ||
+    /^(?:AKIA[0-9A-Z]*EXAMPLE|(?:ghp_|github_pat_|sk-|xox[a-z]-)(?:x+|your(?:[-_ ]|$)|example|dummy|redacted|change[-_ ]?me|placeholder))/i.test(
+      normalized
+    ) ||
     /(?:_example|example_|your[_ -]?token|not[_ -]?a[_ -]?secret)/i.test(normalized)
   );
 }
@@ -470,6 +473,56 @@ function isHighConfidenceUnquotedSecret(value: string): boolean {
   return classes >= 3;
 }
 
+function stripCommentsFromLine(
+  line: string,
+  inBlockComment: boolean
+): { code: string; inBlockComment: boolean } {
+  if (!inBlockComment && /^(?:\s*#|\s*\*)/.test(line)) {
+    return { code: "", inBlockComment: false };
+  }
+
+  let code = "";
+  let quote: "'" | '"' | "`" | null = null;
+  let escaped = false;
+  for (let index = 0; index < line.length; index += 1) {
+    const character = line[index] ?? "";
+    const next = line[index + 1] ?? "";
+    if (inBlockComment) {
+      if (character === "*" && next === "/") {
+        code += "  ";
+        index += 1;
+        inBlockComment = false;
+      } else {
+        code += " ";
+      }
+      continue;
+    }
+    if (quote) {
+      code += character;
+      if (escaped) {
+        escaped = false;
+      } else if (character === "\\") {
+        escaped = true;
+      } else if (character === quote) {
+        quote = null;
+      }
+      continue;
+    }
+    if (character === "/" && next === "/") break;
+    if (character === "/" && next === "*") {
+      code += "  ";
+      index += 1;
+      inBlockComment = true;
+    } else if (character === "'" || character === '"' || character === "`") {
+      quote = character;
+      code += character;
+    } else {
+      code += character;
+    }
+  }
+  return { code, inBlockComment };
+}
+
 export function scanPatchForSecrets(
   filename: string,
   patch?: string
@@ -479,28 +532,13 @@ export function scanPatchForSecrets(
   const findings: StructuredReviewFinding[] = [];
   let inBlockComment = false;
 
-  for (const rawLine of patch.split(/\r?\n/)) {
-    if (!rawLine.startsWith("+") || rawLine.startsWith("+++")) continue;
-    const addedLine = rawLine.slice(1);
-    const trimmed = addedLine.trimStart();
-    if (inBlockComment) {
-      if (trimmed.includes("*/")) inBlockComment = false;
-      continue;
-    }
-    if (trimmed.startsWith("/*")) {
-      if (!trimmed.includes("*/")) inBlockComment = true;
-      continue;
-    }
-    if (
-      trimmed.startsWith("//") ||
-      trimmed.startsWith("#") ||
-      trimmed.startsWith("*")
-    ) {
-      continue;
-    }
+  for (const line of newSidePatchLines(patch)) {
+    const stripped = stripCommentsFromLine(line.text, inBlockComment);
+    inBlockComment = stripped.inBlockComment;
+    if (!line.added) continue;
 
     for (const { name, pattern } of SECRET_ASSIGNMENTS) {
-      const match = addedLine.match(pattern);
+      const match = stripped.code.match(pattern);
       const quotedValue = match?.slice(1, 4).find((capture) => capture !== undefined);
       const unquotedValue = match?.[4];
       const value = quotedValue ?? unquotedValue;
@@ -525,12 +563,37 @@ export function scanPatchForSecrets(
   return findings;
 }
 
+interface NewSideLine {
+  text: string;
+  added: boolean;
+}
+
+function newSidePatchLines(patch: string): NewSideLine[] {
+  const lines: NewSideLine[] = [];
+  for (const rawLine of patch.split(/\r?\n/)) {
+    if (
+      rawLine.startsWith("@@") ||
+      rawLine.startsWith("+++") ||
+      rawLine.startsWith("---") ||
+      rawLine.startsWith("\\ No newline") ||
+      rawLine.startsWith("-")
+    ) {
+      continue;
+    }
+    if (rawLine.startsWith("+")) {
+      lines.push({ text: rawLine.slice(1), added: true });
+    } else if (rawLine.startsWith(" ")) {
+      lines.push({ text: rawLine.slice(1), added: false });
+    }
+  }
+  return lines;
+}
+
 function addedPatchLines(file: PrFile): string[] | null {
   if (!file.patch) return null;
-  return file.patch
-    .split(/\r?\n/)
-    .filter((line) => line.startsWith("+") && !line.startsWith("+++"))
-    .map((line) => line.slice(1));
+  return newSidePatchLines(file.patch)
+    .filter((line) => line.added)
+    .map((line) => line.text);
 }
 
 function stripCommentsAndStrings(content: string): string {
@@ -603,20 +666,125 @@ function stripCommentsAndStrings(content: string): string {
   return result;
 }
 
-function hasNonSnapshotAssertion(file: PrFile): boolean {
-  const addedLines = addedPatchLines(file);
-  if (!addedLines) return false;
-  const content = stripCommentsAndStrings(addedLines.join("\n"));
-  const expectMatcher = /\bexpect\s*\([^;]*?\)\s*(?:\.\s*(?:not|resolves|rejects)\s*)*\.\s*([A-Za-z_$][\w$]*)\b/g;
-  for (const match of content.matchAll(expectMatcher)) {
-    const matcher = match[1];
-    if (matcher && !matcher.toLowerCase().includes("snapshot")) return true;
+interface NewSideCharacterStream {
+  content: string;
+  added: boolean[];
+}
+
+function buildNewSideCharacterStream(patch: string): NewSideCharacterStream {
+  let content = "";
+  const added: boolean[] = [];
+  for (const line of newSidePatchLines(patch)) {
+    const segment = `${line.text}\n`;
+    content += segment;
+    added.push(...Array.from({ length: segment.length }, () => line.added));
   }
-  return (
-    /\bassert(?:\.(?:deepEqual|deepStrictEqual|doesNotMatch|doesNotReject|doesNotThrow|equal|fail|ifError|match|notDeepEqual|notDeepStrictEqual|notEqual|notStrictEqual|ok|rejects|strictEqual|throws))?\s*\(/.test(
-      content
-    )
-  );
+  return { content: stripCommentsAndStrings(content), added };
+}
+
+function skipWhitespace(content: string, start: number): number {
+  let cursor = start;
+  while (/\s/.test(content[cursor] ?? "")) cursor += 1;
+  return cursor;
+}
+
+function findClosingParenthesis(content: string, openingIndex: number): number | null {
+  let depth = 0;
+  for (let cursor = openingIndex; cursor < content.length; cursor += 1) {
+    const character = content[cursor];
+    if (character === "(") depth += 1;
+    if (character === ")") {
+      depth -= 1;
+      if (depth === 0) return cursor;
+    }
+  }
+  return null;
+}
+
+function spanContainsAdded(added: boolean[], start: number, end: number): boolean {
+  for (let cursor = start; cursor <= end; cursor += 1) {
+    if (added[cursor]) return true;
+  }
+  return false;
+}
+
+function hasAddedExpectAssertion(stream: NewSideCharacterStream): boolean {
+  const expectCall = /\bexpect\s*\(/g;
+  for (const match of stream.content.matchAll(expectCall)) {
+    const start = match.index;
+    const openingIndex = stream.content.indexOf("(", start);
+    const expectClose = findClosingParenthesis(stream.content, openingIndex);
+    if (expectClose === null) continue;
+
+    let cursor = expectClose + 1;
+    while (cursor < stream.content.length) {
+      cursor = skipWhitespace(stream.content, cursor);
+      if (stream.content[cursor] !== ".") break;
+      cursor = skipWhitespace(stream.content, cursor + 1);
+      const nameMatch = stream.content.slice(cursor).match(/^([A-Za-z_$][\w$]*)/);
+      const name = nameMatch?.[1];
+      if (!name) break;
+      cursor += name.length;
+      if (["not", "rejects", "resolves"].includes(name)) continue;
+
+      cursor = skipWhitespace(stream.content, cursor);
+      if (stream.content[cursor] !== "(") break;
+      const matcherClose = findClosingParenthesis(stream.content, cursor);
+      if (matcherClose === null) break;
+      if (
+        !name.toLowerCase().includes("snapshot") &&
+        spanContainsAdded(stream.added, start, matcherClose)
+      ) {
+        return true;
+      }
+      break;
+    }
+  }
+  return false;
+}
+
+const NODE_ASSERT_METHODS = new Set([
+  "deepEqual",
+  "deepStrictEqual",
+  "doesNotMatch",
+  "doesNotReject",
+  "doesNotThrow",
+  "equal",
+  "fail",
+  "ifError",
+  "match",
+  "notDeepEqual",
+  "notDeepStrictEqual",
+  "notEqual",
+  "notStrictEqual",
+  "ok",
+  "rejects",
+  "strictEqual",
+  "throws",
+]);
+
+function hasAddedNodeAssertion(stream: NewSideCharacterStream): boolean {
+  const assertCall = /\bassert(?:\s*\.\s*([A-Za-z_$][\w$]*))?\s*\(/g;
+  for (const match of stream.content.matchAll(assertCall)) {
+    const method = match[1];
+    if (method && !NODE_ASSERT_METHODS.has(method)) continue;
+    const start = match.index;
+    const openingIndex = stream.content.indexOf("(", start);
+    const closingIndex = findClosingParenthesis(stream.content, openingIndex);
+    if (
+      closingIndex !== null &&
+      spanContainsAdded(stream.added, start, closingIndex)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function hasNonSnapshotAssertion(file: PrFile): boolean {
+  if (!file.patch) return false;
+  const stream = buildNewSideCharacterStream(file.patch);
+  return hasAddedExpectAssertion(stream) || hasAddedNodeAssertion(stream);
 }
 
 function evaluateTestEvidence(
@@ -728,12 +896,15 @@ function isReleaseVersionSource(filename: string): boolean {
 
 function extractReleaseTargetVersions(title: string, body: string): string[] {
   const versions: string[] = [];
-  const titleTarget = new RegExp(
-    `^\\s*(?:release|publish)\\b[^\\n]*?\\bv?${SEMVER_SOURCE}\\b`,
-    "i"
+  const hasReleaseTitleSemantics = /^\s*(?:(?:chore|build)\((?:release|publish)\)|(?:release|publish))(?:\s*:|\b)/i.test(
+    title
   );
-  const titleMatch = title.match(titleTarget);
-  if (titleMatch?.[1]) versions.push(titleMatch[1]);
+  if (hasReleaseTitleSemantics) {
+    const titleVersions = new RegExp(`\\bv?${SEMVER_SOURCE}\\b`, "gi");
+    for (const match of title.matchAll(titleVersions)) {
+      if (match[1]) versions.push(match[1]);
+    }
+  }
 
   const declaration = new RegExp(
     `^\\s*(?:[-*]\\s*)?(?:release target|target version|publish version|release version)\\s*:\\s*v?${SEMVER_SOURCE}\\s*$`,
