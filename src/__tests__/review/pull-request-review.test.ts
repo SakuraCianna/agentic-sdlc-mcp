@@ -172,6 +172,34 @@ describe("scanPatchForSecrets", () => {
     );
   });
 
+  it("detects an unquoted dotenv-style credential assignment", () => {
+    const findings = scanPatchForSecrets(".env.example", "+API_TOKEN=ghp_1234567890abcdef");
+
+    expect(findings).toContainEqual(
+      expect.objectContaining({
+        category: "SecretLikeAssignment",
+        severity: "high",
+        paths: [".env.example"],
+      })
+    );
+  });
+
+  it.each([
+    "+API_TOKEN=REDACTED",
+    "+API_TOKEN=fake-token-value",
+    "+API_TOKEN=dummy-token-value",
+    "+API_TOKEN=example-token-value",
+    "+API_TOKEN=placeholder-token",
+    "+API_TOKEN=changeme-now",
+    "+API_TOKEN=your-token-here",
+    "+API_TOKEN=xxxxxxxxxxxxxxxx",
+    "+API_TOKEN=${API_TOKEN}",
+    "+const token = process.env.API_TOKEN;",
+    "+token: secrets.API_TOKEN",
+  ])("ignores placeholder or indirect secret value %s", (patch) => {
+    expect(scanPatchForSecrets("config/service.env", patch)).toEqual([]);
+  });
+
   it("ignores removed assignments, context lines, prose keywords, placeholders, and env references", () => {
     const findings = scanPatchForSecrets(
       "docs/security.md",
@@ -213,6 +241,43 @@ describe("evaluatePullRequestReview", () => {
     expect(result.findings).toContainEqual(
       expect.objectContaining({ category: "MissingDocsVerification", dimension: "evidence" })
     );
+  });
+
+  it("does not let a later heading supply detail for an empty verification section", () => {
+    const result = evaluatePullRequestReview({
+      pr: pr({ body: "## Verification\n## Notes\nRan `npx markdownlint docs/guide.md`." }),
+      files: [file("docs/guide.md")],
+      workType: "docs",
+    });
+
+    expect(result.testCoverageSignal).toBe("insufficient_evidence");
+    expect(result.findings).toContainEqual(
+      expect.objectContaining({ category: "MissingDocsVerification", severity: "medium" })
+    );
+  });
+
+  it("requires a concrete docs verification method even inside the right section", () => {
+    const result = evaluatePullRequestReview({
+      pr: pr({ body: "## Verification\nEverything looks good and the docs were tested." }),
+      files: [file("docs/guide.md")],
+      workType: "docs",
+    });
+
+    expect(result.testCoverageSignal).toBe("insufficient_evidence");
+  });
+
+  it.each([
+    "## Verification\nRendered the documentation site and inspected the changed page.",
+    "## Verification\nChecked README links with the repository link checker.",
+    "## Verification\nBuilt the documentation examples with `npm run docs:build`.",
+  ])("accepts a concrete docs verification method: %s", (body) => {
+    const result = evaluatePullRequestReview({
+      pr: pr({ body }),
+      files: [file("docs/guide.md")],
+      workType: "docs",
+    });
+
+    expect(result.testCoverageSignal).toBe("not_required");
   });
 
   it("reports a high finding when a feature has neither tests nor a qualified no-test reason", () => {
@@ -270,10 +335,50 @@ describe("evaluatePullRequestReview", () => {
     );
   });
 
+  it("does not accept snapshot matchers in an ordinary test file as regression evidence", () => {
+    const result = evaluatePullRequestReview({
+      pr: pr({ body: "## Reproduction\nBefore: malformed input crashed the parser." }),
+      files: [
+        file("src/parser.ts", { patch: "+return parseSafely(input);" }),
+        file("src/__tests__/parser.test.ts", {
+          patch:
+            '+expect(parseSafely("bad")).toMatchInlineSnapshot(`"invalid"`);\n+expect(output).toMatchSnapshot();',
+        }),
+        file("src/__tests__/__snapshots__/parser.test.ts.snap", {
+          patch: '+exports[`parser 1`] = `"invalid"`;',
+        }),
+      ],
+      workType: "bugfix",
+    });
+
+    expect(result.testCoverageSignal).toBe("insufficient_evidence");
+    expect(result.findings).toContainEqual(
+      expect.objectContaining({ category: "MissingRegressionTest", severity: "high" })
+    );
+  });
+
+  it("does not infer regression evidence from a test filename when its patch is unavailable", () => {
+    const result = evaluatePullRequestReview({
+      pr: pr({ body: "## Reproduction\nBefore: malformed input crashed the parser." }),
+      files: [file("src/parser.ts"), file("src/__tests__/parser.test.ts", { patch: undefined })],
+      workType: "bugfix",
+    });
+
+    expect(result.testCoverageSignal).toBe("insufficient_evidence");
+    expect(result.findings).toContainEqual(
+      expect.objectContaining({ category: "MissingRegressionTest", severity: "high" })
+    );
+  });
+
   it("recognizes a non-snapshot regression test and explicit reproduction", () => {
     const result = evaluatePullRequestReview({
       pr: pr({ body: "## Steps to reproduce\nBefore: malformed input crashed the parser." }),
-      files: [file("src/parser.ts"), file("src/__tests__/parser.test.ts")],
+      files: [
+        file("src/parser.ts"),
+        file("src/__tests__/parser.test.ts", {
+          patch: '+expect(parseSafely("bad")).toEqual({ ok: false });',
+        }),
+      ],
       workType: "bugfix",
     });
 
@@ -281,6 +386,36 @@ describe("evaluatePullRequestReview", () => {
     expect(result.findings.some((finding) => finding.category === "MissingRegressionTest")).toBe(
       false
     );
+  });
+
+  it("accepts common Node assert regression evidence", () => {
+    const result = evaluatePullRequestReview({
+      pr: pr({ body: "## Reproduction\nBefore: malformed input crashed the parser." }),
+      files: [
+        file("src/parser.ts"),
+        file("test/parser.test.ts", {
+          patch: '+assert.deepStrictEqual(parseSafely("bad"), { ok: false });',
+        }),
+      ],
+      workType: "bugfix",
+    });
+
+    expect(result.testCoverageSignal).toBe("adequate");
+  });
+
+  it("accepts a multiline non-snapshot expect assertion", () => {
+    const result = evaluatePullRequestReview({
+      pr: pr({ body: "## Reproduction\nBefore: malformed input crashed the parser." }),
+      files: [
+        file("src/parser.ts"),
+        file("src/__tests__/parser.test.ts", {
+          patch: '+expect(parseSafely("bad"))\n+  .toEqual({ ok: false });',
+        }),
+      ],
+      workType: "bugfix",
+    });
+
+    expect(result.testCoverageSignal).toBe("adequate");
   });
 
   it.each([
@@ -371,6 +506,24 @@ describe("evaluatePullRequestReview", () => {
     );
   });
 
+  it("does not let the next heading provide rollback detail", () => {
+    const result = evaluatePullRequestReview({
+      pr: pr({
+        body:
+          "Release target: 1.6.0\n## Verification\nRan `npm test`.\n## Rollback\n## Notes\nRevert the release commit if needed.",
+      }),
+      files: [
+        file("package.json", { patch: '+  "version": "1.6.0",' }),
+        file("src/__tests__/publish.test.ts"),
+      ],
+      workType: "release",
+    });
+
+    expect(result.findings).toContainEqual(
+      expect.objectContaining({ category: "MissingFallback", severity: "high" })
+    );
+  });
+
   it("requires security work to document security validation", () => {
     const result = evaluatePullRequestReview({
       pr: pr({
@@ -399,6 +552,114 @@ describe("evaluatePullRequestReview", () => {
     expect(result.findings).toContainEqual(
       expect.objectContaining({ category: "MissingReleaseVersion", dimension: "policy" })
     );
+  });
+
+  it.each(["package.json", "src/version.ts", "server.json", ".npmrc"])(
+    "classifies %s as release-sensitive",
+    (filename) => {
+      expect(classifyPrFiles([file(filename)]).releaseFiles.map((entry) => entry.filename)).toContain(
+        filename
+      );
+    }
+  );
+
+  it("reports a target mismatch against the package version without using dependency semvers", () => {
+    const result = evaluatePullRequestReview({
+      pr: pr({
+        body:
+          "Release target: 1.6.0\n## Verification\nRan `npm test`.\n## Rollback\nRevert to v1.5.0 and republish the prior artifact.",
+      }),
+      files: [
+        file("package.json", {
+          patch: '+  "version": "1.5.1",\n+  "typescript": "^6.0.0",',
+        }),
+        file("src/__tests__/publish.test.ts"),
+      ],
+      workType: "release",
+    });
+
+    expect(result.findings).toContainEqual(
+      expect.objectContaining({
+        category: "ReleaseVersionMismatch",
+        severity: "high",
+        paths: ["package.json"],
+      })
+    );
+    expect(result.conclusion).toBe("needs_changes");
+  });
+
+  it("reports inconsistent release versions across version sources", () => {
+    const result = evaluatePullRequestReview({
+      pr: pr({
+        body:
+          "Publish version: 1.6.0\n## Verification\nRan `npm test`.\n## Rollback\nRevert to v1.5.0 and restore the previous artifact.",
+      }),
+      files: [
+        file("package.json", { patch: '+  "version": "1.6.0",' }),
+        file("src/version.ts", { patch: '+export const VERSION = "1.6.1";' }),
+        file("src/__tests__/publish.test.ts"),
+      ],
+      workType: "release",
+    });
+
+    expect(result.findings).toContainEqual(
+      expect.objectContaining({
+        category: "InconsistentReleaseVersions",
+        severity: "high",
+        paths: ["package.json", "src/version.ts"],
+      })
+    );
+  });
+
+  it("fails closed when a changed version source has no verifiable added version", () => {
+    const result = evaluatePullRequestReview({
+      pr: pr({
+        body:
+          "Release target: 1.6.0\n## Verification\nRan `npm test`.\n## Rollback\nRevert to v1.5.0 and restore the previous artifact.",
+      }),
+      files: [
+        file("package.json", { patch: '+  "typescript": "^6.0.0",' }),
+        file("src/__tests__/publish.test.ts"),
+      ],
+      workType: "release",
+    });
+
+    expect(result.findings).toContainEqual(
+      expect.objectContaining({
+        category: "UnverifiedReleaseVersion",
+        severity: "high",
+        paths: ["package.json"],
+      })
+    );
+    expect(result.testCoverageSignal).toBe("adequate");
+  });
+
+  it("accepts matching release target and changed version sources", () => {
+    const result = evaluatePullRequestReview({
+      pr: pr({
+        body:
+          "Release target: v1.6.0\n## Verification\nRan `npm test`.\n## Rollback\nRevert to v1.5.0 and restore the previous artifact.",
+      }),
+      files: [
+        file("package.json", { patch: '+  "version": "1.6.0",' }),
+        file("src/version.ts", { patch: '+export const VERSION = "1.6.0";' }),
+        file("server.json", { patch: '+  "version": "1.6.0",' }),
+        file("src/__tests__/publish.test.ts"),
+      ],
+      workType: "release",
+    });
+
+    expect(
+      result.findings.some((finding) =>
+        [
+          "MissingReleaseVersion",
+          "ReleaseVersionMismatch",
+          "InconsistentReleaseVersions",
+          "UnverifiedReleaseVersion",
+        ].includes(finding.category)
+      )
+    ).toBe(false);
+    expect(result.releaseRisk).toBe("high");
   });
 
   it("requires workflow work to document triggers and failure behavior", () => {

@@ -170,6 +170,8 @@ function isReleasePath(filename: string): boolean {
   const lower = filename.toLowerCase();
   const basename = lower.split("/").at(-1) ?? lower;
   return (
+    [".npmrc", "package.json", "server.json"].includes(basename) ||
+    /(?:^|\/)version\.[cm]?[jt]s$/.test(lower) ||
     /(?:^|\/)(?:publish|release|releases)(?:\/|$)/.test(lower) ||
     /(?:^|[._-])(?:publish|release)(?:[._-]|$)/.test(basename) ||
     /(?:^|\/)(?:publish|release)\.[^/]+$/.test(lower)
@@ -341,22 +343,61 @@ function hasNoTestReason(body: string): boolean {
   );
 }
 
+function sectionContents(body: string, names: string): string[] {
+  const lines = body.split(/\r?\n/);
+  const namePattern = new RegExp(`^(?:${names})\\s*:?$`, "i");
+  const inlinePattern = new RegExp(`^\\s*(?:${names})\\s*:\\s*(.*)$`, "i");
+  const sections: string[] = [];
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index] ?? "";
+    const heading = line.match(/^\s*#{1,6}\s+(.+?)\s*#*\s*$/);
+    const inline = line.match(inlinePattern);
+    if (!heading && !inline) continue;
+    if (heading && !namePattern.test(heading[1] ?? "")) continue;
+
+    const content: string[] = [];
+    if (inline?.[1]) content.push(inline[1]);
+    for (let cursor = index + 1; cursor < lines.length; cursor += 1) {
+      const next = lines[cursor] ?? "";
+      if (/^\s*#{1,6}\s+/.test(next)) break;
+      content.push(next);
+    }
+    sections.push(content.join("\n").trim());
+  }
+
+  return sections;
+}
+
 function hasDetailedSection(body: string, names: string): boolean {
-  const section = new RegExp(
-    `(?:^|\\n)\\s*(?:#{1,6}\\s*)?(?:${names})\\s*:?\\s*(?:\\n|\\s+)([^\\n]{10,})`,
-    "i"
+  return sectionContents(body, names).some(
+    (content) => content.replace(/\s/g, "").length >= 10
   );
-  return section.test(body);
+}
+
+function hasConcreteVerificationMethod(content: string): boolean {
+  return (
+    /\bmarkdownlint\b|\blink[ -]?check(?:er|ing)?\b/i.test(content) ||
+    /\b(?:ran|run|executed|verified with|validated with)\s+`?(?:bun|cargo|dotnet|git|go|gradle|make|markdownlint|mvn|node|npm|npx|pnpm|python|pytest|yarn)\b/i.test(
+      content
+    ) ||
+    /\brender(?:ed|ing)?\b[^.\n]*\b(?:doc(?:umentation)?|markdown|page|site)\b/i.test(
+      content
+    ) ||
+    /\b(?:build|built)\b[^.\n]*\b(?:doc(?:umentation)?|example|page|site)\b/i.test(
+      content
+    ) ||
+    /\b(?:checked|validated|verified)\b[^.\n]*\b(?:example|link|render(?:ed)?|output)\b/i.test(
+      content
+    )
+  );
 }
 
 function hasDocsVerification(body: string): boolean {
-  return (
-    /\bmarkdownlint\b|\blink[ -]?check(?:er|ing)?\b/i.test(body) ||
-    /\b(?:ran|run|executed|verified with|validated with)\s+`?(?:bun|cargo|dotnet|git|go|gradle|make|markdownlint|mvn|node|npm|npx|pnpm|python|pytest|yarn)\b/i.test(
-      body
-    ) ||
-    hasDetailedSection(body, "verification|validated")
-  );
+  const sections = sectionContents(body, "verification|validated");
+  return sections.length > 0
+    ? sections.some(hasConcreteVerificationMethod)
+    : hasConcreteVerificationMethod(body);
 }
 
 function hasBugReproduction(body: string): boolean {
@@ -385,11 +426,11 @@ const SECRET_ASSIGNMENTS: SecretPattern[] = [
   {
     name: "credential assignment",
     pattern:
-      /(?:^|[,{;]\s*|\b(?:const|let|var)\s+)\s*["']?[\w.-]*(?:api[_-]?key|client[_-]?secret|credential|password|private[_-]?key|secret|token)[\w.-]*["']?\s*[:=]\s*(["'`])([^"'`]+)\1/i,
+      /(?:^|[,{;]\s*|\b(?:const|let|var)\s+)\s*["']?[\w.-]*(?:api[_-]?key|client[_-]?secret|credential|password|private[_-]?key|secret|token)[\w.-]*["']?\s*[:=]\s*(?:"([^"]+)"|'([^']+)'|`([^`]+)`|([^\s,;#]+))/i,
   },
   {
     name: "AWS access key assignment",
-    pattern: /\b[\w.-]+\s*[:=]\s*(["'`])(AKIA[0-9A-Z]{16})\1/,
+    pattern: /\b[\w.-]+\s*[:=]\s*(?:"(AKIA[0-9A-Z]{16})"|'(AKIA[0-9A-Z]{16})'|`(AKIA[0-9A-Z]{16})`|(AKIA[0-9A-Z]{16}))\b/,
   },
 ];
 
@@ -397,10 +438,10 @@ function isPlaceholderSecret(value: string): boolean {
   const normalized = value.trim();
   return (
     normalized.length < 8 ||
-    /(?:process|import\.meta)\.env|(?:os\.)?getenv\s*\(|\$\{?[A-Z_][A-Z0-9_]*\}?/i.test(
+    /(?:process|import\.meta)\.env|\bsecrets\.|(?:os\.)?getenv\s*\(|\$\{?[A-Z_][A-Z0-9_]*\}?/i.test(
       normalized
     ) ||
-    /^(?:<[^>]+>|\*+|x+|your[_ -]|change[_ -]?me|dummy|example|placeholder|sample|test)/i.test(
+    /^(?:<[^>]+>|\*+|x+|redacted|fake|your[_ -]|change[_ -]?me|dummy|example|placeholder|sample|test)/i.test(
       normalized
     ) ||
     /(?:_example|example_|your[_ -]?token|not[_ -]?a[_ -]?secret)/i.test(normalized)
@@ -421,7 +462,7 @@ export function scanPatchForSecrets(
 
     for (const { name, pattern } of SECRET_ASSIGNMENTS) {
       const match = addedLine.match(pattern);
-      const value = match?.[2];
+      const value = match?.slice(1).find((capture) => capture !== undefined);
       if (!value || isPlaceholderSecret(value)) continue;
 
       findings.push(
@@ -440,6 +481,28 @@ export function scanPatchForSecrets(
   }
 
   return findings;
+}
+
+function addedPatchLines(file: PrFile): string[] | null {
+  if (!file.patch) return null;
+  return file.patch
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith("+") && !line.startsWith("+++"))
+    .map((line) => line.slice(1));
+}
+
+function hasNonSnapshotAssertion(file: PrFile): boolean {
+  const addedLines = addedPatchLines(file);
+  if (!addedLines) return false;
+  const content = addedLines.join("\n");
+  return (
+    /\bexpect\s*\([^;]+?\)\s*\.\s*(?:not\s*\.\s*)?(?:to(?!Match(?:Inline)?Snapshot\b)[A-Z]\w*|resolves|rejects)\b/.test(
+      content
+    ) ||
+    /\bassert(?:\.(?:deepEqual|deepStrictEqual|doesNotMatch|doesNotReject|doesNotThrow|equal|fail|ifError|match|notDeepEqual|notDeepStrictEqual|notEqual|notStrictEqual|ok|rejects|strictEqual|throws))?\s*\(/.test(
+      content
+    )
+  );
 }
 
 function evaluateTestEvidence(
@@ -470,6 +533,10 @@ function evaluateTestEvidence(
   }
 
   if (workType === "bugfix") {
+    const regressionTestPaths = classified.nonSnapshotTestFiles
+      .filter(hasNonSnapshotAssertion)
+      .map((file) => file.filename);
+    const hasRegressionAssertion = regressionTestPaths.length > 0;
     if (!hasBugReproduction(body)) {
       findings.push(
         finding(
@@ -483,7 +550,10 @@ function evaluateTestEvidence(
         )
       );
     }
-    if (!hasNonSnapshotTests) {
+    if (!hasRegressionAssertion) {
+      const hasUnavailableTestPatch = classified.nonSnapshotTestFiles.some(
+        (file) => addedPatchLines(file) === null
+      );
       findings.push(
         finding(
           "high",
@@ -491,13 +561,17 @@ function evaluateTestEvidence(
           "evidence",
           "The bugfix does not include a non-snapshot regression test.",
           classified.testFiles.map((file) => file.filename),
-          hasSnapshotTests
-            ? "Snapshot-only updates do not demonstrate the repaired behavior with a focused assertion."
-            : "No changed non-snapshot test protects the repaired behavior from regression.",
+          hasUnavailableTestPatch
+            ? "The changed test patch is unavailable, so a non-snapshot regression assertion cannot be verified."
+            : hasSnapshotTests || hasNonSnapshotTests
+              ? "Snapshot-only updates do not demonstrate the repaired behavior with a focused assertion."
+              : "No changed non-snapshot test protects the repaired behavior from regression.",
           "Add or update a focused unit or integration test that fails before the fix and passes after it."
         )
       );
-      return hasSnapshotTests ? "insufficient_evidence" : "missing";
+      return hasSnapshotTests || hasNonSnapshotTests
+        ? "insufficient_evidence"
+        : "missing";
     }
     return "adequate";
   }
@@ -519,6 +593,115 @@ function evaluateTestEvidence(
     )
   );
   return hasSnapshotTests ? "insufficient_evidence" : "missing";
+}
+
+const SEMVER_SOURCE = "([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)";
+
+interface ReleaseVersionSource {
+  path: string;
+  version: string | null;
+}
+
+function isReleaseVersionSource(filename: string): boolean {
+  const lower = normalizePath(filename).toLowerCase();
+  const basename = lower.split("/").at(-1) ?? lower;
+  return (
+    basename === "package.json" ||
+    basename === "server.json" ||
+    /(?:^|\/)version\.[cm]?[jt]s$/.test(lower)
+  );
+}
+
+function extractReleaseTargetVersion(body: string): string | null {
+  const target = new RegExp(
+    `\\b(?:release(?: target)?|publish(?:ing)?(?: version)?|target(?: version)?|version)\\s*(?::|=|is|to)?\\s*\`?v?${SEMVER_SOURCE}`,
+    "i"
+  );
+  return body.match(target)?.[1] ?? null;
+}
+
+function extractAddedReleaseVersion(file: PrFile): string | null {
+  const lines = addedPatchLines(file);
+  if (!lines) return null;
+  const lower = file.filename.toLowerCase();
+  const basename = lower.split("/").at(-1) ?? lower;
+  const matcher =
+    basename === "package.json" || basename === "server.json"
+      ? new RegExp(`^[\\s]*["']version["']\\s*:\\s*["']v?${SEMVER_SOURCE}["']`, "i")
+      : new RegExp(
+          `\\b(?:server_info\\s*\\.\\s*)?(?:server_)?version\\b[^\\n]*?["'\`]v?${SEMVER_SOURCE}["'\`]`,
+          "i"
+        );
+
+  for (const line of lines) {
+    const match = line.match(matcher);
+    if (match?.[1]) return match[1];
+  }
+  return null;
+}
+
+function addReleaseVersionFindings(
+  body: string,
+  classified: ClassifiedPrFiles,
+  findings: StructuredReviewFinding[]
+): void {
+  const versionFiles = classified.allFiles.filter((file) =>
+    isReleaseVersionSource(file.filename)
+  );
+  const sources: ReleaseVersionSource[] = versionFiles.map((file) => ({
+    path: file.filename,
+    version: extractAddedReleaseVersion(file),
+  }));
+  const unverifiable = sources.filter((source) => source.version === null);
+
+  if (unverifiable.length > 0) {
+    findings.push(
+      finding(
+        "high",
+        "UnverifiedReleaseVersion",
+        "policy",
+        "One or more changed release version sources have no verifiable added version.",
+        unverifiable.map((source) => source.path),
+        "A missing or truncated patch prevents the reviewer from confirming the version that will be published.",
+        "Provide the complete patch and update the explicit package/server/runtime version field to the intended release target."
+      )
+    );
+  }
+
+  const verified = sources.filter(
+    (source): source is ReleaseVersionSource & { version: string } => source.version !== null
+  );
+  const distinctVersions = new Set(verified.map((source) => source.version));
+  if (distinctVersions.size > 1) {
+    findings.push(
+      finding(
+        "high",
+        "InconsistentReleaseVersions",
+        "policy",
+        "Changed release version sources do not agree on one artifact version.",
+        verified.map((source) => source.path),
+        `The patch contains multiple release versions: ${[...distinctVersions].join(", ")}.`,
+        "Align every package, server metadata, and runtime version source to the same semantic version."
+      )
+    );
+  }
+
+  const target = extractReleaseTargetVersion(body);
+  if (!target) return;
+  const mismatched = verified.filter((source) => source.version !== target);
+  if (mismatched.length > 0) {
+    findings.push(
+      finding(
+        "high",
+        "ReleaseVersionMismatch",
+        "policy",
+        `The changed release metadata does not match the declared target version ${target}.`,
+        mismatched.map((source) => source.path),
+        `The mismatched sources contain ${[...new Set(mismatched.map((source) => source.version))].join(", ")}.`,
+        `Update these version sources to ${target}, or correct the declared release target before publishing.`
+      )
+    );
+  }
 }
 
 function addWorkTypeEvidenceFindings(
@@ -557,7 +740,7 @@ function addWorkTypeEvidenceFindings(
     );
   }
 
-  if (workType === "release" && !/\bv?\d+\.\d+\.\d+(?:-[0-9a-z.-]+)?\b/i.test(body)) {
+  if (workType === "release" && !extractReleaseTargetVersion(body)) {
     findings.push(
       finding(
         "high",
@@ -569,6 +752,10 @@ function addWorkTypeEvidenceFindings(
         "Name the exact semantic version in the PR description and verify it matches the release metadata."
       )
     );
+  }
+
+  if (workType === "release") {
+    addReleaseVersionFindings(body, classified, findings);
   }
 
   if (workType === "infra" && classified.workflowFiles.length > 0) {
