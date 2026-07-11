@@ -32,6 +32,7 @@ function makeOctokit(overrides: Record<string, unknown> = {}) {
           head: { sha: "abc123", ref: "feature/gate" },
           base: { ref: "main", sha: "base123" },
           draft: false,
+          commits: 3,
           mergeable: true,
           labels: [{ name: "security" }],
         },
@@ -215,6 +216,7 @@ describe("collectPullRequestEvidence", () => {
       headRef: "feature/gate",
       baseBranch: "main",
       draft: false,
+      commits: 3,
       mergeable: true,
       labels: ["security"],
     });

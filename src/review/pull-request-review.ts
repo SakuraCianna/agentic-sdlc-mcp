@@ -38,6 +38,8 @@ export interface ReviewPrMeta {
   title: string;
   body: string | null;
   labels: string[];
+  draft: boolean;
+  commits: number;
 }
 
 export interface WorkTypeInference {
@@ -1347,6 +1349,34 @@ export function evaluatePullRequestReview(
     (total, file) => total + (file.changes ?? (file.additions ?? 0) + (file.deletions ?? 0)),
     0
   );
+
+  if (input.pr.draft) {
+    findings.push(
+      finding(
+        "info",
+        "Status",
+        "scope",
+        "PR is still marked as a draft.",
+        [],
+        "Draft status indicates that the author has not yet declared the change ready for final review.",
+        "Mark the PR as ready for review when the implementation and evidence are complete."
+      )
+    );
+  }
+
+  if (input.pr.commits > 20) {
+    findings.push(
+      finding(
+        "low",
+        "Hygiene",
+        "scope",
+        `PR has ${input.pr.commits} commits -- consider squashing for cleaner history.`,
+        [],
+        "A very large commit count makes review history and later investigation harder to follow.",
+        "Squash closely related fixup commits while preserving meaningful reviewable milestones."
+      )
+    );
+  }
 
   if (body.trim().length < 20) {
     findings.push(

@@ -84,6 +84,7 @@ export interface PullRequestEvidence {
     headRef: string;
     baseBranch: string;
     draft: boolean;
+    commits: number;
     mergeable: boolean | null;
     labels: string[];
   };
@@ -867,6 +868,7 @@ export async function collectPullRequestEvidence(
       headRef: pullRequest.head.ref,
       baseBranch: pullRequest.base.ref,
       draft: pullRequest.draft ?? false,
+      commits: pullRequest.commits,
       mergeable: pullRequest.mergeable,
       labels: pullRequest.labels.map((label) => label.name),
     },

@@ -27,6 +27,8 @@ function pr(overrides: Partial<ReviewPrMeta> = {}): ReviewPrMeta {
     title: "Implement repository reporting",
     body: "Adds repository reporting with a focused implementation and review notes.",
     labels: [],
+    draft: false,
+    commits: 1,
     ...overrides,
   };
 }
@@ -368,6 +370,20 @@ describe("scanPatchForSecrets", () => {
 });
 
 describe("evaluatePullRequestReview", () => {
+  it("preserves legacy draft and large commit-count hygiene findings", () => {
+    const result = evaluatePullRequestReview({
+      pr: pr({ draft: true, commits: 21 }),
+      files: [file("README.md")],
+      workType: "docs",
+    });
+
+    expect(result.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ category: "Status", severity: "info", dimension: "scope" }),
+        expect.objectContaining({ category: "Hygiene", severity: "low", dimension: "scope" }),
+      ])
+    );
+  });
   it("accepts explicit docs verification without requiring code tests", () => {
     const result = evaluatePullRequestReview({
       pr: pr({ body: "## Verification\nRan `npx markdownlint README.md` successfully." }),

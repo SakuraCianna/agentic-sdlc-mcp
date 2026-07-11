@@ -378,6 +378,8 @@ function makeMockOctokit(opts: {
   >;
   workflowContents?: Record<string, string>;
   workflowContentError?: unknown;
+  prDraft?: boolean;
+  commits?: number;
 }) {
   return {
     checks: {
@@ -393,8 +395,8 @@ function makeMockOctokit(opts: {
           number: 42,
           title: "Test PR",
           body: "A sufficiently long description for basic checks to pass cleanly.",
-          draft: false,
-          commits: 1,
+          draft: opts.prDraft ?? false,
+          commits: opts.commits ?? 1,
           user: { login: opts.prAuthor ?? "pr-author" },
           head: { sha: "head-sha", ref: "feature/review" },
           base: { sha: "base-sha", ref: "main" },
@@ -550,6 +552,61 @@ describe("handleReviewPr — ownership check", () => {
 });
 
 describe("handleReviewPr — structured review contract", () => {
+  it("maps draft and large commit-count compatibility checks into structured findings", async () => {
+    const { structured } = await handleReviewPr(
+      { ...BASE_PARAMS, checkOwnership: false },
+      REF,
+      makeMockOctokit({ prDraft: true, commits: 21 })
+    );
+
+    expect(structured.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ category: "Status", severity: "info", dimension: "scope" }),
+        expect.objectContaining({ category: "Hygiene", severity: "low", dimension: "scope" }),
+      ])
+    );
+  });
+
+  it("fails closed for every standard when changed files are truncated before a hidden workflow", async () => {
+    const ordinaryPage = (page: number) =>
+      Array.from({ length: 100 }, (_, index) => ({
+        filename: `src/generated/file-${page}-${index}.ts`,
+        status: "modified",
+        additions: 1,
+        deletions: 0,
+      }));
+    const octokit = makeMockOctokit({
+      filePages: [
+        ordinaryPage(1),
+        ordinaryPage(2),
+        ordinaryPage(3),
+        [
+          {
+            filename: ".github/workflows/hidden.yml",
+            status: "added",
+            additions: 1,
+            deletions: 0,
+          },
+        ],
+      ],
+    });
+
+    const { structured } = await handleReviewPr(
+      { ...BASE_PARAMS, standard: "basic", checkOwnership: false },
+      REF,
+      octokit
+    );
+
+    expect(octokit.pulls.listFiles).toHaveBeenCalledTimes(4);
+    expect(structured.findings).toContainEqual(
+      expect.objectContaining({
+        category: "WorkflowPolicyEvidenceUnavailable",
+        severity: "high",
+        dimension: "policy",
+      })
+    );
+    expect(structured.conclusion).toBe("needs_changes");
+  });
   it("accepts an explicit workType and preserves legacy fields", async () => {
     const octokit = makeMockOctokit({
       files: [

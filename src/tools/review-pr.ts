@@ -576,6 +576,17 @@ export async function handleReviewPr(
       reason: "Fetching, parsing, or the bounded workflow audit failed, so least-privilege policy cannot be confirmed.",
     });
   }
+  if (evidence.unverifiedSignals.includes("changed_files")) {
+    workflowPolicyFindings.push({
+      severity: "high",
+      category: "WorkflowPolicyEvidenceUnavailable",
+      description: "The changed-file list is incomplete, so a workflow policy change may be hidden beyond the collection limit.",
+      suggestion: "Reduce or split the PR so every changed file can be enumerated and all workflow content can be audited before merge.",
+      dimension: "policy",
+      paths: [],
+      reason: "GitHub returned more than the bounded changed-file limit or the changed-file source could not be verified.",
+    });
+  }
 
   const secretScannerEvidence =
     params.standard === "security-focused"
@@ -597,6 +608,8 @@ export async function handleReviewPr(
       title: evidence.pullRequest.title,
       body: evidence.pullRequest.body,
       labels: evidence.pullRequest.labels,
+      draft: evidence.pullRequest.draft,
+      commits: evidence.pullRequest.commits,
     },
     files,
     workType: params.workType,

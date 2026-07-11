@@ -145,6 +145,7 @@ function pullRequestEvidence(overrides: PullRequestOverrides = {}): PullRequestE
       headRef: "feature/gate",
       baseBranch: "main",
       draft: false,
+      commits: 1,
       mergeable: true,
       labels: [],
       ...overrides.pullRequest,
