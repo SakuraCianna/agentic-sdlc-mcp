@@ -1,4 +1,10 @@
 import type { Finding, SdlcWorkType, Severity } from "../types.js";
+import {
+  isSecretScannerPolicyPath,
+  secretScannerPolicyFinding,
+  unverifiedSecretScannerEvidence,
+  type SecretScannerEvidence,
+} from "../security/secret-scanner-evidence.js";
 
 export type ReviewDimension =
   | "intent"
@@ -19,6 +25,7 @@ export interface StructuredReviewFinding extends Finding {
 /** Minimal changed-file shape accepted from GitHub or a caller-owned fixture. */
 export interface PrFile {
   filename: string;
+  previousFilename?: string;
   status?: string;
   additions?: number;
   deletions?: number;
@@ -69,6 +76,7 @@ export interface ReviewEvaluationInput {
   files: PrFile[];
   workType?: SdlcWorkType;
   standard?: ReviewStandard;
+  secretScannerEvidence?: SecretScannerEvidence;
 }
 
 export interface ReviewEvaluationResult {
@@ -81,6 +89,7 @@ export interface ReviewEvaluationResult {
   conclusion: "pass" | "needs_changes" | "risky_but_acceptable";
   hasTests: boolean;
   totalChangedLines: number;
+  secretScannerEvidence: SecretScannerEvidence | null;
 }
 
 const SEVERITY_ORDER: Severity[] = ["critical", "high", "medium", "low", "info"];
@@ -106,7 +115,12 @@ function normalizePath(filename: string): string {
 }
 
 function normalizeFile(file: PrFile): PrFile {
-  return { ...file, filename: normalizePath(file.filename) };
+  return {
+    ...file,
+    filename: normalizePath(file.filename),
+    previousFilename:
+      file.previousFilename === undefined ? undefined : normalizePath(file.previousFilename),
+  };
 }
 
 function isDocsPath(filename: string): boolean {
@@ -528,7 +542,7 @@ function maskSecretCodeLine(line: string, state: SecretLexicalState): string {
   return code;
 }
 
-function assignmentIsInCode(match: RegExpMatchArray, rawLine: string, codeLine: string): boolean {
+function assignmentIsInCode(match: RegExpMatchArray, codeLine: string): boolean {
   const value = match.slice(1).find((capture) => capture !== undefined);
   if (!value || match.index === undefined) return false;
   const valueOffset = match[0].lastIndexOf(value);
@@ -536,15 +550,7 @@ function assignmentIsInCode(match: RegExpMatchArray, rawLine: string, codeLine: 
   const operatorOffset = Math.max(prefix.lastIndexOf("="), prefix.lastIndexOf(":"));
   if (operatorOffset < 0) return false;
   const operatorIndex = match.index + operatorOffset;
-  if ((codeLine[operatorIndex] ?? " ").trim().length === 0) return false;
-
-  const keyMatches = [...prefix.matchAll(/[A-Za-z_$][\w$.-]*/g)];
-  const key = keyMatches.at(-1);
-  if (!key || key.index === undefined) return false;
-  const keyStart = match.index + key.index;
-  return Array.from({ length: key[0].length }, (_, offset) => keyStart + offset).some(
-    (index) => (codeLine[index] ?? " ") === rawLine[index] && /[A-Za-z0-9_$]/.test(rawLine[index] ?? "")
-  );
+  return (codeLine[operatorIndex] ?? " ").trim().length > 0;
 }
 
 export function scanPatchForSecrets(
@@ -562,7 +568,7 @@ export function scanPatchForSecrets(
 
     for (const { name, pattern } of SECRET_ASSIGNMENTS) {
       const match = line.text.match(pattern);
-      if (!match || !assignmentIsInCode(match, line.text, codeLine)) continue;
+      if (!match || !assignmentIsInCode(match, codeLine)) continue;
       const quotedValue = match?.slice(1, 4).find((capture) => capture !== undefined);
       const unquotedValue = match?.[4];
       const value = quotedValue ?? unquotedValue;
@@ -1228,6 +1234,25 @@ function addSecurityFocusedFindings(
   }
 }
 
+function addSecretScannerEvidenceFinding(
+  evidence: SecretScannerEvidence,
+  findings: StructuredReviewFinding[]
+): void {
+  const issue = secretScannerPolicyFinding(evidence);
+  if (!issue) return;
+  findings.push(
+    finding(
+      issue.severity,
+      issue.category,
+      "security",
+      issue.description,
+      [],
+      issue.reason,
+      issue.suggestion
+    )
+  );
+}
+
 function addStrictFindings(
   classified: ClassifiedPrFiles,
   totalChangedLines: number,
@@ -1295,6 +1320,27 @@ export function evaluatePullRequestReview(
   const body = input.pr.body ?? "";
   const findings: StructuredReviewFinding[] = [];
   const standard = input.standard ?? "basic";
+  const suppliedSecretScannerEvidence =
+    input.secretScannerEvidence ??
+    unverifiedSecretScannerEvidence(
+      "The security-focused review did not receive CI evidence from a mature secret scanner."
+    );
+  const scannerPolicyChanged = classified.allFiles.some(
+    (file) =>
+      isSecretScannerPolicyPath(file.filename) ||
+      (file.previousFilename !== undefined &&
+        isSecretScannerPolicyPath(file.previousFilename))
+  );
+  const effectiveSecretScannerEvidence: SecretScannerEvidence =
+    suppliedSecretScannerEvidence.status === "passing" && scannerPolicyChanged
+      ? {
+          ...unverifiedSecretScannerEvidence(
+            "The PR changes secret-scanner workflow or configuration policy, so its supplied passing evidence is not trusted."
+          ),
+          providers: suppliedSecretScannerEvidence.providers,
+          signals: suppliedSecretScannerEvidence.signals,
+        }
+      : suppliedSecretScannerEvidence;
   const totalChangedLines = classified.allFiles.reduce(
     (total, file) => total + (file.changes ?? (file.additions ?? 0) + (file.deletions ?? 0)),
     0
@@ -1320,6 +1366,7 @@ export function evaluatePullRequestReview(
     addStrictFindings(classified, totalChangedLines, findings);
   }
   if (standard === "security-focused") {
+    addSecretScannerEvidenceFinding(effectiveSecretScannerEvidence, findings);
     addSecurityFocusedFindings(classified, findings);
   }
 
@@ -1334,5 +1381,7 @@ export function evaluatePullRequestReview(
     conclusion: calculateConclusion(sortedFindings),
     hasTests: classified.testFiles.length > 0,
     totalChangedLines,
+    secretScannerEvidence:
+      standard === "security-focused" ? effectiveSecretScannerEvidence : null,
   };
 }

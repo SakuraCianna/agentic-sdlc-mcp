@@ -261,6 +261,9 @@ Generates a structured pull request description and changelog draft.
 
 ### `review_pr_against_standard`
 Reviews pull request code changes against SDLC governance levels (`basic` / `strict` / `security-focused`).
+
+`security-focused` treats a passing, app-backed mature secret-scanner CI check (Gitleaks, TruffleHog, Secretlint, detect-secrets, or an explicit GitHub Secret Scanning check) as the primary scan evidence. Same-name commit statuses and checks from unknown Apps are not trusted as clean-scan proof. If evidence is incomplete, scanner policy changes in the PR, no recognized scanner ran, or the scan is pending/failed, the review fails closed. The built-in added-line assignment heuristic is supplemental and is never reported as proof that a repository is secret-free.
+
 * **Arguments:**
   * `owner` / `repo` (string, optional): Repo coordinates.
   * `pullNumber` (number, required): The pull request ID.

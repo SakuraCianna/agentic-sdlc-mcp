@@ -8,6 +8,8 @@ import {
   type PrFile,
   type ReviewPrMeta,
 } from "../../review/pull-request-review.js";
+import { evaluateSecretScannerEvidence } from "../../security/secret-scanner-evidence.js";
+import type { CiEvidence, GateSignal } from "../../github/pull-request-evidence.js";
 
 function file(filename: string, overrides: Partial<PrFile> = {}): PrFile {
   return {
@@ -27,6 +29,36 @@ function pr(overrides: Partial<ReviewPrMeta> = {}): ReviewPrMeta {
     labels: [],
     ...overrides,
   };
+}
+
+function secretScannerEvidence(state: GateSignal["state"]) {
+  const scanner: GateSignal = {
+    name: "gitleaks",
+    source: "check_run",
+    appId: 15368,
+    state,
+    rawStatus: state === "pending" ? "in_progress" : "completed",
+    rawConclusion: state === "passing" ? "success" : state === "failing" ? "failure" : null,
+    rawState: null,
+    url: "https://github.com/example/checks/1",
+  };
+  const bucket = {
+    passing: state === "passing" ? [scanner] : [],
+    failing: state === "failing" ? [scanner] : [],
+    pending: state === "pending" ? [scanner] : [],
+    skipped: state === "skipped" ? [scanner] : [],
+    total: 1,
+  };
+  const empty = { passing: [], failing: [], pending: [], skipped: [], total: 0 };
+  return evaluateSecretScannerEvidence({
+    checkRuns: bucket,
+    commitStatuses: empty,
+    totalSignals: 1,
+    hasFailing: state === "failing",
+    hasPending: state === "pending",
+    unverifiedSignals: [],
+    errors: [],
+  } satisfies CiEvidence);
 }
 
 describe("classifyPrFiles", () => {
@@ -170,6 +202,21 @@ describe("scanPatchForSecrets", () => {
     expect(findings).toContainEqual(
       expect.objectContaining({ category: "SecretLikeAssignment", paths: ["config/service.yml"] })
     );
+  });
+
+  it("detects a quoted JSON credential key while ignoring assignments inside strings", () => {
+    expect(
+      scanPatchForSecrets(
+        "config/service.json",
+        '+  "apiKey": "live_1234567890abcdef",'
+      )
+    ).toContainEqual(expect.objectContaining({ category: "SecretLikeAssignment" }));
+    expect(
+      scanPatchForSecrets(
+        "src/example.ts",
+        ' const sample = `\n+  "apiKey": "live_1234567890abcdef",\n `;'
+      )
+    ).toEqual([]);
   });
 
   it("detects an unquoted dotenv-style credential assignment", () => {
@@ -720,6 +767,102 @@ describe("evaluatePullRequestReview", () => {
     expect(result.findings).toContainEqual(
       expect.objectContaining({ severity: "high", category: "SecretLikeAssignment" })
     );
+  });
+
+  it("fails closed when security-focused review has no mature scanner evidence", () => {
+    const result = evaluatePullRequestReview({
+      pr: pr(),
+      files: [file("src/index.ts"), file("src/index.test.ts")],
+      workType: "feature",
+      standard: "security-focused",
+    });
+
+    expect(result.secretScannerEvidence?.status).toBe("unverified");
+    expect(result.findings).toContainEqual(
+      expect.objectContaining({ category: "MissingMatureSecretScannerEvidence", severity: "high" })
+    );
+    expect(result.conclusion).toBe("needs_changes");
+  });
+
+  it("fails closed when a caller supplies contradictory passing scanner evidence", () => {
+    const result = evaluatePullRequestReview({
+      pr: pr(),
+      files: [file("src/index.ts"), file("src/index.test.ts")],
+      workType: "feature",
+      standard: "security-focused",
+      secretScannerEvidence: {
+        status: "passing",
+        verified: false,
+        degraded: true,
+        providers: ["gitleaks"],
+        signals: [],
+        reason: "Contradictory serialized evidence.",
+      },
+    });
+
+    expect(result.findings).toContainEqual(
+      expect.objectContaining({ category: "MissingMatureSecretScannerEvidence", severity: "high" })
+    );
+    expect(result.conclusion).toBe("needs_changes");
+  });
+
+  it.each([
+    file(".github/workflows/secret-scan.yml"),
+    file("docs/retired-secret-scan.yml", {
+      previousFilename: ".github/workflows/secret-scan.yml",
+    }),
+  ])("downgrades direct passing evidence when scanner policy is changed: $filename", (policyFile) => {
+    const result = evaluatePullRequestReview({
+      pr: pr(),
+      files: [policyFile, file("src/index.test.ts")],
+      workType: "feature",
+      standard: "security-focused",
+      secretScannerEvidence: secretScannerEvidence("passing"),
+    });
+
+    expect(result.secretScannerEvidence).toMatchObject({
+      status: "unverified",
+      verified: false,
+      degraded: true,
+    });
+    expect(result.findings).toContainEqual(
+      expect.objectContaining({ category: "MissingMatureSecretScannerEvidence", severity: "high" })
+    );
+  });
+
+  it("accepts a passing mature scanner and exposes its provider", () => {
+    const result = evaluatePullRequestReview({
+      pr: pr(),
+      files: [file("src/index.ts"), file("src/index.test.ts")],
+      workType: "feature",
+      standard: "security-focused",
+      secretScannerEvidence: secretScannerEvidence("passing"),
+    });
+
+    expect(result.secretScannerEvidence).toMatchObject({
+      status: "passing",
+      verified: true,
+      providers: ["gitleaks"],
+    });
+    expect(
+      result.findings.some((finding) => finding.category === "MissingMatureSecretScannerEvidence")
+    ).toBe(false);
+  });
+
+  it.each([
+    ["failing", "MatureSecretScannerFailed", "critical"],
+    ["pending", "MatureSecretScannerPending", "high"],
+  ] as const)("blocks a %s mature scanner result", (state, category, severity) => {
+    const result = evaluatePullRequestReview({
+      pr: pr(),
+      files: [file("src/index.ts"), file("src/index.test.ts")],
+      workType: "feature",
+      standard: "security-focused",
+      secretScannerEvidence: secretScannerEvidence(state),
+    });
+
+    expect(result.findings).toContainEqual(expect.objectContaining({ category, severity }));
+    expect(result.conclusion).toBe("needs_changes");
   });
 
   it("adds a structured scope finding for a large strict review", () => {

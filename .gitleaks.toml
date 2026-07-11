@@ -1,0 +1,9 @@
+[extend]
+useDefault = true
+
+[[rules]]
+id = "generic-api-key"
+
+  [[rules.allowlists]]
+  description = "Ignore synthetic generic assignments in the secret-scanner unit fixture only"
+  paths = ['''src/__tests__/review/pull-request-review\.test\.ts$''']

@@ -8,6 +8,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { resolveRepo, getOctokit, paginateAll, handleGitHubError } from "../github/client.js";
+import { collectBounded, collectCiEvidence } from "../github/pull-request-evidence.js";
 import {
   fetchCodeownersRules,
   findOwnershipGaps,
@@ -16,6 +17,13 @@ import {
 } from "../github/codeowners.js";
 import type { Finding, Severity, RepoRef } from "../types.js";
 import type { Octokit } from "@octokit/rest";
+import {
+  evaluateSecretScannerEvidence,
+  isSecretScannerPolicyPath,
+  secretScannerPolicyFinding,
+  type SecretScannerEvidence,
+} from "../security/secret-scanner-evidence.js";
+import { scanPatchForSecrets as scanSharedPatchForSecrets } from "../review/pull-request-review.js";
 
 export {
   codeownersPatternMatches,
@@ -68,6 +76,40 @@ export const ReviewPrOutputSchema = {
   totalChangedLines: z.number().int(),
   codeownersFound: z.boolean(),
   errors: z.array(z.string()),
+  secretScannerEvidence: z
+    .object({
+      status: z.enum(["passing", "failing", "pending", "unverified"]),
+      verified: z.boolean(),
+      degraded: z.boolean(),
+      providers: z.array(
+        z.enum([
+          "gitleaks",
+          "trufflehog",
+          "secretlint",
+          "detect-secrets",
+          "github-secret-scanning",
+        ])
+      ),
+      signals: z.array(
+        z.object({
+          name: z.string(),
+          provider: z.enum([
+            "gitleaks",
+            "trufflehog",
+            "secretlint",
+            "detect-secrets",
+            "github-secret-scanning",
+          ]),
+          source: z.enum(["check_run", "commit_status"]),
+          appId: z.number().int().nullable(),
+          trusted: z.boolean(),
+          state: z.enum(["passing", "failing", "pending", "skipped"]),
+          url: z.string().nullable(),
+        })
+      ),
+      reason: z.string(),
+    })
+    .nullable(),
 };
 
 // ---------------------------------------------------------------------------
@@ -84,11 +126,13 @@ export interface ReviewPrResult {
   totalChangedLines: number;
   codeownersFound: boolean;
   errors: string[];
+  secretScannerEvidence: SecretScannerEvidence | null;
 }
 
 /** Minimal shape from octokit pulls.listFiles we care about */
 export interface PrFile {
   filename: string;
+  previousFilename?: string;
   status: string;
   additions: number;
   deletions: number;
@@ -129,38 +173,16 @@ export function severityIcon(s: Severity): string {
 }
 
 /**
- * Secret-like patterns to flag in added patch lines (conservative).
- * Only matches lines that look like an assignment, not just the word.
+ * Backward-compatible wrapper around the shared heuristic scanner.
+ * Mature scanner evidence is evaluated separately from CI check runs.
  */
-const SUSPICIOUS_PATTERNS: Array<{ name: string; pattern: RegExp }> = [
-  { name: "hardcoded password assignment", pattern: /password\s*[:=]\s*['"`][^'"`\s]{6,}/i },
-  { name: "hardcoded API key assignment", pattern: /api[_-]?key\s*[:=]\s*['"`][^'"`\s]{6,}/i },
-  { name: "hardcoded secret assignment", pattern: /secret\s*[:=]\s*['"`][^'"`\s]{6,}/i },
-  { name: "hardcoded token assignment", pattern: /token\s*[:=]\s*['"`][^'"`\s]{6,}/i },
-  { name: "AWS access key ID pattern", pattern: /AKIA[0-9A-Z]{16}/ },
-];
-
-/** Check added lines in a patch for suspicious secret-like patterns. */
 export function scanPatchForSecrets(filename: string, patch: string | undefined): Finding[] {
-  if (!patch) return [];
-  const findings: Finding[] = [];
-  const addedLines = patch.split("\n").filter((l) => l.startsWith("+") && !l.startsWith("+++"));
-
-  for (const line of addedLines) {
-    for (const { name, pattern } of SUSPICIOUS_PATTERNS) {
-      if (pattern.test(line)) {
-        findings.push({
-          severity: "high",
-          category: "Security",
-          description: `Possible ${name} in \`${filename}\` -- needs manual review.`,
-          suggestion:
-            "If this is a real credential, rotate it immediately and use an environment variable instead.",
-        });
-        break; // one finding per line is enough
-      }
-    }
-  }
-  return findings;
+  return scanSharedPatchForSecrets(filename, patch).map((item) => ({
+    severity: item.severity,
+    category: "Security",
+    description: item.description,
+    suggestion: item.suggestion,
+  }));
 }
 
 /**
@@ -427,7 +449,7 @@ export async function handleReviewPr(
     pull_number: params.pullNumber,
   });
 
-  const rawFiles = await paginateAll(
+  const changedFiles = await collectBounded(
     (page, perPage) =>
       octokit.pulls
         .listFiles({
@@ -441,8 +463,9 @@ export async function handleReviewPr(
     300
   );
 
-  const files: PrFile[] = rawFiles.map((f) => ({
+  const files: PrFile[] = changedFiles.items.map((f) => ({
     filename: f.filename,
+    previousFilename: f.previous_filename,
     status: f.status,
     additions: f.additions,
     deletions: f.deletions,
@@ -459,6 +482,11 @@ export async function handleReviewPr(
   };
 
   const errors: string[] = [];
+  if (changedFiles.truncated) {
+    errors.push("Changed files: results truncated at 300 items");
+  }
+  let secretScannerEvidence: SecretScannerEvidence | null = null;
+  const secretScannerFindings: Finding[] = [];
   let codeownersFound = false;
   let ownershipFindings: Finding[] = [];
 
@@ -517,7 +545,34 @@ export async function handleReviewPr(
     }
   }
 
-  const rawFindings = [...generateFindings(prMeta, files, params.standard), ...ownershipFindings];
+  if (params.standard === "security-focused") {
+    const ci = await collectCiEvidence(ref, pr.head.sha, octokit);
+    secretScannerEvidence = evaluateSecretScannerEvidence(ci, {
+      policyFilesChanged: files.some(
+        (file) =>
+          isSecretScannerPolicyPath(file.filename) ||
+          (file.previousFilename !== undefined &&
+            isSecretScannerPolicyPath(file.previousFilename))
+      ),
+      incompleteReasons: changedFiles.truncated ? ["changed_files"] : [],
+    });
+    errors.push(...ci.errors.map((error) => `Secret scanner CI: ${error}`));
+    const policyFinding = secretScannerPolicyFinding(secretScannerEvidence);
+    if (policyFinding) {
+      secretScannerFindings.push({
+        severity: policyFinding.severity,
+        category: policyFinding.category,
+        description: policyFinding.description,
+        suggestion: policyFinding.suggestion,
+      });
+    }
+  }
+
+  const rawFindings = [
+    ...generateFindings(prMeta, files, params.standard),
+    ...ownershipFindings,
+    ...secretScannerFindings,
+  ];
   const sorted = sortFindings(rawFindings);
 
   const hasTests = files.some(
@@ -557,6 +612,7 @@ export async function handleReviewPr(
     totalChangedLines: totalLines,
     codeownersFound,
     errors,
+    secretScannerEvidence,
   };
 
   const lines: string[] = [
@@ -573,6 +629,18 @@ export async function handleReviewPr(
     lines.push("## Notes", "");
     errors.forEach((e) => lines.push(`- ${e}`));
     lines.push("");
+  }
+
+  if (secretScannerEvidence) {
+    lines.push(
+      "## Mature Secret Scanner Evidence",
+      "",
+      `- Status: **${secretScannerEvidence.status}**`,
+      `- Providers: ${secretScannerEvidence.providers.join(", ") || "none"}`,
+      `- Verified: ${secretScannerEvidence.verified ? "yes" : "no"}`,
+      `- Reason: ${secretScannerEvidence.reason}`,
+      ""
+    );
   }
 
   lines.push("## Findings");
@@ -622,7 +690,7 @@ export function registerReviewPrTool(server: McpServer): void {
 Standards:
   - basic: Core checks (tests, description, draft status, commit count)
   - strict: basic + large diff detection, missing docs
-  - security-focused: strict + patch scanning for secret patterns, .env files, lockfile changes, dist files
+  - security-focused: strict + mature secret-scanner CI evidence + supplemental patch heuristics, .env files, lockfile changes, dist files
 
 Ownership check (independent of standard, runs when checkOwnership is true and a CODEOWNERS file exists):
   Matches changed files against .github/CODEOWNERS (or CODEOWNERS / docs/CODEOWNERS), and flags any

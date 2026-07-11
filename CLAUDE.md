@@ -57,7 +57,8 @@ When adding a new tool, copy this shape (`repo-context.ts` for a read-only examp
 ## Conventions to preserve
 
 - No auto-merge, no force-push, no branch deletion — the server must never expose a tool that does these, per the security model in the README/SDLC standard resource.
-- Secret-pattern scanning (`review-pr.ts`'s `scanPatchForSecrets`) only matches added (`+`) patch lines with assignment-like patterns (`key\s*[:=]\s*['"...]`), not just keyword mentions — keep new secret patterns similarly conservative to avoid noisy false positives.
+- Secret review has two distinct evidence tiers. `src/security/secret-scanner-evidence.ts` recognizes mature CI scanners (Gitleaks, TruffleHog, Secretlint, detect-secrets, or an explicit GitHub Secret Scanning check), but passing is trusted only for app-backed check runs from an allowed GitHub App (GitHub Actions App ID `15368` by default). Same-name commit statuses, incomplete CI sources, and PR changes to workflows/Gitleaks policy fail closed. `src/review/pull-request-review.ts`'s `scanPatchForSecrets` remains a conservative added-line heuristic only and must never be described as a complete secret scan.
+- This repository runs Gitleaks from `.github/workflows/secret-scan.yml` using a full action commit SHA and least-privilege permissions. `.gitleaks.toml` narrows its only fixture exception to the `generic-api-key` rule in the dedicated scanner test file; do not broaden that exception to a directory or all rules.
 - All Windows-facing docs/comments use PowerShell syntax (`$env:VAR="value"`), not bash `export`.
 
 ## Repository governance (this repo, not the MCP server's tool capabilities)

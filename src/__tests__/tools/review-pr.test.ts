@@ -241,13 +241,22 @@ describe("scanPatchForSecrets", () => {
     const findings = scanPatchForSecrets("src/config.ts", patch);
     expect(findings.length).toBeGreaterThan(0);
     expect(findings[0].severity).toBe("high");
-    expect(findings[0].description).toMatch(/password/i);
+    expect(findings[0].description).toMatch(/credential|secret/i);
   });
 
-  it("detects AWS access key pattern", () => {
-    const patch = `+const key = "AKIAIOSFODNN7EXAMPLE1234";`;
+  it("does not flag the AWS documentation example placeholder", () => {
+    const patch = `+const key = "AKIAIOSFODNN7EXAMPLE";`;
     const findings = scanPatchForSecrets("src/aws.ts", patch);
-    expect(findings.length).toBeGreaterThan(0);
+    expect(findings).toHaveLength(0);
+  });
+
+  it("detects a quoted JSON credential key through the shared scanner", () => {
+    const syntheticValue = ["live", "1234567890abcdef"].join("_");
+    const patch = `+  "apiKey": "${syntheticValue}",`;
+    const findings = scanPatchForSecrets("config/service.json", patch);
+    expect(findings).toContainEqual(
+      expect.objectContaining({ severity: "high", category: "Security" })
+    );
   });
 
   it("does NOT flag removed lines (lines starting with -)", () => {
@@ -335,8 +344,47 @@ function makeMockOctokit(opts: {
   requestedReviewersError?: unknown;
   reviewsError?: unknown;
   prAuthor?: string;
+  checkRuns?: Array<{
+    id: number;
+    name: string;
+    status: string;
+    conclusion: string | null;
+    details_url: string | null;
+    app: { id: number } | null;
+  }>;
+  checkRunsError?: unknown;
+  commitStatuses?: Array<{
+    context: string;
+    state: string;
+    target_url: string | null;
+  }>;
+  files?: Array<{
+    filename: string;
+    status: string;
+    additions: number;
+    deletions: number;
+    patch?: string;
+    previous_filename?: string;
+  }>;
+  filePages?: Array<
+    Array<{
+      filename: string;
+      status: string;
+      additions: number;
+      deletions: number;
+      patch?: string;
+      previous_filename?: string;
+    }>
+  >;
 }) {
   return {
+    checks: {
+      listForRef: opts.checkRunsError
+        ? vi.fn().mockRejectedValue(opts.checkRunsError)
+        : vi.fn().mockResolvedValue({
+            data: { check_runs: opts.checkRuns ?? [], total_count: opts.checkRuns?.length ?? 0 },
+          }),
+    },
     pulls: {
       get: vi.fn().mockResolvedValue({
         data: {
@@ -346,14 +394,32 @@ function makeMockOctokit(opts: {
           draft: false,
           commits: 1,
           user: { login: opts.prAuthor ?? "pr-author" },
+          head: { sha: "head-sha" },
         },
       }),
-      listFiles: vi.fn().mockResolvedValue({
-        data: [
-          { filename: "src/tools/review-pr.ts", status: "modified", additions: 10, deletions: 2 },
-          { filename: "src/__tests__/tools/review-pr.test.ts", status: "modified", additions: 20, deletions: 0 },
-        ],
-      }),
+      listFiles: vi.fn().mockImplementation(({ page = 1 }: { page?: number }) =>
+        Promise.resolve({
+          data: opts.filePages
+            ? (opts.filePages[page - 1] ?? [])
+            : page === 1
+              ? (opts.files ??
+                [
+                  {
+                    filename: "src/tools/review-pr.ts",
+                    status: "modified",
+                    additions: 10,
+                    deletions: 2,
+                  },
+                  {
+                    filename: "src/__tests__/tools/review-pr.test.ts",
+                    status: "modified",
+                    additions: 20,
+                    deletions: 0,
+                  },
+                ])
+              : [],
+        })
+      ),
       listRequestedReviewers: opts.requestedReviewersError
         ? vi.fn().mockRejectedValue(opts.requestedReviewersError)
         : vi.fn().mockResolvedValue({ data: opts.requestedReviewers ?? { users: [], teams: [] } }),
@@ -362,6 +428,9 @@ function makeMockOctokit(opts: {
         : vi.fn().mockResolvedValue({ data: opts.reviewers ?? [] }),
     },
     repos: {
+      getCombinedStatusForRef: vi.fn().mockResolvedValue({
+        data: { statuses: opts.commitStatuses ?? [] },
+      }),
       getContent: opts.contentError
         ? vi.fn().mockRejectedValue(opts.contentError)
         : vi.fn().mockImplementation(({ path }: { path: string }) => {
@@ -445,5 +514,214 @@ describe("handleReviewPr — ownership check", () => {
     expect(structured.errors.some((e) => e.startsWith("Reviews:"))).toBe(true);
     // requestedReviewers still succeeded independently, so owner1 is still not flagged
     expect(structured.findings.find((f) => f.category === "Ownership")).toBeUndefined();
+  });
+});
+
+describe("handleReviewPr — mature secret scanner evidence", () => {
+  const securityParams: ReviewPrInput = {
+    pullNumber: 42,
+    standard: "security-focused",
+    checkOwnership: false,
+  };
+
+  it("fails closed and exposes unverified evidence when no mature scanner ran", async () => {
+    const octokit = makeMockOctokit({});
+
+    const { structured, text } = await handleReviewPr(securityParams, REF, octokit);
+
+    expect(structured.secretScannerEvidence).toMatchObject({
+      status: "unverified",
+      verified: false,
+      providers: [],
+    });
+    expect(structured.findings).toContainEqual(
+      expect.objectContaining({ category: "MissingMatureSecretScannerEvidence", severity: "high" })
+    );
+    expect(structured.conclusion).toBe("needs_changes");
+    expect(text).toContain("Mature Secret Scanner Evidence");
+  });
+
+  it("accepts a passing Gitleaks check as verified mature scanner evidence", async () => {
+    const octokit = makeMockOctokit({
+      checkRuns: [
+        {
+          id: 1,
+          name: "gitleaks",
+          status: "completed",
+          conclusion: "success",
+          details_url: "https://github.com/checks/1",
+          app: { id: 15368 },
+        },
+      ],
+    });
+
+    const { structured } = await handleReviewPr(securityParams, REF, octokit);
+
+    expect(structured.secretScannerEvidence).toMatchObject({
+      status: "passing",
+      verified: true,
+      providers: ["gitleaks"],
+    });
+    expect(
+      structured.findings.some((finding) => finding.category === "MissingMatureSecretScannerEvidence")
+    ).toBe(false);
+  });
+
+  it("turns a failing TruffleHog check into a critical blocker", async () => {
+    const octokit = makeMockOctokit({
+      checkRuns: [
+        {
+          id: 2,
+          name: "TruffleHog Secrets Scan",
+          status: "completed",
+          conclusion: "failure",
+          details_url: "https://github.com/checks/2",
+          app: { id: 15368 },
+        },
+      ],
+    });
+
+    const { structured } = await handleReviewPr(securityParams, REF, octokit);
+
+    expect(structured.secretScannerEvidence?.status).toBe("failing");
+    expect(structured.findings).toContainEqual(
+      expect.objectContaining({ category: "MatureSecretScannerFailed", severity: "critical" })
+    );
+    expect(structured.conclusion).toBe("needs_changes");
+  });
+
+  it("does not accept a same-name passing commit status when check-runs are unavailable", async () => {
+    const octokit = makeMockOctokit({
+      checkRunsError: Object.assign(new Error("Forbidden"), { status: 403 }),
+      commitStatuses: [
+        {
+          context: "gitleaks",
+          state: "success",
+          target_url: "https://example.test/status/1",
+        },
+      ],
+    });
+
+    const { structured } = await handleReviewPr(securityParams, REF, octokit);
+
+    expect(structured.secretScannerEvidence).toMatchObject({
+      status: "unverified",
+      verified: false,
+      degraded: true,
+    });
+    expect(structured.findings).toContainEqual(
+      expect.objectContaining({ category: "MissingMatureSecretScannerEvidence", severity: "high" })
+    );
+    expect(structured.errors.some((error) => error.startsWith("Secret scanner CI:"))).toBe(true);
+  });
+
+  it("does not trust a passing scanner when the PR changes workflow policy", async () => {
+    const octokit = makeMockOctokit({
+      files: [
+        {
+          filename: ".github/workflows/secret-scan.yml",
+          status: "modified",
+          additions: 2,
+          deletions: 1,
+        },
+      ],
+      checkRuns: [
+        {
+          id: 3,
+          name: "gitleaks",
+          status: "completed",
+          conclusion: "success",
+          details_url: "https://github.com/checks/3",
+          app: { id: 15368 },
+        },
+      ],
+    });
+
+    const { structured } = await handleReviewPr(securityParams, REF, octokit);
+
+    expect(structured.secretScannerEvidence).toMatchObject({
+      status: "unverified",
+      verified: false,
+      degraded: true,
+    });
+    expect(structured.secretScannerEvidence?.reason).toMatch(/policy/i);
+  });
+
+  it("fails closed when the changed-file list is truncated before a policy file", async () => {
+    const ordinaryPage = (page: number) =>
+      Array.from({ length: 100 }, (_, index) => ({
+        filename: `src/generated/file-${page}-${index}.ts`,
+        status: "modified",
+        additions: 1,
+        deletions: 0,
+      }));
+    const octokit = makeMockOctokit({
+      filePages: [
+        ordinaryPage(1),
+        ordinaryPage(2),
+        ordinaryPage(3),
+        [
+          {
+            filename: ".github/workflows/secret-scan.yml",
+            status: "modified",
+            additions: 1,
+            deletions: 1,
+          },
+        ],
+      ],
+      checkRuns: [
+        {
+          id: 4,
+          name: "gitleaks",
+          status: "completed",
+          conclusion: "success",
+          details_url: "https://github.com/checks/4",
+          app: { id: 15368 },
+        },
+      ],
+    });
+
+    const { structured } = await handleReviewPr(securityParams, REF, octokit);
+
+    expect(octokit.pulls.listFiles).toHaveBeenCalledTimes(4);
+    expect(structured.secretScannerEvidence).toMatchObject({
+      status: "unverified",
+      verified: false,
+      degraded: true,
+    });
+    expect(structured.secretScannerEvidence?.reason).toMatch(/changed_files/i);
+  });
+
+  it("fails closed when a scanner policy file is renamed out of its protected path", async () => {
+    const octokit = makeMockOctokit({
+      files: [
+        {
+          filename: "docs/retired-secret-scan.yml",
+          previous_filename: ".github/workflows/secret-scan.yml",
+          status: "renamed",
+          additions: 0,
+          deletions: 0,
+        },
+      ],
+      checkRuns: [
+        {
+          id: 5,
+          name: "gitleaks",
+          status: "completed",
+          conclusion: "success",
+          details_url: "https://github.com/checks/5",
+          app: { id: 15368 },
+        },
+      ],
+    });
+
+    const { structured } = await handleReviewPr(securityParams, REF, octokit);
+
+    expect(structured.secretScannerEvidence).toMatchObject({
+      status: "unverified",
+      verified: false,
+      degraded: true,
+    });
+    expect(structured.secretScannerEvidence?.reason).toMatch(/policy/i);
   });
 });
