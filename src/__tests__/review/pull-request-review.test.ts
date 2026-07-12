@@ -363,6 +363,15 @@ describe("scanPatchForSecrets", () => {
     '+const authorizationHeader = prefix + accountId + signature;',
     '+headers["authorization"] = "Bearer " + sessionToken;',
     '+credentials[fieldName] = prefix + accountId + signature;',
+    '+const token = prefix.concat(accountId, signature);',
+    '+api_key = f"{prefix}.{account_id}.{signature}"',
+    '+api_key = "{}.{}.{}".format(prefix, account_id, signature)',
+    '+api_key = "%s.%s" % (prefix, signature)',
+    '+var token = $"{prefix}.{accountId}.{signature}";',
+    '+password = base64.b64decode(encoded_password)',
+    '+const secret = new TextDecoder().decode(secretBytes);',
+    '+config["auth"]["token"] = prefix + signature;',
+    '+config["api" + "Key"] = prefix + signature;',
   ])("flags a dynamically constructed credential expression %s", (patch) => {
     expect(scanPatchForSecrets("src/config.ts", patch)).toContainEqual(
       expect.objectContaining({
@@ -390,10 +399,83 @@ describe("scanPatchForSecrets", () => {
     "+const tokenCount = previousCount + 1;",
     "+const passwordStrength = entropyScore + policyBonus;",
     '+const secretName = "tenant/" + tenantId;',
+    "+const tokenBucket = previousBucket + refill;",
+    "+const apiKeyNames = prefix + tenantId;",
+    "+const authorizationHeaderLength = baseLength + delta;",
+    "+const apiKeyValidator = baseValidator + extension;",
+    "+const passwordPolicy = basePolicy + overridePolicy;",
+    '+const token = secrets["TOKEN_A"] + secrets["TOKEN_B"];',
+    '+const password = os.environ["PASSWORD_A"] + os.environ["PASSWORD_B"]',
+    '+const apiKey = ENV["API_KEY_A"] + ENV["API_KEY_B"]',
+    '+const secret = Bun.env.SECRET_A + Bun.env.SECRET_B;',
     "+// const token = prefix + accountId + signature;",
     "-const token = prefix + accountId + signature;",
   ])("does not flag trusted runtime sources, comments, or removed dynamic code %s", (patch) => {
     expect(scanPatchForSecrets("src/config.ts", patch)).toEqual([]);
+  });
+
+  it("detects a dynamic continuation added to a context assignment", () => {
+    const patch = "@@ -1,2 +1,3 @@\n const token = prefix\n+  + signature;\n const done = true;";
+
+    expect(scanPatchForSecrets("src/config.ts", patch)).toContainEqual(
+      expect.objectContaining({ category: "DynamicSecretConstruction" })
+    );
+  });
+
+  it("resets lexical state at each diff hunk", () => {
+    const patch =
+      "@@ -1,2 +1,3 @@\n const example = `\n+still example text\n@@ -20,1 +21,2 @@\n+const token = prefix + signature;";
+
+    expect(scanPatchForSecrets("src/config.ts", patch)).toContainEqual(
+      expect.objectContaining({ category: "DynamicSecretConstruction" })
+    );
+  });
+
+  it("does not lose a continuation after more than six comment or blank lines", () => {
+    const patch = [
+      "@@ -1,2 +1,10 @@",
+      " const token = prefix",
+      "+// explanation 1",
+      "+// explanation 2",
+      "+",
+      "+// explanation 3",
+      "+// explanation 4",
+      "+// explanation 5",
+      "+  + signature;",
+    ].join("\n");
+
+    expect(scanPatchForSecrets("src/config.ts", patch)).toContainEqual(
+      expect.objectContaining({ category: "DynamicSecretConstruction" })
+    );
+  });
+
+  it("does not attach an unrelated following expression to a completed credential assignment", () => {
+    expect(
+      scanPatchForSecrets(
+        "src/config.ts",
+        "+const token = getToken();\n+const count = left + right;"
+      )
+    ).toEqual([]);
+  });
+
+  it("evaluates every assignment in one statement", () => {
+    expect(
+      scanPatchForSecrets(
+        "src/config.ts",
+        "+const tokenCount = previous + 1, apiKey = prefix + signature;"
+      )
+    ).toContainEqual(expect.objectContaining({ category: "DynamicSecretConstruction" }));
+  });
+
+  it("aggregates repeated findings instead of expanding the MCP response", () => {
+    const patch = Array.from(
+      { length: 500 },
+      (_, index) => `+const token${index} = prefix + signature;`
+    ).join("\n");
+    const findings = scanPatchForSecrets("src/config.ts", patch);
+
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.description).toContain("500 matching occurrences");
   });
 
   it("ignores removed assignments, context lines, prose keywords, placeholders, and env references", () => {
@@ -413,6 +495,29 @@ describe("scanPatchForSecrets", () => {
 });
 
 describe("evaluatePullRequestReview", () => {
+  it.each(["basic", "strict", "security-focused"] as const)(
+    "runs supplemental dynamic credential detection under the %s standard",
+    (standard) => {
+      const result = evaluatePullRequestReview({
+        pr: pr({
+          title: "Harden security token construction",
+          body: "Review credential construction and validate the security boundary.",
+        }),
+        files: [
+          file("src/auth.ts", {
+            patch: "+const authorizationHeader = prefix + accountId + signature;",
+          }),
+        ],
+        standard,
+      });
+
+      expect(result.workType).toBe("security");
+      expect(result.findings).toContainEqual(
+        expect.objectContaining({ category: "DynamicSecretConstruction", severity: "high" })
+      );
+    }
+  );
+
   it("preserves legacy draft and large commit-count hygiene findings", () => {
     const result = evaluatePullRequestReview({
       pr: pr({ draft: true, commits: 21 }),

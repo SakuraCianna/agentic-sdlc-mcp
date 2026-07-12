@@ -338,6 +338,31 @@ describe("handleWorkflowPermissionsAudit", () => {
     expect(text).toContain("audit evidence is incomplete");
     expect(text).not.toContain("No findings -- scanned workflows declare explicit, least-privilege permissions.");
   });
+
+  it("escapes external workflow audit values in Markdown while preserving structured values", async () => {
+    const maliciousPath = ".github/workflows/ci.yml\r\n## forged";
+    const octokit = makeMockOctokit({
+      files: [
+        {
+          name: "ci.yml",
+          path: maliciousPath,
+          content: "not: [valid",
+        },
+      ],
+    });
+
+    const { structured, text } = await handleWorkflowPermissionsAudit(
+      { ref: "main\r\n## injected" },
+      REF,
+      octokit
+    );
+
+    expect(structured.ref).toBe("main\r\n## injected");
+    expect(structured.errors[0]).toContain(maliciousPath);
+    expect(text).not.toContain("\n## forged");
+    expect(text).not.toContain("\n## injected");
+    expect(text).toContain("\\#\\# injected");
+  });
 });
 
 describe("evaluateWorkflowContents", () => {

@@ -19,6 +19,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { parse as parseYaml } from "yaml";
 import { resolveRepo, getOctokit, handleGitHubError } from "../github/client.js";
+import { safeMarkdownInline } from "../rendering/markdown.js";
 import type { Finding, RepoRef } from "../types.js";
 import type { Octokit } from "@octokit/rest";
 
@@ -329,16 +330,24 @@ export async function handleWorkflowPermissionsAudit(
       : "OVER-PERMISSIONED";
 
   const lines: string[] = [
-    `# Workflow Permissions Audit: ${ref.owner}/${ref.repo}@${gitRef}`,
+    `# Workflow Permissions Audit: ${safeMarkdownInline(`${ref.owner}/${ref.repo}@${gitRef}`, { maxLength: 300 })}`,
     "",
     `**Conclusion:** ${conclusionLabel}`,
-    `**Workflows scanned:** ${workflowsScanned.length > 0 ? workflowsScanned.join(", ") : "none"}`,
+    `**Workflows scanned:** ${
+      workflowsScanned.length > 0
+        ? workflowsScanned
+            .map((workflow) => safeMarkdownInline(workflow, { maxLength: 300 }))
+            .join(", ")
+        : "none"
+    }`,
     "",
   ];
 
   if (errors.length > 0) {
     lines.push("## Notes", "");
-    errors.forEach((e) => lines.push(`- ${e}`));
+    errors.forEach((error) =>
+      lines.push(`- ${safeMarkdownInline(error, { maxLength: 500 })}`)
+    );
     lines.push("");
   }
 
@@ -352,8 +361,10 @@ export async function handleWorkflowPermissionsAudit(
   } else {
     for (const f of findings) {
       lines.push(
-        `- **[${f.severity.toUpperCase()}]** ${f.category}: ${f.description}` +
-          (f.suggestion ? `\n  > Suggestion: ${f.suggestion}` : "")
+        `- **[${f.severity.toUpperCase()}]** ${safeMarkdownInline(f.category, { maxLength: 100 })}: ${safeMarkdownInline(f.description, { maxLength: 500 })}` +
+          (f.suggestion
+            ? `\n  > Suggestion: ${safeMarkdownInline(f.suggestion, { maxLength: 500 })}`
+            : "")
       );
     }
   }

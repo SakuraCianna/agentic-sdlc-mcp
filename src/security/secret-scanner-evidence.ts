@@ -61,6 +61,11 @@ export interface SecretScannerTrustOptions {
 
 /** Stable GitHub App ID observed for app-backed GitHub Actions check runs. */
 export const GITHUB_ACTIONS_APP_ID = 15368;
+const PROVENANCE_SUPPORTED_PROVIDERS = new Set<SecretScannerProvider>([
+  "gitleaks",
+  "trufflehog",
+]);
+const MAX_SCANNER_PROVENANCE_CANDIDATES = 20;
 
 const PROVIDER_PATTERNS: ReadonlyArray<{
   provider: SecretScannerProvider;
@@ -123,9 +128,11 @@ export function evaluateSecretScannerEvidence(
   const signals = allSignals(ci).flatMap((signal): SecretScannerSignal[] => {
     const provider = providerForSignal(signal.name);
     const trusted =
+      provider !== null &&
       signal.source === "check_run" &&
       signal.appId !== null &&
       trustedAppIds.has(signal.appId) &&
+      PROVENANCE_SUPPORTED_PROVIDERS.has(provider) &&
       signal.provenanceVerified === true;
     return provider
       ? [
@@ -226,19 +233,18 @@ export function evaluateSecretScannerEvidence(
     ...unverifiedSecretScannerEvidence(
       skipped
         ? "Recognized secret scanner checks were skipped, so they provide no clean-scan evidence."
-        : "No mature secret scanner check (Gitleaks, TruffleHog, Secretlint, detect-secrets, or GitHub Secret Scanning) was found."
+        : "No recognized secret scanner claim was found; trusted passing currently requires provenance-supported Gitleaks or TruffleHog evidence."
     ),
     providers,
     signals,
   };
 }
 
-const TRUSTED_SCANNER_ACTIONS: Readonly<Record<SecretScannerProvider, readonly string[]>> = {
+const TRUSTED_SCANNER_ACTIONS: Readonly<
+  Partial<Record<SecretScannerProvider, readonly string[]>>
+> = {
   gitleaks: ["gitleaks/gitleaks-action"],
   trufflehog: ["trufflesecurity/trufflehog"],
-  secretlint: [],
-  "detect-secrets": [],
-  "github-secret-scanning": [],
 };
 
 export interface SecretScannerProvenanceParams {
@@ -251,6 +257,13 @@ export interface SecretScannerProvenanceParams {
 export interface SecretScannerProvenanceResult {
   ci: CiEvidence;
   errors: string[];
+}
+
+type WorkflowRunData = Awaited<ReturnType<Octokit["actions"]["getWorkflowRun"]>>["data"];
+
+interface SecretScannerProvenanceCache {
+  runs: Map<number, Promise<WorkflowRunData>>;
+  workflows: Map<string, Promise<string>>;
 }
 
 function actionsRunId(url: string | null, ref: RepoRef): number | null {
@@ -278,7 +291,8 @@ function actionsRunId(url: string | null, ref: RepoRef): number | null {
 
 function pinnedScannerActionFound(
   workflowContent: string,
-  provider: SecretScannerProvider
+  provider: SecretScannerProvider,
+  checkName: string
 ): boolean {
   let document: unknown;
   try {
@@ -289,11 +303,24 @@ function pinnedScannerActionFound(
   if (!document || typeof document !== "object" || Array.isArray(document)) return false;
   const jobs = (document as Record<string, unknown>)["jobs"];
   if (!jobs || typeof jobs !== "object" || Array.isArray(jobs)) return false;
-  const trustedActions = new Set(TRUSTED_SCANNER_ACTIONS[provider]);
+  const trustedActions = new Set(TRUSTED_SCANNER_ACTIONS[provider] ?? []);
+  if (trustedActions.size === 0) return false;
+  const normalizedCheckName = checkName.trim().toLowerCase();
 
-  for (const job of Object.values(jobs as Record<string, unknown>)) {
+  for (const [jobId, job] of Object.entries(jobs as Record<string, unknown>)) {
     if (!job || typeof job !== "object" || Array.isArray(job)) continue;
-    const steps = (job as Record<string, unknown>)["steps"];
+    const jobRecord = job as Record<string, unknown>;
+    const configuredName = typeof jobRecord["name"] === "string" ? jobRecord["name"] : jobId;
+    if (configuredName.includes("${{")) continue;
+    const normalizedJobName = configuredName.trim().toLowerCase();
+    const checkMatchesJob =
+      normalizedCheckName === normalizedJobName ||
+      normalizedCheckName.startsWith(`${normalizedJobName} (`);
+    if (!checkMatchesJob) continue;
+    if (jobRecord["continue-on-error"] !== undefined && jobRecord["continue-on-error"] !== false) {
+      return false;
+    }
+    const steps = jobRecord["steps"];
     if (!Array.isArray(steps)) continue;
     for (const step of steps) {
       if (!step || typeof step !== "object" || Array.isArray(step)) continue;
@@ -303,7 +330,16 @@ function pinnedScannerActionFound(
       if (separator <= 0) continue;
       const action = uses.slice(0, separator).toLowerCase();
       const revision = uses.slice(separator + 1);
-      if (trustedActions.has(action) && /^[0-9a-f]{40}$/i.test(revision)) return true;
+      const condition = (step as Record<string, unknown>)["if"];
+      const continueOnError = (step as Record<string, unknown>)["continue-on-error"];
+      if (
+        trustedActions.has(action) &&
+        /^[0-9a-f]{40}$/i.test(revision) &&
+        (condition === undefined || condition === true) &&
+        (continueOnError === undefined || continueOnError === false)
+      ) {
+        return true;
+      }
     }
   }
   return false;
@@ -312,10 +348,17 @@ function pinnedScannerActionFound(
 async function verifySignalProvenance(
   signal: GateSignal,
   provider: SecretScannerProvider,
-  params: SecretScannerProvenanceParams
+  params: SecretScannerProvenanceParams,
+  cache: SecretScannerProvenanceCache
 ): Promise<{ verified: boolean; error: string | null }> {
   if (signal.source !== "check_run" || signal.appId !== GITHUB_ACTIONS_APP_ID) {
     return { verified: false, error: null };
+  }
+  if (!PROVENANCE_SUPPORTED_PROVIDERS.has(provider)) {
+    return {
+      verified: false,
+      error: `check \`${signal.name}\` uses a recognized provider whose workflow provenance is not supported in this version.`,
+    };
   }
   const runId = actionsRunId(signal.url, params.ref);
   if (runId === null) {
@@ -326,11 +369,18 @@ async function verifySignalProvenance(
   }
 
   try {
-    const { data: run } = await params.octokit.actions.getWorkflowRun({
-      owner: params.ref.owner,
-      repo: params.ref.repo,
-      run_id: runId,
-    });
+    let runPromise = cache.runs.get(runId);
+    if (!runPromise) {
+      runPromise = params.octokit.actions
+        .getWorkflowRun({
+          owner: params.ref.owner,
+          repo: params.ref.repo,
+          run_id: runId,
+        })
+        .then((response) => response.data);
+      cache.runs.set(runId, runPromise);
+    }
+    const run = await runPromise;
     const workflowPath = typeof run.path === "string" ? run.path.replace(/^\.\//, "") : "";
     if (
       run.head_sha !== params.headSha ||
@@ -341,23 +391,29 @@ async function verifySignalProvenance(
         error: `check \`${signal.name}\` is not tied to the reviewed head and a repository workflow path.`,
       };
     }
-    const { data } = await params.octokit.repos.getContent({
-      owner: params.ref.owner,
-      repo: params.ref.repo,
-      path: workflowPath,
-      ref: params.baseRef,
-    });
-    if (Array.isArray(data) || data.type !== "file" || !data.content) {
-      return {
-        verified: false,
-        error: `base workflow provenance for check \`${signal.name}\` is unavailable.`,
-      };
+    const workflowKey = `${params.baseRef}\u0000${workflowPath}`;
+    let workflowPromise = cache.workflows.get(workflowKey);
+    if (!workflowPromise) {
+      workflowPromise = params.octokit.repos
+        .getContent({
+          owner: params.ref.owner,
+          repo: params.ref.repo,
+          path: workflowPath,
+          ref: params.baseRef,
+        })
+        .then(({ data }) => {
+          if (Array.isArray(data) || data.type !== "file" || !data.content) {
+            throw new Error("base workflow content is unavailable");
+          }
+          return Buffer.from(data.content, "base64").toString("utf-8");
+        });
+      cache.workflows.set(workflowKey, workflowPromise);
     }
-    const content = Buffer.from(data.content, "base64").toString("utf-8");
-    if (!pinnedScannerActionFound(content, provider)) {
+    const content = await workflowPromise;
+    if (!pinnedScannerActionFound(content, provider, signal.name)) {
       return {
         verified: false,
-        error: `base workflow for check \`${signal.name}\` does not use the recognized scanner action pinned to a full commit SHA.`,
+        error: `base workflow job for check \`${signal.name}\` does not unconditionally use the recognized scanner action pinned to a full commit SHA.`,
       };
     }
     return { verified: true, error: null };
@@ -376,10 +432,22 @@ export async function verifySecretScannerProvenance(
 ): Promise<SecretScannerProvenanceResult> {
   const verifiedSignals = new Set<GateSignal>();
   const errors: string[] = [];
-  for (const signal of allSignals(ci)) {
+  const candidates = allSignals(ci).flatMap((signal) => {
     const provider = providerForSignal(signal.name);
-    if (!provider) continue;
-    const result = await verifySignalProvenance(signal, provider, params);
+    return provider ? [{ signal, provider }] : [];
+  });
+  const cache: SecretScannerProvenanceCache = {
+    runs: new Map(),
+    workflows: new Map(),
+  };
+  const candidatesToVerify = candidates.slice(0, MAX_SCANNER_PROVENANCE_CANDIDATES);
+  if (candidates.length > MAX_SCANNER_PROVENANCE_CANDIDATES) {
+    errors.push(
+      `secret scanner provenance candidates exceeded the ${MAX_SCANNER_PROVENANCE_CANDIDATES}-signal verification limit.`
+    );
+  }
+  for (const { signal, provider } of candidatesToVerify) {
+    const result = await verifySignalProvenance(signal, provider, params, cache);
     if (result.verified) verifiedSignals.add(signal);
     if (result.error) errors.push(result.error);
   }
@@ -399,6 +467,10 @@ export async function verifySecretScannerProvenance(
       ...ci,
       checkRuns: mapBuckets(ci.checkRuns),
       commitStatuses: mapBuckets(ci.commitStatuses),
+      unverifiedSignals:
+        errors.length > 0
+          ? [...new Set([...ci.unverifiedSignals, "secret_scanner_provenance"])]
+          : ci.unverifiedSignals,
     },
     errors,
   };

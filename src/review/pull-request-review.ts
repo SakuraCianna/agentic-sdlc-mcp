@@ -452,57 +452,6 @@ const SECRET_ASSIGNMENTS: SecretPattern[] = [
   },
 ];
 
-const DYNAMIC_SECRET_ASSIGNMENT = new RegExp(
-  String.raw`(?:^|[,{;]\s*|\b(?:const|let|var)\s+)\s*["']?[\w.-]*(?:api[_-]?key|auth(?:orization)?[_-]?(?:header|token)?|client[_-]?secret|credential|password|private[_-]?key|secret|token)[\w.-]*["']?\s*(?::[^=\n]{0,80}=|[:=])\s*([\s\S]*)$`,
-  "i"
-);
-
-const DYNAMIC_COMPUTED_SECRET_ASSIGNMENT = new RegExp(
-  String.raw`(?:^|[,{;]\s*)\s*(?:(?:credentials?|secrets?|tokens?)\s*\[[^\]]+\]|[\w$.-]+\s*\[\s*["'][^"']*(?:api[_-]?key|authorization|client[_-]?secret|credential|password|private[_-]?key|secret|token)[^"']*["']\s*\])\s*=\s*([\s\S]*)$`,
-  "i"
-);
-
-function assignmentOperatorIsInCode(match: RegExpMatchArray, codeLine: string): boolean {
-  if (match.index === undefined) return false;
-  const value = match[1] ?? "";
-  const valueOffset = value.length > 0 ? match[0].lastIndexOf(value) : match[0].length;
-  const prefix = match[0].slice(0, valueOffset);
-  const operatorOffset = Math.max(prefix.lastIndexOf("="), prefix.lastIndexOf(":"));
-  if (operatorOffset < 0) return false;
-  return (codeLine[match.index + operatorOffset] ?? " ").trim().length > 0;
-}
-
-function isCredentialMetadataAssignment(match: RegExpMatchArray): boolean {
-  const value = match[1] ?? "";
-  const valueOffset = value.length > 0 ? match[0].lastIndexOf(value) : match[0].length;
-  const target = match[0].slice(0, valueOffset);
-  return /(?:token|secret|password|credential)[_-]?(?:count|length|index|ttl|expir(?:y|es?)|type|name|id|status|strength|validator|parser|izer)\b/i.test(
-    target
-  );
-}
-
-function isTrustedRuntimeSecretExpression(value: string): boolean {
-  let remainder = value
-    .replace(/(?:process|import\.meta)\.env(?:\.[A-Za-z_$][\w$]*|\[["'][A-Za-z_$][\w$]*["']\])/g, "")
-    .replace(/\bsecrets\.[A-Za-z_$][\w$]*/g, "")
-    .replace(/(?:os\.)?getenv\s*\(\s*["'][A-Za-z_$][\w$]*["']\s*\)/gi, "")
-    .replace(/Deno\.env\.get\s*\(\s*["'][A-Za-z_$][\w$]*["']\s*\)/g, "")
-    .replace(/[\s+(){}$;,.?:|&!]+/g, "");
-  remainder = remainder.replace(/^(?:undefined|null)$/i, "");
-  return remainder.length === 0;
-}
-
-function isDynamicSecretExpression(value: string, codeValue: string): boolean {
-  const normalized = value.trim();
-  if (!normalized || isTrustedRuntimeSecretExpression(normalized)) return false;
-  return (
-    codeValue.includes("+") ||
-    /\.join\s*\(/.test(codeValue) ||
-    /\b(?:Buffer\.from|atob|btoa|String\.fromCharCode)\s*\(/.test(codeValue) ||
-    /`[^`]*\$\{[^}]+\}[^`]*`/s.test(normalized)
-  );
-}
-
 function isPlaceholderSecret(value: string): boolean {
   const normalized = value.trim();
   return (
@@ -597,6 +546,221 @@ function maskSecretCodeLine(line: string, state: SecretLexicalState): string {
   return code;
 }
 
+function maskSecretCommentsLine(line: string, state: SecretLexicalState): string {
+  if (state.mode === "code" && /^(?:\s*#|\s*\*)/.test(line)) return "";
+  let content = "";
+  for (let index = 0; index < line.length; index += 1) {
+    const character = line[index] ?? "";
+    const next = line[index + 1] ?? "";
+    if (state.mode === "block_comment") {
+      if (character === "*" && next === "/") {
+        content += "  ";
+        index += 1;
+        state.mode = "code";
+      } else {
+        content += " ";
+      }
+      continue;
+    }
+    if (state.mode !== "code") {
+      content += character;
+      if (state.escaped) state.escaped = false;
+      else if (character === "\\") state.escaped = true;
+      else if (
+        (state.mode === "single" && character === "'") ||
+        (state.mode === "double" && character === '"') ||
+        (state.mode === "template" && character === "`")
+      ) {
+        state.mode = "code";
+      }
+      continue;
+    }
+    if (character === "/" && next === "/") break;
+    if (character === "/" && next === "*") {
+      content += "  ";
+      index += 1;
+      state.mode = "block_comment";
+    } else if (character === "#" && (index === 0 || /\s/.test(line[index - 1] ?? ""))) {
+      break;
+    } else {
+      content += character;
+      if (character === "'" || character === '"' || character === "`") {
+        state.mode = character === "'" ? "single" : character === '"' ? "double" : "template";
+        state.escaped = false;
+      }
+    }
+  }
+  return content;
+}
+
+interface ScannedSecretLine extends NewSideLine {
+  code: string;
+  semantic: string;
+  modeAfter: SecretLexicalMode;
+}
+
+interface SecretStatement {
+  raw: string;
+  code: string;
+  semantic: string;
+  added: boolean[];
+}
+
+const MAX_SECRET_STATEMENT_LINES = 100;
+const MAX_SECRET_STATEMENT_CHARS = 64_000;
+const MAX_SECRET_FINDING_GROUPS = 20;
+
+function bracketDepth(code: string): number {
+  let depth = 0;
+  for (const character of code) {
+    if (character === "(" || character === "[" || character === "{") depth += 1;
+    else if (character === ")" || character === "]" || character === "}") {
+      depth = Math.max(0, depth - 1);
+    }
+  }
+  return depth;
+}
+
+function buildSecretStatements(lines: ScannedSecretLine[]): SecretStatement[] {
+  const statements: SecretStatement[] = [];
+  let raw = "";
+  let code = "";
+  let semantic = "";
+  let added: boolean[] = [];
+  let lineCount = 0;
+  let activeHunk = lines[0]?.hunk ?? 0;
+
+  const flush = (): void => {
+    if (semantic.trim().length > 0) statements.push({ raw, code, semantic, added });
+    raw = "";
+    code = "";
+    semantic = "";
+    added = [];
+    lineCount = 0;
+  };
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (!line) continue;
+    if (line.hunk !== activeHunk) {
+      flush();
+      activeHunk = line.hunk;
+    }
+    raw += `${line.text}\n`;
+    code += `${line.code}\n`;
+    semantic += `${line.semantic}\n`;
+    added.push(...Array.from({ length: line.text.length }, () => line.added), false);
+    lineCount += 1;
+
+    let nextMeaningful: ScannedSecretLine | undefined;
+    for (let nextIndex = index + 1; nextIndex < lines.length; nextIndex += 1) {
+      const candidate = lines[nextIndex];
+      if (!candidate || candidate.hunk !== line.hunk) break;
+      if (candidate.code.trim().length > 0) {
+        nextMeaningful = candidate;
+        break;
+      }
+    }
+    const trimmedCode = code.trimEnd();
+    const continues =
+      line.modeAfter !== "code" ||
+      bracketDepth(code) > 0 ||
+      /(?:[=+%.,?:|&\\]|\b(?:return|yield))\s*$/.test(trimmedCode) ||
+      /^\s*(?:[+%]|\.(?:concat|format|join)\b)/.test(nextMeaningful?.code ?? "");
+    const terminated = /;\s*$/.test(line.code) || !continues;
+    if (
+      terminated ||
+      lineCount >= MAX_SECRET_STATEMENT_LINES ||
+      raw.length >= MAX_SECRET_STATEMENT_CHARS
+    ) {
+      flush();
+    }
+  }
+  flush();
+  return statements;
+}
+
+function assignmentOperatorIndexes(code: string): number[] {
+  const indexes: number[] = [];
+  for (let index = 0; index < code.length; index += 1) {
+    const character = code[index] ?? "";
+    const previous = code[index - 1] ?? "";
+    const next = code[index + 1] ?? "";
+    if (character === "=") {
+      if (next === "=" || next === ">" || /[=!<>]/.test(previous)) continue;
+      indexes.push(index);
+    } else if (character === ":") {
+      if (next === "=" || previous === ":" || previous === "?") continue;
+      indexes.push(index);
+    }
+  }
+  return indexes;
+}
+
+function assignmentExpressionEnd(code: string, start: number): number {
+  let depth = 0;
+  for (let index = start; index < code.length; index += 1) {
+    const character = code[index] ?? "";
+    if (character === "(" || character === "[" || character === "{") depth += 1;
+    else if (character === ")" || character === "]" || character === "}") {
+      depth = Math.max(0, depth - 1);
+    } else if (depth === 0 && (character === "," || character === ";")) {
+      return index;
+    }
+  }
+  return code.length;
+}
+
+function assignmentTargetStart(code: string, operatorIndex: number): number {
+  let start = 0;
+  for (const delimiter of [";", ",", "{", "}", "\n"]) {
+    start = Math.max(start, code.lastIndexOf(delimiter, operatorIndex - 1) + 1);
+  }
+  return start;
+}
+
+function isCredentialMetadataTarget(normalizedTarget: string): boolean {
+  return /(?:apikey|authorization(?:header)?|token|secret|password|credential)(?:bucket|cache|config|count|expir(?:y|es?)|factory|id|index|length|manager|metadata|names?|options|parser|policy|prefix|provider|service|status|store|strength|suffix|ttl|type|validation|validator|izer|ization)$/.test(
+    normalizedTarget
+  );
+}
+
+function isCredentialTarget(target: string): boolean {
+  const normalized = target.toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (!normalized || isCredentialMetadataTarget(normalized)) return false;
+  return /(?:apikey|authorization(?:header|token)?|clientsecret|credentials?|password|privatekey|secrets?|tokens?)/.test(
+    normalized
+  );
+}
+
+function isTrustedRuntimeSecretExpression(value: string): boolean {
+  let remainder = value
+    .replace(/(?:process|import\.meta|Bun)\.env(?:\.[A-Za-z_$][\w$]*|\[\s*["'][^"']+["']\s*\])/gi, "")
+    .replace(/\bsecrets(?:\.[A-Za-z_$][\w$]*|\[\s*["'][^"']+["']\s*\])/gi, "")
+    .replace(/(?:os\.)?getenv\s*\(\s*["'][^"']+["']\s*\)/gi, "")
+    .replace(/(?:os\.environ|ENV)\s*\[\s*["'][^"']+["']\s*\]/gi, "")
+    .replace(/(?:Deno\.env\.get|System\.getenv|Environment\.GetEnvironmentVariable)\s*\(\s*["'][^"']+["']\s*\)/gi, "")
+    .replace(/\b(?:vault|secretManager|secretsClient)\.(?:get|getSecret|accessSecretVersion)\s*\([^)]*\)/gi, "")
+    .replace(/(["'`])(?:Bearer|Basic|Token|[\s.:/_-]*)\1/gi, "")
+    .replace(/[\s+%(){}[\]$;,.?:|&!"'`]+/g, "");
+  remainder = remainder.replace(/^(?:f|undefined|null)$/i, "");
+  return remainder.length === 0;
+}
+
+function isDynamicSecretExpression(value: string, codeValue: string): boolean {
+  const normalized = value.trim();
+  if (!normalized || isTrustedRuntimeSecretExpression(normalized)) return false;
+  return (
+    codeValue.includes("+") ||
+    codeValue.includes("%") ||
+    /\.(?:concat|format|join)\s*\(/i.test(codeValue) ||
+    /\b(?:Buffer\.from|Convert\.FromBase64String|String\.fromCharCode|TextDecoder\s*\([^)]*\)\.decode|atob|base64\.(?:b64decode|urlsafe_b64decode)|btoa)\s*\(/i.test(codeValue) ||
+    /`[^`]*\$\{[^}]+\}[^`]*`/s.test(normalized) ||
+    /\bf["'][^"']*\{[^}]+\}[^"']*["']/is.test(normalized) ||
+    /\$@?["'][^"']*\{[^}]+\}[^"']*["']/s.test(normalized)
+  );
+}
+
 function assignmentIsInCode(match: RegExpMatchArray, codeLine: string): boolean {
   const value = match.slice(1).find((capture) => capture !== undefined);
   if (!value || match.index === undefined) return false;
@@ -614,93 +778,154 @@ export function scanPatchForSecrets(
 ): StructuredReviewFinding[] {
   if (!patch) return [];
   const normalizedFilename = normalizePath(filename);
-  const findings: StructuredReviewFinding[] = [];
-  const lexicalState: SecretLexicalState = { mode: "code", escaped: false };
   const patchLines = newSidePatchLines(patch);
-  const scannedLines = patchLines.map((line) => ({
-    ...line,
-    code: maskSecretCodeLine(line.text, lexicalState),
-  }));
-
-  for (let lineIndex = 0; lineIndex < scannedLines.length; lineIndex += 1) {
-    const line = scannedLines[lineIndex];
-    if (!line) continue;
-    const codeLine = line.code;
-    if (!line.added) continue;
-
-    const window = [line];
-    for (
-      let nextIndex = lineIndex + 1;
-      nextIndex < scannedLines.length && window.length < 6;
-      nextIndex += 1
-    ) {
-      const nextLine = scannedLines[nextIndex];
-      if (!nextLine?.added) break;
-      window.push(nextLine);
-      if (/;\s*$/.test(nextLine.text)) break;
+  const scannedLines: ScannedSecretLine[] = [];
+  let activeHunk = -1;
+  let codeState: SecretLexicalState = { mode: "code", escaped: false };
+  let semanticState: SecretLexicalState = { mode: "code", escaped: false };
+  for (const line of patchLines) {
+    if (line.hunk !== activeHunk) {
+      activeHunk = line.hunk;
+      codeState = { mode: "code", escaped: false };
+      semanticState = { mode: "code", escaped: false };
     }
-    const rawWindow = window.map((entry) => entry.text).join(" ");
-    const codeWindow = window.map((entry) => entry.code).join(" ");
-    const dynamicMatch =
-      rawWindow.match(DYNAMIC_SECRET_ASSIGNMENT) ??
-      rawWindow.match(DYNAMIC_COMPUTED_SECRET_ASSIGNMENT);
-    if (
-      dynamicMatch &&
-      assignmentOperatorIsInCode(dynamicMatch, codeWindow) &&
-      !isCredentialMetadataAssignment(dynamicMatch) &&
-      isDynamicSecretExpression(dynamicMatch[1] ?? "", codeWindow)
-    ) {
-      findings.push(
+    const code = maskSecretCodeLine(line.text, codeState);
+    const semantic = maskSecretCommentsLine(line.text, semanticState);
+    scannedLines.push({ ...line, code, semantic, modeAfter: codeState.mode });
+  }
+
+  const findingGroups = new Map<
+    string,
+    { finding: StructuredReviewFinding; count: number }
+  >();
+  let suppressedGroups = 0;
+  const recordFinding = (item: StructuredReviewFinding): void => {
+    const key = `${item.severity}\u0000${item.category}\u0000${item.paths.join("\u0000")}`;
+    const existing = findingGroups.get(key);
+    if (existing) {
+      existing.count += 1;
+      return;
+    }
+    if (findingGroups.size >= MAX_SECRET_FINDING_GROUPS) {
+      suppressedGroups += 1;
+      return;
+    }
+    findingGroups.set(key, { finding: item, count: 1 });
+  };
+
+  for (const statement of buildSecretStatements(scannedLines)) {
+    for (const operatorIndex of assignmentOperatorIndexes(statement.code)) {
+      const targetStart = assignmentTargetStart(statement.code, operatorIndex);
+      const expressionEnd = assignmentExpressionEnd(statement.code, operatorIndex + 1);
+      const target = statement.raw.slice(targetStart, operatorIndex);
+      if (!isCredentialTarget(target)) continue;
+      const expression = statement.semantic.slice(operatorIndex + 1, expressionEnd);
+      const codeExpression = statement.code.slice(operatorIndex + 1, expressionEnd);
+      const codeTarget = statement.code.slice(targetStart, operatorIndex);
+      const meaningfulAdded = statement.added
+        .slice(targetStart, expressionEnd)
+        .some((isAdded, offset) => {
+          if (!isAdded) return false;
+          const absolute = targetStart + offset;
+          return /\S/.test(statement.semantic[absolute] ?? "");
+        });
+      if (!meaningfulAdded) continue;
+      if (
+        !isDynamicSecretExpression(expression, codeExpression) &&
+        !isDynamicSecretExpression(target, codeTarget)
+      ) {
+        continue;
+      }
+      recordFinding(
         finding(
           "high",
           "DynamicSecretConstruction",
           "security",
           `Credential-like value is dynamically constructed in \`${normalizedFilename}\`.`,
           [normalizedFilename],
-          "The added assignment combines, interpolates, joins, or decodes values into a credential-like target, so a literal-only heuristic cannot establish whether the result is safe.",
-          "Verify every input source, remove hardcoded fragments, prefer a secret manager or environment variable, and require trusted mature-scanner evidence plus manual review."
+          "An added part of this assignment combines, interpolates, formats, joins, or decodes data into a credential-like target, so patch-local literal matching cannot establish whether the result is safe.",
+          "Verify every input source, remove hardcoded fragments, prefer a secret manager or environment variable, and require trusted scanner or SAST evidence plus manual review."
         )
       );
-      continue;
-    }
-
-    for (const { name, pattern } of SECRET_ASSIGNMENTS) {
-      const match = line.text.match(pattern);
-      if (!match || !assignmentIsInCode(match, codeLine)) continue;
-      const quotedValue = match?.slice(1, 4).find((capture) => capture !== undefined);
-      const unquotedValue = match?.[4];
-      const value = quotedValue ?? unquotedValue;
-      if (!value || isPlaceholderSecret(value)) continue;
-      if (!quotedValue && !isHighConfidenceUnquotedSecret(value)) continue;
-
-      findings.push(
-        finding(
-          "high",
-          "SecretLikeAssignment",
-          "security",
-          `Possible ${name} added in \`${normalizedFilename}\`.`,
-          [normalizedFilename],
-          "The added patch line assigns a non-placeholder literal to a credential-like name.",
-          "Confirm this is not a real credential; if it is, remove and rotate it, then load it from a secret store or environment variable."
-        )
-      );
-      break;
     }
   }
 
+  for (const line of scannedLines) {
+    const codeLine = line.code;
+    if (!line.added) continue;
+    for (const { name, pattern } of SECRET_ASSIGNMENTS) {
+      let offset = 0;
+      while (offset < line.text.length) {
+        const match = line.text.slice(offset).match(pattern);
+        if (!match || match.index === undefined) break;
+        const matchOffset = offset + match.index;
+        if (assignmentIsInCode(match, codeLine.slice(offset))) {
+          const quotedValue = match.slice(1, 4).find((capture) => capture !== undefined);
+          const unquotedValue = match[4];
+          const value = quotedValue ?? unquotedValue;
+          if (
+            value &&
+            !isPlaceholderSecret(value) &&
+            (quotedValue !== undefined || isHighConfidenceUnquotedSecret(value))
+          ) {
+            recordFinding(
+              finding(
+                "high",
+                "SecretLikeAssignment",
+                "security",
+                `Possible ${name} added in \`${normalizedFilename}\`.`,
+                [normalizedFilename],
+                "The added patch line assigns a non-placeholder literal to a credential-like name.",
+                "Confirm this is not a real credential; if it is, remove and rotate it, then load it from a secret store or environment variable."
+              )
+            );
+          }
+        }
+        offset = matchOffset + Math.max(1, match[0].length);
+      }
+    }
+  }
+
+  const findings = [...findingGroups.values()].map(({ finding: item, count }) =>
+    count > 1
+      ? {
+          ...item,
+          description: `${item.description} ${count} matching occurrences were aggregated.`,
+          reason: `${item.reason} The response aggregates repeated findings by category and path.`,
+        }
+      : item
+  );
+  if (suppressedGroups > 0) {
+    findings.push(
+      finding(
+        "high",
+        "SecretHeuristicFindingsTruncated",
+        "security",
+        `Additional secret-heuristic finding groups were omitted in \`${normalizedFilename}\`.`,
+        [normalizedFilename],
+        `The bounded response omitted ${suppressedGroups} distinct finding group(s) after the ${MAX_SECRET_FINDING_GROUPS}-group limit.`,
+        "Split the PR and run trusted scanner/SAST evidence before review."
+      )
+    );
+  }
   return findings;
 }
 
 interface NewSideLine {
   text: string;
   added: boolean;
+  hunk: number;
 }
 
 function newSidePatchLines(patch: string): NewSideLine[] {
   const lines: NewSideLine[] = [];
+  let hunk = 0;
   for (const rawLine of patch.split(/\r?\n/)) {
+    if (rawLine.startsWith("@@")) {
+      hunk += 1;
+      continue;
+    }
     if (
-      rawLine.startsWith("@@") ||
       rawLine.startsWith("+++") ||
       rawLine.startsWith("---") ||
       rawLine.startsWith("\\ No newline") ||
@@ -709,9 +934,9 @@ function newSidePatchLines(patch: string): NewSideLine[] {
       continue;
     }
     if (rawLine.startsWith("+")) {
-      lines.push({ text: rawLine.slice(1), added: true });
+      lines.push({ text: rawLine.slice(1), added: true, hunk });
     } else if (rawLine.startsWith(" ")) {
-      lines.push({ text: rawLine.slice(1), added: false });
+      lines.push({ text: rawLine.slice(1), added: false, hunk });
     }
   }
   return lines;
@@ -1299,10 +1524,6 @@ function addSecurityFocusedFindings(
     );
   }
 
-  for (const file of classified.allFiles) {
-    findings.push(...scanPatchForSecrets(file.filename, file.patch));
-  }
-
   if (classified.lockFiles.length > 0) {
     findings.push(
       finding(
@@ -1488,6 +1709,9 @@ export function evaluatePullRequestReview(
 
   const testCoverageSignal = evaluateTestEvidence(workType, body, classified, findings);
   addWorkTypeEvidenceFindings(workType, input.pr.title, body, classified, findings);
+  for (const file of classified.allFiles) {
+    findings.push(...scanPatchForSecrets(file.filename, file.patch));
+  }
   if (standard === "strict" || standard === "security-focused") {
     addStrictFindings(classified, totalChangedLines, findings);
   }

@@ -230,8 +230,8 @@ describe("evaluateQualityGate conclusion priority", () => {
     }
   );
 
-  it.each(["dirty", "blocked", "unstable", "behind", "has_hooks", "future_state"])(
-    "conservatively blocks non-clean mergeable_state %s",
+  it.each(["dirty", "unstable"])(
+    "treats explicit failing mergeable_state %s as failing",
     (mergeableState) => {
       const decision = evaluateQualityGate(
         pullRequestEvidence({ pullRequest: { mergeableState } }),
@@ -242,6 +242,53 @@ describe("evaluateQualityGate conclusion priority", () => {
       expect(decision.blockers.join(" ")).toContain(mergeableState);
     }
   );
+  it("treats behind as pending", () => {
+    const decision = evaluateQualityGate(
+      pullRequestEvidence({ pullRequest: { mergeableState: "behind" } }),
+      DEFAULT_BLOCKING_LABELS
+    );
+
+    expect(decision.conclusion).toBe("pending");
+  });
+  it("allows has_hooks when all other evidence passes", () => {
+    const decision = evaluateQualityGate(
+      pullRequestEvidence({ pullRequest: { mergeableState: "has_hooks" } }),
+      DEFAULT_BLOCKING_LABELS
+    );
+
+    expect(decision.conclusion).toBe("passing");
+  });
+  it("lets draft state use the existing needs_review classification", () => {
+    const decision = evaluateQualityGate(
+      pullRequestEvidence({ pullRequest: { mergeableState: "draft", draft: true } }),
+      DEFAULT_BLOCKING_LABELS
+    );
+
+    expect(decision.conclusion).toBe("needs_review");
+  });
+  it.each(["blocked", "future_state"])(
+    "reports ambiguous mergeable_state %s as a policy gap when no specific blocker exists",
+    (mergeableState) => {
+      const decision = evaluateQualityGate(
+        pullRequestEvidence({ pullRequest: { mergeableState } }),
+        DEFAULT_BLOCKING_LABELS
+      );
+
+      expect(decision.conclusion).toBe("policy_gap");
+      expect(decision.blockers.join(" ")).toContain(mergeableState);
+    }
+  );
+  it("keeps a pending CI signal ahead of an ambiguous blocked merge state", () => {
+    const decision = evaluateQualityGate(
+      pullRequestEvidence({
+        pullRequest: { mergeableState: "blocked" },
+        ci: ciEvidence({ checkRuns: [signal("wait", "pending")] }),
+      }),
+      DEFAULT_BLOCKING_LABELS
+    );
+
+    expect(decision.conclusion).toBe("pending");
+  });
   it("returns failing ahead of pending, review, and policy gaps", () => {
     const evidence = pullRequestEvidence({
       ci: ciEvidence({ checkRuns: [signal("failed", "failing"), signal("wait", "pending")] }),

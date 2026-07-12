@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented here. Release history is also available on the [GitHub Releases page](https://github.com/SakuraCianna/agentic-sdlc-mcp/releases).
 
-## [1.6.0] - 2026-07-11
+## [1.6.0] - 2026-07-12
 
 ### Added
 
@@ -28,7 +28,7 @@ All notable changes to this project are documented here. Release history is also
 ### Security
 
 - Replaced the legacy five-pattern secret check as primary evidence with layered Gitleaks CI evidence; the bounded patch heuristic remains supplemental only.
-- Added patch-local detection for dynamically constructed credential-like values (concatenation, interpolation, joins, decoding, multiline and computed-field forms) with explicit false-positive exclusions and documented whole-program limits.
+- Added bounded, statement/hunk-aware detection for dynamically constructed credential-like values (concatenation/formatting, interpolation, joins, decoding, multiline and computed-field forms) under every review standard, with finding aggregation, explicit false-positive exclusions, and documented whole-program limits.
 - Passing scanner evidence requires a trusted app-backed check run. Same-name commit statuses, unknown Apps, incomplete evidence, and scanner-policy changes cannot prove a clean scan.
 - Secret scanning, workflow fetching, and external diagnostics are bounded and fail closed on incomplete critical evidence.
 

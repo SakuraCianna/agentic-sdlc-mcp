@@ -62,13 +62,23 @@ describe("evaluateSecretScannerEvidence", () => {
   it.each([
     ["gitleaks", "gitleaks"],
     ["TruffleHog Secrets Scan", "trufflehog"],
-    ["secretlint", "secretlint"],
-    ["detect-secrets", "detect-secrets"],
-    ["GitHub Secret Scanning", "github-secret-scanning"],
-  ] as const)("recognizes a passing mature scanner check: %s", (name, provider) => {
+  ] as const)("trusts a provenance-supported mature scanner check: %s", (name, provider) => {
     const evidence = evaluateSecretScannerEvidence(ci([signal(name, "passing", "check_run", 15368, true)]));
 
     expectStatus(evidence, "passing");
+    expect(evidence.providers).toContain(provider);
+  });
+
+  it.each([
+    ["secretlint", "secretlint"],
+    ["detect-secrets", "detect-secrets"],
+    ["GitHub Secret Scanning", "github-secret-scanning"],
+  ] as const)("keeps unsupported provenance provider claims unverified: %s", (name, provider) => {
+    const evidence = evaluateSecretScannerEvidence(
+      ci([signal(name, "passing", "check_run", 15368, true)])
+    );
+
+    expectStatus(evidence, "unverified");
     expect(evidence.providers).toContain(provider);
   });
 
@@ -86,7 +96,7 @@ describe("evaluateSecretScannerEvidence", () => {
 
   it("reports pending while a recognized scanner is incomplete", () => {
     const evidence = evaluateSecretScannerEvidence(
-      ci([signal("secretlint", "pending", "check_run", 15368, true)])
+      ci([signal("gitleaks", "pending", "check_run", 15368, true)])
     );
 
     expectStatus(evidence, "pending");
@@ -98,7 +108,7 @@ describe("evaluateSecretScannerEvidence", () => {
 
     expectStatus(skipped, "unverified");
     expectStatus(unrelated, "unverified");
-    expect(unrelated.reason).toMatch(/no mature secret scanner/i);
+    expect(unrelated.reason).toMatch(/no recognized secret scanner/i);
   });
 
   it("retains a recognized commit-status claim but does not treat it as verified clean", () => {

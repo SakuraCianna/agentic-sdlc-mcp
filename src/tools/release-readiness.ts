@@ -293,7 +293,8 @@ Required token scopes:
 
 Args:
   - owner, repo: Repository coordinates.
-  - baseRef, headRef (string?): Comparison range (defaults to default branch).
+  - baseRef (string?): Deprecated compatibility field; ignored.
+  - headRef (string?): Branch, tag, or commit SHA to release (defaults to default branch).
   - pullNumber (number?): Uses the PR head commit for CI status.
 
 Returns: isReady flag, blocking issues, CI status, docs check, release checklist, rollback template.`,

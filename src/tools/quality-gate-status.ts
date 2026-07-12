@@ -546,6 +546,8 @@ export function evaluateQualityGate(
   const policyReasons: string[] = [];
   const mergeableState = evidence.pullRequest.mergeableState?.toLocaleLowerCase() ?? null;
   const computingMergeableStates = new Set(["unknown", "queued", "checking", "pending"]);
+  const explicitlyFailingMergeableStates = new Set(["dirty", "unstable"]);
+  const nonBlockingMergeableStates = new Set(["clean", "has_hooks", "draft"]);
 
   for (const item of [
     ...evidence.ci.checkRuns.failing,
@@ -556,12 +558,8 @@ export function evaluateQualityGate(
   if (evidence.pullRequest.mergeable === false) {
     failingReasons.push("GitHub reports that the PR is not mergeable.");
   }
-  if (
-    mergeableState !== null &&
-    mergeableState !== "clean" &&
-    !computingMergeableStates.has(mergeableState)
-  ) {
-    failingReasons.push(`GitHub reports a non-clean mergeability state: ${mergeableState}.`);
+  if (mergeableState !== null && explicitlyFailingMergeableStates.has(mergeableState)) {
+    failingReasons.push(`GitHub reports a failing mergeability state: ${mergeableState}.`);
   }
   if (evidence.reviews.reviewDecision === "CHANGES_REQUESTED") {
     failingReasons.push(
@@ -594,6 +592,9 @@ export function evaluateQualityGate(
   }
   if (mergeableState !== null && computingMergeableStates.has(mergeableState)) {
     pendingReasons.push(`GitHub mergeability state is still computing: ${mergeableState}.`);
+  }
+  if (mergeableState === "behind") {
+    pendingReasons.push("The pull request head is behind the base branch and must be updated.");
   }
   if (contexts.missing.length > 0) {
     pendingReasons.push(`Required status contexts are missing: ${contexts.missing.join(", ")}.`);
@@ -653,6 +654,19 @@ export function evaluateQualityGate(
     policyReasons.push(
       `Unmodeled merge rules cannot be verified: ${mergePolicy.unmodeledRules.join(", ")}.`
     );
+  }
+  if (mergeableState === "blocked") {
+    policyReasons.push(
+      "GitHub reports that merging is blocked, but the underlying check or review requirement must be resolved from its specific evidence."
+    );
+  } else if (
+    mergeableState !== null &&
+    !computingMergeableStates.has(mergeableState) &&
+    mergeableState !== "behind" &&
+    !explicitlyFailingMergeableStates.has(mergeableState) &&
+    !nonBlockingMergeableStates.has(mergeableState)
+  ) {
+    policyReasons.push(`GitHub returned an unrecognized mergeability state: ${mergeableState}.`);
   }
   if (
     !unverified.has("branch_protection") &&

@@ -554,6 +554,26 @@ describe("handleReviewPr — ownership check", () => {
 });
 
 describe("handleReviewPr — structured review contract", () => {
+  it("runs supplemental dynamic credential detection under the default basic standard", async () => {
+    const octokit = makeMockOctokit({
+      files: [
+        {
+          filename: "src/auth.ts",
+          status: "modified",
+          additions: 1,
+          deletions: 0,
+          patch: "+const authorizationHeader = prefix + accountId + signature;",
+        },
+      ],
+    });
+
+    const { structured } = await handleReviewPr(BASE_PARAMS, REF, octokit);
+
+    expect(structured.findings).toContainEqual(
+      expect.objectContaining({ category: "DynamicSecretConstruction", severity: "high" })
+    );
+  });
+
   it("keeps raw external values structured while rendering safe bounded single-line Markdown", async () => {
     const title = "Review\n## forged [link](javascript:alert(1))" + "x".repeat(500);
     const filename = "src/unsafe\n## path.ts";
