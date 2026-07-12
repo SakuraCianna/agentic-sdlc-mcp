@@ -121,10 +121,17 @@ export async function handleReleaseReadiness(
       ciStatus = "pending";
       const pendingCount = ci.checkRuns.pending.length + ci.commitStatuses.pending.length;
       ciSummary = `[PENDING] ${pendingCount} CI signal(s) still running.${notes}`;
-    } else if (ci.totalSignals === 0 || anySourceUnverified) {
+    } else if (
+      ci.checkRuns.passing.length + ci.commitStatuses.passing.length === 0 ||
+      anySourceUnverified
+    ) {
       ciStatus = "unknown";
       ciSummary = `[WARN] CI evidence could not be verified: ${
-        ci.totalSignals === 0 ? "no check runs or commit statuses were found" : "one or more CI sources are unverified"
+        ci.totalSignals === 0
+          ? "no check runs or commit statuses were found"
+          : anySourceUnverified
+            ? "one or more CI sources are unverified"
+            : "all CI signals were skipped or neutral"
       }.${notes} Ensure your token has the \`repo\` scope (or \`public_repo\` for public-only repos) to read CI evidence.`;
     } else {
       ciStatus = "passing";

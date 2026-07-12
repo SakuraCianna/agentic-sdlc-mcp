@@ -260,30 +260,42 @@ export interface SecretScannerProvenanceResult {
 }
 
 type WorkflowRunData = Awaited<ReturnType<Octokit["actions"]["getWorkflowRun"]>>["data"];
+type WorkflowJobData = Awaited<
+  ReturnType<Octokit["actions"]["getJobForWorkflowRun"]>
+>["data"];
 
 interface SecretScannerProvenanceCache {
   runs: Map<number, Promise<WorkflowRunData>>;
+  jobs: Map<number, Promise<WorkflowJobData>>;
   workflows: Map<string, Promise<string>>;
 }
 
-function actionsRunId(url: string | null, ref: RepoRef): number | null {
+function actionsRunCoordinates(
+  url: string | null,
+  ref: RepoRef
+): { runId: number; jobId: number } | null {
   if (!url) return null;
   try {
     const parsed = new URL(url);
     if (parsed.protocol !== "https:" || parsed.hostname.toLowerCase() !== "github.com") return null;
     const parts = parsed.pathname.split("/").filter(Boolean);
     if (
-      parts.length < 5 ||
+      parts.length < 7 ||
       parts[0]?.toLowerCase() !== ref.owner.toLowerCase() ||
       parts[1]?.toLowerCase() !== ref.repo.toLowerCase() ||
       parts[2] !== "actions" ||
       parts[3] !== "runs" ||
-      !/^\d+$/.test(parts[4] ?? "")
+      !/^\d+$/.test(parts[4] ?? "") ||
+      parts[5] !== "job" ||
+      !/^\d+$/.test(parts[6] ?? "")
     ) {
       return null;
     }
     const runId = Number(parts[4]);
-    return Number.isSafeInteger(runId) && runId > 0 ? runId : null;
+    const jobId = Number(parts[6]);
+    return Number.isSafeInteger(runId) && runId > 0 && Number.isSafeInteger(jobId) && jobId > 0
+      ? { runId, jobId }
+      : null;
   } catch {
     return null;
   }
@@ -307,6 +319,7 @@ function pinnedScannerActionFound(
   if (trustedActions.size === 0) return false;
   const normalizedCheckName = checkName.trim().toLowerCase();
 
+  const matchingJobs: Array<Record<string, unknown>> = [];
   for (const [jobId, job] of Object.entries(jobs as Record<string, unknown>)) {
     if (!job || typeof job !== "object" || Array.isArray(job)) continue;
     const jobRecord = job as Record<string, unknown>;
@@ -316,13 +329,20 @@ function pinnedScannerActionFound(
     const checkMatchesJob =
       normalizedCheckName === normalizedJobName ||
       normalizedCheckName.startsWith(`${normalizedJobName} (`);
-    if (!checkMatchesJob) continue;
-    if (jobRecord["continue-on-error"] !== undefined && jobRecord["continue-on-error"] !== false) {
-      return false;
-    }
-    const steps = jobRecord["steps"];
-    if (!Array.isArray(steps)) continue;
-    for (const step of steps) {
+    if (checkMatchesJob) matchingJobs.push(jobRecord);
+  }
+  if (matchingJobs.length !== 1) return false;
+  const matchedJob = matchingJobs[0]!;
+  if (
+    (matchedJob["if"] !== undefined && matchedJob["if"] !== true) ||
+    (matchedJob["continue-on-error"] !== undefined &&
+      matchedJob["continue-on-error"] !== false)
+  ) {
+    return false;
+  }
+  const steps = matchedJob["steps"];
+  if (!Array.isArray(steps)) return false;
+  for (const step of steps) {
       if (!step || typeof step !== "object" || Array.isArray(step)) continue;
       const uses = (step as Record<string, unknown>)["uses"];
       if (typeof uses !== "string") continue;
@@ -340,7 +360,6 @@ function pinnedScannerActionFound(
       ) {
         return true;
       }
-    }
   }
   return false;
 }
@@ -360,13 +379,14 @@ async function verifySignalProvenance(
       error: `check \`${signal.name}\` uses a recognized provider whose workflow provenance is not supported in this version.`,
     };
   }
-  const runId = actionsRunId(signal.url, params.ref);
-  if (runId === null) {
+  const coordinates = actionsRunCoordinates(signal.url, params.ref);
+  if (coordinates === null) {
     return {
       verified: false,
       error: `check \`${signal.name}\` does not link to a verifiable GitHub Actions workflow run.`,
     };
   }
+  const { runId, jobId } = coordinates;
 
   try {
     let runPromise = cache.runs.get(runId);
@@ -381,9 +401,24 @@ async function verifySignalProvenance(
       cache.runs.set(runId, runPromise);
     }
     const run = await runPromise;
+    let jobPromise = cache.jobs.get(jobId);
+    if (!jobPromise) {
+      jobPromise = params.octokit.actions
+        .getJobForWorkflowRun({
+          owner: params.ref.owner,
+          repo: params.ref.repo,
+          job_id: jobId,
+        })
+        .then((response) => response.data);
+      cache.jobs.set(jobId, jobPromise);
+    }
+    const job = await jobPromise;
     const workflowPath = typeof run.path === "string" ? run.path.replace(/^\.\//, "") : "";
     if (
       run.head_sha !== params.headSha ||
+      job.run_id !== runId ||
+      job.head_sha !== params.headSha ||
+      job.name.trim().toLowerCase() !== signal.name.trim().toLowerCase() ||
       !/^\.github\/workflows\/[^/]+\.ya?ml$/i.test(workflowPath)
     ) {
       return {
@@ -438,6 +473,7 @@ export async function verifySecretScannerProvenance(
   });
   const cache: SecretScannerProvenanceCache = {
     runs: new Map(),
+    jobs: new Map(),
     workflows: new Map(),
   };
   const candidatesToVerify = candidates.slice(0, MAX_SCANNER_PROVENANCE_CANDIDATES);

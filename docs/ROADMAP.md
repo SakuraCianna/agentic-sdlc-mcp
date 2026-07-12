@@ -529,9 +529,9 @@
 > - `review_pr_against_standard.workType` 为可选显式覆盖；省略时返回保守推断、置信度与理由。
 > - `quality_gate_status` 保留兼容的 ref 模式；ref 模式只判断 CI，不虚构 PR review/policy 缺口。
 > - v1.6 的 `blockingLabels` 使用可覆盖的内置默认值，仓库级配置留到 v1.7 `.agentic-sdlc.yml`。
-> - 发布就绪度同步修复：零信号、pending、unknown 均不可发布，只有明确 passing CI 才可 ready。
-> - 密钥检测采用“成熟 Gitleaks CI 证据为主、内置启发式为辅”的分层方案；同名 status、未知 App、不完整证据或扫描策略自修改均不能证明 clean scan。
-> - 补充启发式在所有 review standard 下运行，按 diff hunk/statement 有界扫描并聚合输出；覆盖 credential 字段的动态拼接/格式化、模板插值、join、解码、多行和可识别计算属性，以 `DynamicSecretConstruction` 表达风险，但不替代跨文件数据流分析、CodeQL/SAST 或人工审查。
+> - 发布就绪度同步修复：零信号、全 skipped/neutral、pending、unknown 均不可发布，只有至少一个明确 passing 且无失败、等待或证据缺口的 CI 才可 ready。
+> - 密钥检测采用“成熟 Gitleaks CI 证据为主、内置启发式为辅”的分层方案；可信证据绑定具体 Actions job、run、head SHA 和唯一的 base workflow job，同名/重名 status/job、未知 App、不完整证据或扫描策略自修改均不能证明 clean scan。
+> - 补充启发式在所有 review standard 下运行，按 diff hunk/statement 有界扫描并聚合输出；覆盖 credential 字段和认证头 API sink 的动态拼接/格式化、多语言模板插值与 builder、join、解码、多行和有界的补丁内字段别名，以 `DynamicSecretConstruction` 表达风险，但不替代跨文件数据流分析、CodeQL/SAST 或人工审查。
 
 #### 1. 扩展 PR 门禁信号
 

@@ -875,6 +875,9 @@ describe("handleReviewPr — mature secret scanner evidence", () => {
       verified: false,
       providers: ["gitleaks"],
     });
+    expect(structured.secretScannerEvidence?.signals[0]).toMatchObject({
+      provenanceVerified: false,
+    });
     expect(structured.findings).toContainEqual(
       expect.objectContaining({ category: "MissingMatureSecretScannerEvidence", severity: "high" })
     );

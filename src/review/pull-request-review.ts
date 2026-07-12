@@ -499,7 +499,7 @@ interface SecretLexicalState {
 }
 
 function maskSecretCodeLine(line: string, state: SecretLexicalState): string {
-  if (state.mode === "code" && /^(?:\s*#|\s*\*)/.test(line)) return "";
+  if (state.mode === "code" && /^(?:\s*#|\s*\*)/.test(line)) return " ".repeat(line.length);
   let code = "";
   for (let index = 0; index < line.length; index += 1) {
     const character = line[index] ?? "";
@@ -543,11 +543,11 @@ function maskSecretCodeLine(line: string, state: SecretLexicalState): string {
       code += character;
     }
   }
-  return code;
+  return code.padEnd(line.length, " ");
 }
 
 function maskSecretCommentsLine(line: string, state: SecretLexicalState): string {
-  if (state.mode === "code" && /^(?:\s*#|\s*\*)/.test(line)) return "";
+  if (state.mode === "code" && /^(?:\s*#|\s*\*)/.test(line)) return " ".repeat(line.length);
   let content = "";
   for (let index = 0; index < line.length; index += 1) {
     const character = line[index] ?? "";
@@ -590,7 +590,7 @@ function maskSecretCommentsLine(line: string, state: SecretLexicalState): string
       }
     }
   }
-  return content;
+  return content.padEnd(line.length, " ");
 }
 
 interface ScannedSecretLine extends NewSideLine {
@@ -600,10 +600,13 @@ interface ScannedSecretLine extends NewSideLine {
 }
 
 interface SecretStatement {
+  hunk: number;
   raw: string;
   code: string;
   semantic: string;
   added: boolean[];
+  containsAddedLine: boolean;
+  truncated: boolean;
 }
 
 const MAX_SECRET_STATEMENT_LINES = 100;
@@ -628,15 +631,29 @@ function buildSecretStatements(lines: ScannedSecretLine[]): SecretStatement[] {
   let semantic = "";
   let added: boolean[] = [];
   let lineCount = 0;
+  let containsAddedLine = false;
+  let truncated = false;
   let activeHunk = lines[0]?.hunk ?? 0;
 
   const flush = (): void => {
-    if (semantic.trim().length > 0) statements.push({ raw, code, semantic, added });
+    if (semantic.trim().length > 0) {
+      statements.push({
+        hunk: activeHunk,
+        raw,
+        code,
+        semantic,
+        added,
+        containsAddedLine,
+        truncated,
+      });
+    }
     raw = "";
     code = "";
     semantic = "";
     added = [];
     lineCount = 0;
+    containsAddedLine = false;
+    truncated = false;
   };
 
   for (let index = 0; index < lines.length; index += 1) {
@@ -646,10 +663,15 @@ function buildSecretStatements(lines: ScannedSecretLine[]): SecretStatement[] {
       flush();
       activeHunk = line.hunk;
     }
-    raw += `${line.text}\n`;
-    code += `${line.code}\n`;
-    semantic += `${line.semantic}\n`;
-    added.push(...Array.from({ length: line.text.length }, () => line.added), false);
+    const capacity = Math.max(0, MAX_SECRET_STATEMENT_CHARS - raw.length - 1);
+    const length = Math.min(line.text.length, capacity);
+    raw += `${line.text.slice(0, length)}\n`;
+    code += `${line.code.slice(0, length)}\n`;
+    semantic += `${line.semantic.slice(0, length)}\n`;
+    for (let charIndex = 0; charIndex < length; charIndex += 1) added.push(line.added);
+    added.push(false);
+    if (length < line.text.length) truncated = true;
+    containsAddedLine ||= line.added;
     lineCount += 1;
 
     let nextMeaningful: ScannedSecretLine | undefined;
@@ -666,12 +688,14 @@ function buildSecretStatements(lines: ScannedSecretLine[]): SecretStatement[] {
       line.modeAfter !== "code" ||
       bracketDepth(code) > 0 ||
       /(?:[=+%.,?:|&\\]|\b(?:return|yield))\s*$/.test(trimmedCode) ||
-      /^\s*(?:[+%]|\.(?:concat|format|join)\b)/.test(nextMeaningful?.code ?? "");
+      /^\s*(?:[=+%]|\.(?:append|concat|format|join)\b)/.test(nextMeaningful?.code ?? "");
     const terminated = /;\s*$/.test(line.code) || !continues;
+    const limitReached =
+      lineCount >= MAX_SECRET_STATEMENT_LINES || raw.length >= MAX_SECRET_STATEMENT_CHARS;
+    if (!terminated && limitReached) truncated = true;
     if (
       terminated ||
-      lineCount >= MAX_SECRET_STATEMENT_LINES ||
-      raw.length >= MAX_SECRET_STATEMENT_CHARS
+      limitReached
     ) {
       flush();
     }
@@ -713,7 +737,7 @@ function assignmentExpressionEnd(code: string, start: number): number {
 
 function assignmentTargetStart(code: string, operatorIndex: number): number {
   let start = 0;
-  for (const delimiter of [";", ",", "{", "}", "\n"]) {
+  for (const delimiter of [";", ",", "{", "}"]) {
     start = Math.max(start, code.lastIndexOf(delimiter, operatorIndex - 1) + 1);
   }
   return start;
@@ -731,6 +755,21 @@ function isCredentialTarget(target: string): boolean {
   return /(?:apikey|authorization(?:header|token)?|clientsecret|credentials?|password|privatekey|secrets?|tokens?)/.test(
     normalized
   );
+}
+
+function assignedIdentifier(target: string): string | null {
+  const match = target
+    .trim()
+    .match(/^(?:(?:const|let|var|final|val|auto|string|String)\s+)?([A-Za-z_$][\w$]*)$/);
+  return match?.[1] ?? null;
+}
+
+function targetUsesCredentialAlias(target: string, aliases: ReadonlySet<string>): boolean {
+  for (const alias of aliases) {
+    const escaped = alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (new RegExp(`\\[\\s*${escaped}\\s*\\]`).test(target)) return true;
+  }
+  return false;
 }
 
 function isTrustedRuntimeSecretExpression(value: string): boolean {
@@ -753,11 +792,14 @@ function isDynamicSecretExpression(value: string, codeValue: string): boolean {
   return (
     codeValue.includes("+") ||
     codeValue.includes("%") ||
-    /\.(?:concat|format|join)\s*\(/i.test(codeValue) ||
-    /\b(?:Buffer\.from|Convert\.FromBase64String|String\.fromCharCode|TextDecoder\s*\([^)]*\)\.decode|atob|base64\.(?:b64decode|urlsafe_b64decode)|btoa)\s*\(/i.test(codeValue) ||
+    /\.(?:append|concat|format|join)\s*\(/i.test(codeValue) ||
+    /\b(?:String\.format|fmt\.Sprintf|format!|concat!)\s*\(/i.test(codeValue) ||
+    /\b(?:Buffer\.from|Convert\.FromBase64String|String\.fromCharCode|TextDecoder\s*\([^)]*\)\.decode|atob|base64\.(?:b64decode|urlsafe_b64decode)|btoa|decodeURIComponent)\s*\(/i.test(codeValue) ||
     /`[^`]*\$\{[^}]+\}[^`]*`/s.test(normalized) ||
     /\bf["'][^"']*\{[^}]+\}[^"']*["']/is.test(normalized) ||
-    /\$@?["'][^"']*\{[^}]+\}[^"']*["']/s.test(normalized)
+    /\$@?["'][^"']*\{[^}]+\}[^"']*["']/s.test(normalized) ||
+    /#\{[^}]+\}|\{\$[A-Za-z_][\w]*\}|\\\([^)]+\)/s.test(normalized) ||
+    /["'][^"']*\$[A-Za-z_][\w]*[^"']*["']/s.test(normalized)
   );
 }
 
@@ -813,15 +855,32 @@ export function scanPatchForSecrets(
     findingGroups.set(key, { finding: item, count: 1 });
   };
 
-  for (const statement of buildSecretStatements(scannedLines)) {
+  const statements = buildSecretStatements(scannedLines);
+  const credentialAliasesByHunk = new Map<number, Set<string>>();
+  for (const statement of statements) {
+    const aliases = credentialAliasesByHunk.get(statement.hunk) ?? new Set<string>();
+    credentialAliasesByHunk.set(statement.hunk, aliases);
+    if (statement.truncated && statement.containsAddedLine) {
+      recordFinding(
+        finding(
+          "high",
+          "SecretScanEvidenceIncomplete",
+          "security",
+          `An added statement in \`${normalizedFilename}\` exceeded the bounded secret heuristic.`,
+          [normalizedFilename],
+          `The statement exceeded the ${MAX_SECRET_STATEMENT_LINES}-line or ${MAX_SECRET_STATEMENT_CHARS.toLocaleString("en-US")}-character limit, so the patch-local heuristic cannot safely inspect all credential construction after the limit.`,
+          "Split the statement into reviewable units and require trusted scanner or SAST evidence plus manual review before merging."
+        )
+      );
+    }
     for (const operatorIndex of assignmentOperatorIndexes(statement.code)) {
       const targetStart = assignmentTargetStart(statement.code, operatorIndex);
       const expressionEnd = assignmentExpressionEnd(statement.code, operatorIndex + 1);
       const target = statement.raw.slice(targetStart, operatorIndex);
-      if (!isCredentialTarget(target)) continue;
       const expression = statement.semantic.slice(operatorIndex + 1, expressionEnd);
       const codeExpression = statement.code.slice(operatorIndex + 1, expressionEnd);
       const codeTarget = statement.code.slice(targetStart, operatorIndex);
+      const usesCredentialAlias = targetUsesCredentialAlias(target, aliases);
       const meaningfulAdded = statement.added
         .slice(targetStart, expressionEnd)
         .some((isAdded, offset) => {
@@ -829,13 +888,50 @@ export function scanPatchForSecrets(
           const absolute = targetStart + offset;
           return /\S/.test(statement.semantic[absolute] ?? "");
         });
-      if (!meaningfulAdded) continue;
       if (
-        !isDynamicSecretExpression(expression, codeExpression) &&
-        !isDynamicSecretExpression(target, codeTarget)
+        meaningfulAdded &&
+        (usesCredentialAlias || isCredentialTarget(target)) &&
+        (usesCredentialAlias ||
+          isDynamicSecretExpression(expression, codeExpression) ||
+          isDynamicSecretExpression(target, codeTarget))
       ) {
-        continue;
+        recordFinding(
+          finding(
+            "high",
+            "DynamicSecretConstruction",
+            "security",
+            `Credential-like value is dynamically constructed in \`${normalizedFilename}\`.`,
+            [normalizedFilename],
+            "An added part of this assignment combines, interpolates, formats, joins, decodes, or indirectly assigns data into a credential-like target, so patch-local literal matching cannot establish whether the result is safe.",
+            "Verify every input source, remove hardcoded fragments, prefer a secret manager or environment variable, and require trusted scanner or SAST evidence plus manual review."
+          )
+        );
       }
+
+      const identifier = assignedIdentifier(target);
+      if (
+        identifier &&
+        aliases.size < 100 &&
+        isCredentialTarget(expression) &&
+        isDynamicSecretExpression(expression, codeExpression)
+      ) {
+        aliases.add(identifier);
+      }
+    }
+
+    const credentialSinkPattern =
+      /\.(?:setHeader|setRequestProperty|set)\s*\(\s*(["'])([^"']+)\1\s*,/gi;
+    for (const match of statement.semantic.matchAll(credentialSinkPattern)) {
+      if (match.index === undefined || !isCredentialTarget(match[2] ?? "")) continue;
+      const expressionStart = match.index + match[0].length;
+      const expression = statement.semantic.slice(expressionStart);
+      const codeExpression = statement.code.slice(expressionStart);
+      const meaningfulAdded = statement.added
+        .slice(match.index, statement.semantic.length)
+        .some((isAdded, offset) =>
+          isAdded ? /\S/.test(statement.semantic[match.index! + offset] ?? "") : false
+        );
+      if (!meaningfulAdded || !isDynamicSecretExpression(expression, codeExpression)) continue;
       recordFinding(
         finding(
           "high",
@@ -843,7 +939,7 @@ export function scanPatchForSecrets(
           "security",
           `Credential-like value is dynamically constructed in \`${normalizedFilename}\`.`,
           [normalizedFilename],
-          "An added part of this assignment combines, interpolates, formats, joins, or decodes data into a credential-like target, so patch-local literal matching cannot establish whether the result is safe.",
+          "An added API call constructs a credential-like header value dynamically, so patch-local literal matching cannot establish whether the result is safe.",
           "Verify every input source, remove hardcoded fragments, prefer a secret manager or environment variable, and require trusted scanner or SAST evidence plus manual review."
         )
       );

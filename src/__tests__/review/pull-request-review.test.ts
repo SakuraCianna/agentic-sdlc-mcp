@@ -372,6 +372,14 @@ describe("scanPatchForSecrets", () => {
     '+const secret = new TextDecoder().decode(secretBytes);',
     '+config["auth"]["token"] = prefix + signature;',
     '+config["api" + "Key"] = prefix + signature;',
+    '+const token = new StringBuilder().append(prefix).append(signature).toString();',
+    '+let token = format!("{}.{}", prefix, signature);',
+    '+token := fmt.Sprintf("%s.%s", prefix, signature)',
+    '+const apiKey = decodeURIComponent(encodedPrefix) + signature;',
+    '+token = "#{prefix}.#{signature}"',
+    '+$token = "{$prefix}.{$signature}";',
+    '+val token = "$prefix.$signature"',
+    '+let token = "\\(prefix).\\(signature)"',
   ])("flags a dynamically constructed credential expression %s", (patch) => {
     expect(scanPatchForSecrets("src/config.ts", patch)).toContainEqual(
       expect.objectContaining({
@@ -390,6 +398,90 @@ describe("scanPatchForSecrets", () => {
         "+const apiToken =\n+  tokenPrefix +\n+  accountId +\n+  signature;"
       )
     ).toContainEqual(expect.objectContaining({ category: "DynamicSecretConstruction" }));
+  });
+
+  it.each([
+    "+const apiToken\n+  = prefix + signature;",
+    "@@ -1,2 +1,3 @@\n const apiToken\n+  = prefix + signature;\n const done = true;",
+  ])("flags a credential when the target and operator are split across lines", (patch) => {
+    expect(scanPatchForSecrets("src/config.ts", patch)).toContainEqual(
+      expect.objectContaining({ category: "DynamicSecretConstruction" })
+    );
+  });
+
+  it.each([
+    '+request.setHeader("Authorization", "Bearer " + parts.join(""));',
+    '+headers.set("X-Api-Key", Buffer.from(keyBytes).toString("base64"));',
+    '+connection.setRequestProperty("Authorization", prefix + signature);',
+  ])("flags a dynamically constructed credential passed directly to an API sink", (patch) => {
+    expect(scanPatchForSecrets("src/client.ts", patch)).toContainEqual(
+      expect.objectContaining({ category: "DynamicSecretConstruction" })
+    );
+  });
+
+  it("tracks a bounded patch-local alias for a dynamically constructed credential field", () => {
+    const patch =
+      '+const field = ["api", "key"].join("_");\n+config[field] = assembled;';
+
+    expect(scanPatchForSecrets("src/config.ts", patch)).toContainEqual(
+      expect.objectContaining({ category: "DynamicSecretConstruction" })
+    );
+  });
+
+  it("does not let a later alias declaration affect an earlier assignment", () => {
+    const patch =
+      '+config[field] = prefix + signature;\n+const field = ["api", "key"].join("_");';
+
+    expect(scanPatchForSecrets("src/config.ts", patch)).toEqual([]);
+  });
+
+  it("does not throw or expand output for a one-megabyte added line", () => {
+    const patch = `+const token = prefix + signature; // ${"x".repeat(1_000_000)}`;
+
+    expect(() => scanPatchForSecrets("src/config.ts", patch)).not.toThrow();
+    const findings = scanPatchForSecrets("src/config.ts", patch);
+    expect(findings).toHaveLength(2);
+    expect(findings.map((item) => item.category)).toEqual(
+      expect.arrayContaining(["DynamicSecretConstruction", "SecretScanEvidenceIncomplete"])
+    );
+  });
+
+  it("fails closed when credential construction appears after the statement scan limit", () => {
+    const patch = `+${"x".repeat(70_000)} const token = prefix + signature;`;
+
+    expect(scanPatchForSecrets("src/config.ts", patch)).toContainEqual(
+      expect.objectContaining({ category: "SecretScanEvidenceIncomplete", severity: "high" })
+    );
+  });
+
+  it("fails closed when an unterminated credential statement crosses the line limit", () => {
+    const patch = [
+      "+const token =",
+      ...Array.from({ length: 99 }, (_, index) => `+// explanation ${index}`),
+      "+prefix + signature;",
+    ].join("\n");
+
+    expect(scanPatchForSecrets("src/config.ts", patch)).toContainEqual(
+      expect.objectContaining({ category: "SecretScanEvidenceIncomplete", severity: "high" })
+    );
+  });
+
+  it("fails closed at the exact character boundary when the statement continues", () => {
+    const lineAtBoundary = `${"x".repeat(63_997)} =`;
+    expect(lineAtBoundary).toHaveLength(63_999);
+
+    expect(scanPatchForSecrets("src/generated.ts", `+${lineAtBoundary}`)).toContainEqual(
+      expect.objectContaining({ category: "SecretScanEvidenceIncomplete", severity: "high" })
+    );
+  });
+
+  it("keeps code/comment masks aligned for context lines", () => {
+    const patch =
+      '@@ -1,2 +1,3 @@\n const apiToken /* context */\n+  = prefix + signature;\n const done = true;';
+
+    expect(scanPatchForSecrets("src/config.ts", patch)).toContainEqual(
+      expect.objectContaining({ category: "DynamicSecretConstruction" })
+    );
   });
 
   it.each([

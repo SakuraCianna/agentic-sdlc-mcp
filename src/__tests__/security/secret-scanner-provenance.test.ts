@@ -57,6 +57,15 @@ function octokitForWorkflow(
           head_sha: headSha,
         },
       }),
+      getJobForWorkflowRun: vi.fn().mockImplementation(({ job_id }: { job_id: number }) =>
+        Promise.resolve({
+          data: {
+            name: "gitleaks",
+            run_id: job_id + 99,
+            head_sha: headSha,
+          },
+        })
+      ),
     },
     repos: {
       getContent: vi.fn().mockResolvedValue({
@@ -148,6 +157,46 @@ describe("verifySecretScannerProvenance", () => {
     expect(evaluateSecretScannerEvidence(result.ci).status).toBe("unverified");
   });
 
+  it("rejects duplicate display names so a no-op job cannot borrow pinned scanner provenance", async () => {
+    const workflow = `jobs:
+  actual-scanner:
+    name: gitleaks
+    if: false
+    steps:
+      - uses: gitleaks/gitleaks-action@${PINNED_SHA}
+  noop:
+    name: gitleaks
+    steps:
+      - run: echo never-scans`;
+    const result = await verifySecretScannerProvenance(
+      ci("https://github.com/test-org/test-repo/actions/runs/106/job/7"),
+      {
+        ref: REF,
+        headSha: "head-sha",
+        baseRef: "base-sha",
+        octokit: octokitForWorkflow(PINNED_SHA, "head-sha", workflow),
+      }
+    );
+
+    expect(result.ci.checkRuns.passing[0]?.provenanceVerified).toBe(false);
+    expect(evaluateSecretScannerEvidence(result.ci).status).toBe("unverified");
+  });
+
+  it("rejects a details URL whose concrete job does not match the scanner signal", async () => {
+    const octokit = octokitForWorkflow(PINNED_SHA);
+    vi.mocked(octokit.actions.getJobForWorkflowRun).mockResolvedValueOnce({
+      data: { name: "noop", run_id: 107, head_sha: "head-sha" },
+    } as never);
+
+    const result = await verifySecretScannerProvenance(
+      ci("https://github.com/test-org/test-repo/actions/runs/107/job/8"),
+      { ref: REF, headSha: "head-sha", baseRef: "base-sha", octokit }
+    );
+
+    expect(result.ci.checkRuns.passing[0]?.provenanceVerified).toBe(false);
+    expect(evaluateSecretScannerEvidence(result.ci).status).toBe("unverified");
+  });
+
   it.each([
     `jobs:
   gitleaks:
@@ -191,7 +240,25 @@ describe("verifySecretScannerProvenance", () => {
     expect(result.errors).toEqual([]);
     expect(result.ci.checkRuns.passing.every((signal) => signal.provenanceVerified)).toBe(true);
     expect(octokit.actions.getWorkflowRun).toHaveBeenCalledTimes(1);
+    expect(octokit.actions.getJobForWorkflowRun).toHaveBeenCalledTimes(1);
     expect(octokit.repos.getContent).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails closed when the concrete Actions job cannot be fetched", async () => {
+    const octokit = octokitForWorkflow(PINNED_SHA);
+    vi.mocked(octokit.actions.getJobForWorkflowRun).mockRejectedValueOnce(
+      Object.assign(new Error("job unavailable"), { status: 403 })
+    );
+
+    const result = await verifySecretScannerProvenance(
+      ci("https://github.com/test-org/test-repo/actions/runs/108/job/9"),
+      { ref: REF, headSha: "head-sha", baseRef: "base-sha", octokit }
+    );
+
+    expect(result.ci.checkRuns.passing[0]?.provenanceVerified).toBe(false);
+    expect(result.ci.unverifiedSignals).toContain("secret_scanner_provenance");
+    expect(result.errors).not.toHaveLength(0);
+    expect(evaluateSecretScannerEvidence(result.ci).status).toBe("unverified");
   });
 
   it("fails closed when recognized provenance candidates exceed the verification limit", async () => {

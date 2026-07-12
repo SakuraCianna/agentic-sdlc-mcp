@@ -185,6 +185,18 @@ describe("handleReleaseReadiness", () => {
     expect(structured.isReady).toBe(false);
   });
 
+  it("does not report only skipped or neutral CI signals as passing", async () => {
+    const octokit = makeMockOctokit({
+      checks: [{ name: "optional", status: "completed", conclusion: "neutral" }],
+      statuses: [],
+    });
+
+    const { structured } = await handleReleaseReadiness({ headRef: "main" }, REF, octokit);
+
+    expect(structured.ciStatus).toBe("unknown");
+    expect(structured.isReady).toBe(false);
+  });
+
   it("accepts status-only passing CI evidence", async () => {
     const octokit = makeMockOctokit({
       checks: [],

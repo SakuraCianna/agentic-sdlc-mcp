@@ -20,7 +20,7 @@ All notable changes to this project are documented here. Release history is also
 
 ### Fixed
 
-- Zero CI signals and pending CI can no longer be reported as release-ready.
+- Zero, entirely skipped/neutral, pending, or unverifiable CI signals can no longer be reported as release-ready.
 - Truncated changed-file evidence fails closed for workflow policy and secret-scanner policy review.
 - Draft and commit-count hygiene findings remain compatible with the earlier basic review behavior.
 - CI summaries no longer echo externally controlled names or raw GitHub errors.
@@ -28,8 +28,8 @@ All notable changes to this project are documented here. Release history is also
 ### Security
 
 - Replaced the legacy five-pattern secret check as primary evidence with layered Gitleaks CI evidence; the bounded patch heuristic remains supplemental only.
-- Added bounded, statement/hunk-aware detection for dynamically constructed credential-like values (concatenation/formatting, interpolation, joins, decoding, multiline and computed-field forms) under every review standard, with finding aggregation, explicit false-positive exclusions, and documented whole-program limits.
-- Passing scanner evidence requires a trusted app-backed check run. Same-name commit statuses, unknown Apps, incomplete evidence, and scanner-policy changes cannot prove a clean scan.
+- Added bounded, statement/hunk-aware detection for dynamically constructed credential-like values and authentication-header API sinks (concatenation/formatting, common multi-language interpolation/builders, joins, decoding, multiline and patch-local computed-field aliases) under every review standard, with finding aggregation, explicit false-positive exclusions, and documented whole-program limits.
+- Passing scanner evidence requires a trusted app-backed check bound to its concrete Actions job, run, reviewed head, and unique immutable base-workflow scanner job. Same-name/duplicate jobs or statuses, unknown Apps, incomplete evidence, and scanner-policy changes cannot prove a clean scan.
 - Secret scanning, workflow fetching, and external diagnostics are bounded and fail closed on incomplete critical evidence.
 
 ### Compatibility

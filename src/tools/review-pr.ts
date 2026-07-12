@@ -127,6 +127,7 @@ export const ReviewPrOutputSchema = {
           source: z.enum(["check_run", "commit_status"]),
           appId: z.number().int().nullable(),
           trusted: z.boolean(),
+          provenanceVerified: z.boolean(),
           state: z.enum(["passing", "failing", "pending", "skipped"]),
           url: z.string().nullable(),
         })
