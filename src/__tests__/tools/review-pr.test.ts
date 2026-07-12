@@ -30,7 +30,12 @@ const {
   handleReviewPr,
 } = await import("../../tools/review-pr.js");
 
-import type { PrFile, PrMeta, CodeownersRule, ReviewPrInput } from "../../tools/review-pr.js";
+import type {
+  CodeownersRule,
+  PrFile,
+  PrMeta,
+  ReviewPrInput,
+} from "../../tools/review-pr.js";
 import type { RepoRef } from "../../types.js";
 
 // ---------------------------------------------------------------------------
@@ -236,13 +241,22 @@ describe("scanPatchForSecrets", () => {
     const findings = scanPatchForSecrets("src/config.ts", patch);
     expect(findings.length).toBeGreaterThan(0);
     expect(findings[0].severity).toBe("high");
-    expect(findings[0].description).toMatch(/password/i);
+    expect(findings[0].description).toMatch(/credential|secret/i);
   });
 
-  it("detects AWS access key pattern", () => {
-    const patch = `+const key = "AKIAIOSFODNN7EXAMPLE1234";`;
+  it("does not flag the AWS documentation example placeholder", () => {
+    const patch = `+const key = "AKIAIOSFODNN7EXAMPLE";`;
     const findings = scanPatchForSecrets("src/aws.ts", patch);
-    expect(findings.length).toBeGreaterThan(0);
+    expect(findings).toHaveLength(0);
+  });
+
+  it("detects a quoted JSON credential key through the shared scanner", () => {
+    const syntheticValue = ["live", "1234567890abcdef"].join("_");
+    const patch = `+  "apiKey": "${syntheticValue}",`;
+    const findings = scanPatchForSecrets("config/service.json", patch);
+    expect(findings).toContainEqual(
+      expect.objectContaining({ severity: "high", category: "Security" })
+    );
   });
 
   it("does NOT flag removed lines (lines starting with -)", () => {
@@ -284,239 +298,35 @@ describe("sortFindings", () => {
 });
 
 // ---------------------------------------------------------------------------
-// parseCodeowners
+// Legacy CODEOWNERS exports
 // ---------------------------------------------------------------------------
 
-describe("parseCodeowners", () => {
-  it("parses pattern + owners, skipping blank lines and comments", () => {
-    const content = `
-# This is a comment
-*.ts @alice
-/src/tools/ @bob @org/reviewers
+describe("legacy CODEOWNERS exports", () => {
+  it("keeps old named helpers importable and preserves ownership finding behavior", () => {
+    const rules: CodeownersRule[] = parseCodeowners("/src/tools/ @owner1\n");
 
-# another comment
-docs/ @carol
-`;
-    const rules = parseCodeowners(content);
-    expect(rules).toEqual([
-      { pattern: "*.ts", owners: ["@alice"] },
-      { pattern: "/src/tools/", owners: ["@bob", "@org/reviewers"] },
-      { pattern: "docs/", owners: ["@carol"] },
-    ]);
-  });
-
-  it("skips lines with a pattern but no owners", () => {
-    const rules = parseCodeowners("*.md\n*.ts @alice");
-    expect(rules).toEqual([{ pattern: "*.ts", owners: ["@alice"] }]);
-  });
-
-  it("returns an empty array for empty content", () => {
-    expect(parseCodeowners("")).toEqual([]);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// codeownersPatternToRegExp / ownersForFile
-// ---------------------------------------------------------------------------
-
-describe("codeownersPatternMatches", () => {
-  it("matches an unanchored extension glob at any depth", () => {
-    expect(codeownersPatternMatches("*.ts", "app.ts")).toBe(true);
-    expect(codeownersPatternMatches("*.ts", "src/deep/app.ts")).toBe(true);
-    expect(codeownersPatternMatches("*.ts", "app.js")).toBe(false);
-  });
-
-  it("anchors a rooted directory pattern to the repo root", () => {
-    expect(codeownersPatternMatches("/src/tools/", "src/tools/review-pr.ts")).toBe(true);
-    expect(codeownersPatternMatches("/src/tools/", "src/tools")).toBe(true);
-    expect(codeownersPatternMatches("/src/tools/", "backend/src/tools/x.ts")).toBe(false);
-  });
-
-  it("anchors any pattern containing a slash, even without a leading slash", () => {
-    expect(codeownersPatternMatches("src/tools/", "src/tools/review-pr.ts")).toBe(true);
-    expect(codeownersPatternMatches("src/tools/", "backend/src/tools/x.ts")).toBe(false);
-  });
-
-  it("matches '?' as exactly one character, not zero or many", () => {
-    expect(codeownersPatternMatches("file?.txt", "file1.txt")).toBe(true);
-    expect(codeownersPatternMatches("file?.txt", "file.txt")).toBe(false);
-    expect(codeownersPatternMatches("file?.txt", "file12.txt")).toBe(false);
-  });
-
-  it("matches '**' across zero directories, not just one-or-more", () => {
-    expect(codeownersPatternMatches("**/foo.ts", "foo.ts")).toBe(true);
-    expect(codeownersPatternMatches("**/foo.ts", "a/b/foo.ts")).toBe(true);
-    expect(codeownersPatternMatches("src/**/*.ts", "src/x.ts")).toBe(true);
-    expect(codeownersPatternMatches("src/**/*.ts", "src/a/b/x.ts")).toBe(true);
-    expect(codeownersPatternMatches("src/**/*.ts", "other/x.ts")).toBe(false);
-  });
-
-  it("does not hang on many adjacent wildcards against a long non-matching string (no catastrophic backtracking)", () => {
-    const pattern = Array.from({ length: 30 }, () => "*a").join("");
-    const text = "a".repeat(40);
-    const start = Date.now();
-    codeownersPatternMatches(pattern, text);
-    expect(Date.now() - start).toBeLessThan(1000);
-  });
-
-  it("does not hang on many '**' segments interspersed with a repeating literal (no exponential blowup)", () => {
-    // Unmemoized **-segment recursion re-derives the same exponential blowup as regex ReDoS,
-    // just in hand-rolled form -- this is the adversarial shape that exposes it.
-    const pattern = Array.from({ length: 14 }, () => "**/x").join("/") + "/TARGET";
-    const path = Array.from({ length: 30 }, () => "x").join("/");
-    const start = Date.now();
-    codeownersPatternMatches(pattern, path);
-    expect(Date.now() - start).toBeLessThan(1000);
-  });
-});
-
-describe("ownersForFile", () => {
-  const rules: CodeownersRule[] = [
-    { pattern: "*", owners: ["@default-owner"] },
-    { pattern: "/src/tools/", owners: ["@tools-owner"] },
-    { pattern: "/src/tools/review-pr.ts", owners: ["@review-pr-owner"] },
-  ];
-
-  it("returns the last matching rule's owners (last match wins)", () => {
-    expect(ownersForFile("src/tools/review-pr.ts", rules)).toEqual(["@review-pr-owner"]);
-    expect(ownersForFile("src/tools/other.ts", rules)).toEqual(["@tools-owner"]);
-    expect(ownersForFile("README.md", rules)).toEqual(["@default-owner"]);
-  });
-
-  it("returns an empty array when no rule matches", () => {
-    expect(ownersForFile("README.md", [{ pattern: "/src/", owners: ["@x"] }])).toEqual([]);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// fetchCodeownersRules
-// ---------------------------------------------------------------------------
-
-describe("fetchCodeownersRules", () => {
-  const REF_LOCAL: RepoRef = { owner: "test-org", repo: "test-repo" };
-
-  function makeContentOctokit(
-    byPath: Record<string, { content?: string; error?: unknown }>
-  ) {
-    return {
-      repos: {
-        getContent: vi.fn().mockImplementation(({ path }: { path: string }) => {
-          const entry = byPath[path];
-          if (!entry) {
-            return Promise.reject(Object.assign(new Error("Not Found"), { status: 404 }));
-          }
-          if (entry.error) return Promise.reject(entry.error);
-          return Promise.resolve({
-            data: { type: "file", content: Buffer.from(entry.content ?? "").toString("base64") },
-          });
-        }),
+    expect(codeownersPatternMatches("/src/tools/", "src/tools/x.ts")).toBe(true);
+    expect(ownersForFile("src/tools/x.ts", rules)).toEqual(["@owner1"]);
+    expect(fetchCodeownersRules).toBeTypeOf("function");
+    expect(
+      generateOwnershipFindings(
+        [makeFile({ filename: "src/tools/x.ts" })],
+        rules,
+        [],
+        [],
+        [],
+        "someone-else"
+      )
+    ).toEqual([
+      {
+        severity: "medium",
+        category: "Ownership",
+        description:
+          "CODEOWNERS owner @owner1 was not requested as a reviewer and has not reviewed changes to: src/tools/x.ts.",
+        suggestion:
+          "Request a review from @owner1, or confirm CODEOWNERS routing is still correct for these paths.",
       },
-    } as unknown as Parameters<typeof fetchCodeownersRules>[1];
-  }
-
-  it("prefers .github/CODEOWNERS when present", async () => {
-    const octokit = makeContentOctokit({
-      ".github/CODEOWNERS": { content: "* @github-owner\n" },
-      CODEOWNERS: { content: "* @root-owner\n" },
-    });
-    const { rules, error } = await fetchCodeownersRules(REF_LOCAL, octokit);
-    expect(error).toBeNull();
-    expect(rules).toEqual([{ pattern: "*", owners: ["@github-owner"] }]);
-  });
-
-  it("falls back to root CODEOWNERS when .github/CODEOWNERS is missing", async () => {
-    const octokit = makeContentOctokit({ CODEOWNERS: { content: "* @root-owner\n" } });
-    const { rules, error } = await fetchCodeownersRules(REF_LOCAL, octokit);
-    expect(error).toBeNull();
-    expect(rules).toEqual([{ pattern: "*", owners: ["@root-owner"] }]);
-  });
-
-  it("falls back to docs/CODEOWNERS when the other two candidates are missing", async () => {
-    const octokit = makeContentOctokit({ "docs/CODEOWNERS": { content: "* @docs-owner\n" } });
-    const { rules, error } = await fetchCodeownersRules(REF_LOCAL, octokit);
-    expect(error).toBeNull();
-    expect(rules).toEqual([{ pattern: "*", owners: ["@docs-owner"] }]);
-  });
-
-  it("returns empty rules and no error when no candidate path exists", async () => {
-    const octokit = makeContentOctokit({});
-    const { rules, error } = await fetchCodeownersRules(REF_LOCAL, octokit);
-    expect(rules).toEqual([]);
-    expect(error).toBeNull();
-  });
-
-  it("preserves a non-404 error from an earlier candidate even when a later candidate 404s", async () => {
-    const octokit = makeContentOctokit({
-      ".github/CODEOWNERS": { error: Object.assign(new Error("Forbidden"), { status: 403 }) },
-    });
-    const { rules, error } = await fetchCodeownersRules(REF_LOCAL, octokit);
-    expect(rules).toEqual([]);
-    expect(error).not.toBeNull();
-    expect(error!.toLowerCase()).not.toContain("not found");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// generateOwnershipFindings
-// ---------------------------------------------------------------------------
-
-describe("generateOwnershipFindings", () => {
-  const rules: CodeownersRule[] = [{ pattern: "/src/tools/", owners: ["@owner1", "@owner2"] }];
-
-  it("returns no findings when there are no CODEOWNERS rules", () => {
-    const files = [makeFile({ filename: "src/tools/x.ts" })];
-    expect(generateOwnershipFindings(files, [], [], [], [], "author")).toEqual([]);
-  });
-
-  it("flags each owner who is neither author, requested, nor a reviewer", () => {
-    const files = [makeFile({ filename: "src/tools/x.ts" })];
-    const findings = generateOwnershipFindings(files, rules, [], [], [], "someone-else");
-    expect(findings).toHaveLength(2);
-    expect(findings.every((f) => f.category === "Ownership")).toBe(true);
-    expect(findings.every((f) => f.severity === "medium")).toBe(true);
-    expect(findings.some((f) => f.description.includes("@owner1"))).toBe(true);
-    expect(findings.some((f) => f.description.includes("@owner2"))).toBe(true);
-  });
-
-  it("does not flag an owner who is the PR author", () => {
-    const files = [makeFile({ filename: "src/tools/x.ts" })];
-    const findings = generateOwnershipFindings(files, rules, [], [], [], "owner1");
-    expect(findings.find((f) => f.description.includes("@owner1"))).toBeUndefined();
-  });
-
-  it("does not flag an owner who was requested as a reviewer", () => {
-    const files = [makeFile({ filename: "src/tools/x.ts" })];
-    const findings = generateOwnershipFindings(files, rules, ["owner1"], [], [], "someone-else");
-    expect(findings.find((f) => f.description.includes("@owner1"))).toBeUndefined();
-    expect(findings.find((f) => f.description.includes("@owner2"))).toBeDefined();
-  });
-
-  it("does not flag a team owner who was requested as a reviewing team", () => {
-    const teamRules: CodeownersRule[] = [{ pattern: "/src/tools/", owners: ["@org/reviewers"] }];
-    const files = [makeFile({ filename: "src/tools/x.ts" })];
-    const findings = generateOwnershipFindings(files, teamRules, [], ["org/reviewers"], [], "someone-else");
-    expect(findings).toHaveLength(0);
-  });
-
-  it("does not flag an owner who already reviewed", () => {
-    const files = [makeFile({ filename: "src/tools/x.ts" })];
-    const findings = generateOwnershipFindings(files, rules, [], [], ["owner2"], "someone-else");
-    expect(findings.find((f) => f.description.includes("@owner2"))).toBeUndefined();
-    expect(findings.find((f) => f.description.includes("@owner1"))).toBeDefined();
-  });
-
-  it("aggregates every unflagged file for the same missing owner into a single finding", () => {
-    const singleOwnerRules: CodeownersRule[] = [{ pattern: "/src/tools/", owners: ["@owner1"] }];
-    const files = [
-      makeFile({ filename: "src/tools/a.ts" }),
-      makeFile({ filename: "src/tools/b.ts" }),
-      makeFile({ filename: "src/tools/c.ts" }),
-    ];
-    const findings = generateOwnershipFindings(files, singleOwnerRules, [], [], [], "someone-else");
-    expect(findings).toHaveLength(1);
-    expect(findings[0]!.description).toContain("src/tools/a.ts");
-    expect(findings[0]!.description).toContain("src/tools/b.ts");
-    expect(findings[0]!.description).toContain("src/tools/c.ts");
+    ]);
   });
 });
 
@@ -534,25 +344,91 @@ function makeMockOctokit(opts: {
   requestedReviewersError?: unknown;
   reviewsError?: unknown;
   prAuthor?: string;
+  checkRuns?: Array<{
+    id: number;
+    name: string;
+    status: string;
+    conclusion: string | null;
+    details_url: string | null;
+    app: { id: number } | null;
+  }>;
+  checkRunsError?: unknown;
+  commitStatuses?: Array<{
+    context: string;
+    state: string;
+    target_url: string | null;
+  }>;
+  files?: Array<{
+    filename: string;
+    status: string;
+    additions: number;
+    deletions: number;
+    patch?: string;
+    previous_filename?: string;
+  }>;
+  filePages?: Array<
+    Array<{
+      filename: string;
+      status: string;
+      additions: number;
+      deletions: number;
+      patch?: string;
+      previous_filename?: string;
+    }>
+  >;
+  workflowContents?: Record<string, string>;
+  workflowContentError?: unknown;
+  prDraft?: boolean;
+  commits?: number;
+  prTitle?: string;
 }) {
   return {
+    checks: {
+      listForRef: opts.checkRunsError
+        ? vi.fn().mockRejectedValue(opts.checkRunsError)
+        : vi.fn().mockResolvedValue({
+            data: { check_runs: opts.checkRuns ?? [], total_count: opts.checkRuns?.length ?? 0 },
+          }),
+    },
     pulls: {
       get: vi.fn().mockResolvedValue({
         data: {
           number: 42,
-          title: "Test PR",
+          title: opts.prTitle ?? "Test PR",
           body: "A sufficiently long description for basic checks to pass cleanly.",
-          draft: false,
-          commits: 1,
+          draft: opts.prDraft ?? false,
+          commits: opts.commits ?? 1,
           user: { login: opts.prAuthor ?? "pr-author" },
+          head: { sha: "head-sha", ref: "feature/review" },
+          base: { sha: "base-sha", ref: "main" },
+          mergeable: true,
+          mergeable_state: "clean",
+          labels: [],
         },
       }),
-      listFiles: vi.fn().mockResolvedValue({
-        data: [
-          { filename: "src/tools/review-pr.ts", status: "modified", additions: 10, deletions: 2 },
-          { filename: "src/__tests__/tools/review-pr.test.ts", status: "modified", additions: 20, deletions: 0 },
-        ],
-      }),
+      listFiles: vi.fn().mockImplementation(({ page = 1 }: { page?: number }) =>
+        Promise.resolve({
+          data: opts.filePages
+            ? (opts.filePages[page - 1] ?? [])
+            : page === 1
+              ? (opts.files ??
+                [
+                  {
+                    filename: "src/tools/review-pr.ts",
+                    status: "modified",
+                    additions: 10,
+                    deletions: 2,
+                  },
+                  {
+                    filename: "src/__tests__/tools/review-pr.test.ts",
+                    status: "modified",
+                    additions: 20,
+                    deletions: 0,
+                  },
+                ])
+              : [],
+        })
+      ),
       listRequestedReviewers: opts.requestedReviewersError
         ? vi.fn().mockRejectedValue(opts.requestedReviewersError)
         : vi.fn().mockResolvedValue({ data: opts.requestedReviewers ?? { users: [], teams: [] } }),
@@ -561,6 +437,13 @@ function makeMockOctokit(opts: {
         : vi.fn().mockResolvedValue({ data: opts.reviewers ?? [] }),
     },
     repos: {
+      getCombinedStatusForRef: vi.fn().mockResolvedValue({
+        data: { statuses: opts.commitStatuses ?? [] },
+      }),
+      getBranchProtection: vi.fn().mockRejectedValue(
+        Object.assign(new Error("Not Found"), { status: 404 })
+      ),
+      getBranchRules: vi.fn().mockResolvedValue({ data: [] }),
       getContent: opts.contentError
         ? vi.fn().mockRejectedValue(opts.contentError)
         : vi.fn().mockImplementation(({ path }: { path: string }) => {
@@ -572,9 +455,32 @@ function makeMockOctokit(opts: {
                 },
               });
             }
+            if (/^\.github\/workflows\/[^/]+\.ya?ml$/i.test(path)) {
+              if (opts.workflowContentError) return Promise.reject(opts.workflowContentError);
+              return Promise.resolve({
+                data: {
+                  type: "file",
+                  content: Buffer.from(
+                    opts.workflowContents?.[path] ??
+                      "permissions:\n  contents: read\njobs:\n  test:\n    steps: []"
+                  ).toString("base64"),
+                },
+              });
+            }
             return Promise.reject(Object.assign(new Error("Not Found"), { status: 404 }));
           }),
     },
+    graphql: vi.fn().mockResolvedValue({
+      repository: {
+        pullRequest: {
+          reviewDecision: null,
+          closingIssuesReferences: {
+            nodes: [],
+            pageInfo: { hasNextPage: false },
+          },
+        },
+      },
+    }),
   } as unknown as Parameters<typeof handleReviewPr>[2];
 }
 
@@ -644,5 +550,494 @@ describe("handleReviewPr — ownership check", () => {
     expect(structured.errors.some((e) => e.startsWith("Reviews:"))).toBe(true);
     // requestedReviewers still succeeded independently, so owner1 is still not flagged
     expect(structured.findings.find((f) => f.category === "Ownership")).toBeUndefined();
+  });
+});
+
+describe("handleReviewPr — structured review contract", () => {
+  it("runs supplemental dynamic credential detection under the default basic standard", async () => {
+    const octokit = makeMockOctokit({
+      files: [
+        {
+          filename: "src/auth.ts",
+          status: "modified",
+          additions: 1,
+          deletions: 0,
+          patch: "+const authorizationHeader = prefix + accountId + signature;",
+        },
+      ],
+    });
+
+    const { structured } = await handleReviewPr(BASE_PARAMS, REF, octokit);
+
+    expect(structured.findings).toContainEqual(
+      expect.objectContaining({ category: "DynamicSecretConstruction", severity: "high" })
+    );
+  });
+
+  it("keeps raw external values structured while rendering safe bounded single-line Markdown", async () => {
+    const title = "Review\n## forged [link](javascript:alert(1))" + "x".repeat(500);
+    const filename = "src/unsafe\n## path.ts";
+    const { structured, text } = await handleReviewPr(
+      { ...BASE_PARAMS, workType: "feature", checkOwnership: false },
+      REF,
+      makeMockOctokit({
+        prTitle: title,
+        files: [
+          {
+            filename,
+            status: "modified",
+            additions: 1,
+            deletions: 0,
+          },
+        ],
+      })
+    );
+
+    expect(structured.title).toBe(title);
+    expect(structured.findings.some((finding) => finding.paths.includes(filename))).toBe(true);
+    expect(text).not.toContain("\n## forged");
+    expect(text).not.toContain("\n## path.ts");
+    expect(text).toContain("\\[link\\]\\(javascript:alert\\(1\\)\\)");
+    expect(text.length).toBeLessThan(5000);
+  });
+  it("maps draft and large commit-count compatibility checks into structured findings", async () => {
+    const { structured } = await handleReviewPr(
+      { ...BASE_PARAMS, checkOwnership: false },
+      REF,
+      makeMockOctokit({ prDraft: true, commits: 21 })
+    );
+
+    expect(structured.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ category: "Status", severity: "info", dimension: "scope" }),
+        expect.objectContaining({ category: "Hygiene", severity: "low", dimension: "scope" }),
+      ])
+    );
+  });
+
+  it("fails closed for every standard when changed files are truncated before a hidden workflow", async () => {
+    const ordinaryPage = (page: number) =>
+      Array.from({ length: 100 }, (_, index) => ({
+        filename: `src/generated/file-${page}-${index}.ts`,
+        status: "modified",
+        additions: 1,
+        deletions: 0,
+      }));
+    const octokit = makeMockOctokit({
+      filePages: [
+        ordinaryPage(1),
+        ordinaryPage(2),
+        ordinaryPage(3),
+        [
+          {
+            filename: ".github/workflows/hidden.yml",
+            status: "added",
+            additions: 1,
+            deletions: 0,
+          },
+        ],
+      ],
+    });
+
+    const { structured } = await handleReviewPr(
+      { ...BASE_PARAMS, standard: "basic", checkOwnership: false },
+      REF,
+      octokit
+    );
+
+    expect(octokit.pulls.listFiles).toHaveBeenCalledTimes(4);
+    expect(structured.findings).toContainEqual(
+      expect.objectContaining({
+        category: "WorkflowPolicyEvidenceUnavailable",
+        severity: "high",
+        dimension: "policy",
+      })
+    );
+    expect(structured.conclusion).toBe("needs_changes");
+  });
+  it("accepts an explicit workType and preserves legacy fields", async () => {
+    const octokit = makeMockOctokit({
+      files: [
+        {
+          filename: "src/fix.ts",
+          status: "modified",
+          additions: 5,
+          deletions: 1,
+          patch: "@@ -1 +1 @@\n-return false\n+return true",
+        },
+      ],
+    });
+
+    const { structured } = await handleReviewPr(
+      { ...BASE_PARAMS, workType: "bugfix" },
+      REF,
+      octokit
+    );
+
+    expect(structured).toMatchObject({
+      pullNumber: 42,
+      title: "Test PR",
+      standard: "basic",
+      workType: "bugfix",
+      workTypeConfidence: "high",
+      workTypeReasoning: expect.any(String),
+      releaseRisk: "high",
+      testCoverageSignal: "missing",
+      ownershipRoutingGaps: expect.any(Array),
+      conclusion: expect.any(String),
+      hasTests: expect.any(Boolean),
+      totalChangedLines: expect.any(Number),
+      codeownersFound: expect.any(Boolean),
+      errors: expect.any(Array),
+      secretScannerEvidence: null,
+    });
+    expect(structured.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          dimension: expect.any(String),
+          paths: expect.any(Array),
+          reason: expect.any(String),
+        }),
+      ])
+    );
+  });
+
+  it("infers work type, lists changed files once, and audits complete workflow content at head SHA", async () => {
+    const octokit = makeMockOctokit({
+      files: [
+        {
+          filename: ".github/workflows/ci.yml",
+          status: "modified",
+          additions: 2,
+          deletions: 1,
+          patch: "@@ -1 +1 @@\n-permissions: write-all\n+permissions:\n+  contents: read",
+        },
+      ],
+    });
+
+    const { structured, text } = await handleReviewPr(
+      { ...BASE_PARAMS, standard: "strict", checkOwnership: false },
+      REF,
+      octokit
+    );
+
+    expect(structured.workType).toBe("infra");
+    expect(octokit.pulls.listFiles).toHaveBeenCalledTimes(1);
+    expect(octokit.repos.getContent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: ".github/workflows/ci.yml",
+        ref: "head-sha",
+      })
+    );
+    expect(text).toContain("## Work Type");
+    expect(text).toContain("## Intent / Scope / Evidence");
+    expect(text).toContain("## Ownership");
+    expect(text).toContain("## Policy");
+    expect(text).toContain("## Fallback");
+    expect(text).toContain("## Security");
+    expect(text).toContain("## Test Coverage");
+    expect(text).toContain("## Release Risk");
+    expect(text).toContain("## Conclusion");
+  });
+
+  it("uses complete workflow content rather than a safe-looking patch for permission findings", async () => {
+    const octokit = makeMockOctokit({
+      files: [
+        {
+          filename: ".github/workflows/release.yml",
+          status: "modified",
+          additions: 1,
+          deletions: 1,
+          patch: "@@ -1 +1 @@\n-name: Old\n+name: Release",
+        },
+      ],
+      workflowContents: {
+        ".github/workflows/release.yml":
+          "on: pull_request_target\npermissions: write-all\njobs: {}",
+      },
+    });
+
+    const { structured } = await handleReviewPr(
+      { ...BASE_PARAMS, standard: "strict", checkOwnership: false },
+      REF,
+      octokit
+    );
+
+    expect(structured.findings).toContainEqual(
+      expect.objectContaining({
+        category: "Workflow Permissions",
+        severity: "critical",
+        dimension: "policy",
+        paths: [".github/workflows/release.yml"],
+      })
+    );
+    expect(structured.releaseRisk).toBe("critical");
+    expect(structured.conclusion).toBe("needs_changes");
+  });
+
+  it("fails closed when complete workflow content cannot be verified", async () => {
+    const octokit = makeMockOctokit({
+      files: [
+        {
+          filename: ".github/workflows/release.yml",
+          status: "modified",
+          additions: 1,
+          deletions: 0,
+        },
+      ],
+      workflowContentError: Object.assign(new Error("Forbidden"), { status: 403 }),
+    });
+
+    const { structured } = await handleReviewPr(
+      { ...BASE_PARAMS, standard: "strict", checkOwnership: false },
+      REF,
+      octokit
+    );
+
+    expect(structured.findings).toContainEqual(
+      expect.objectContaining({
+        category: "WorkflowPolicyEvidenceUnavailable",
+        severity: "high",
+        dimension: "policy",
+        paths: [".github/workflows/release.yml"],
+      })
+    );
+    expect(structured.conclusion).toBe("needs_changes");
+  });
+});
+
+describe("handleReviewPr — mature secret scanner evidence", () => {
+  const securityParams: ReviewPrInput = {
+    pullNumber: 42,
+    standard: "security-focused",
+    checkOwnership: false,
+  };
+
+  it("reports dynamically constructed credential values in the real handler", async () => {
+    const octokit = makeMockOctokit({
+      files: [
+        {
+          filename: "src/config.ts",
+          status: "modified",
+          additions: 1,
+          deletions: 0,
+          patch: '+const authorizationHeader = prefix + accountId + signature;',
+        },
+      ],
+    });
+
+    const { structured } = await handleReviewPr(securityParams, REF, octokit);
+
+    expect(structured.findings).toContainEqual(
+      expect.objectContaining({
+        category: "DynamicSecretConstruction",
+        severity: "high",
+        paths: ["src/config.ts"],
+      })
+    );
+  });
+
+  it("fails closed and exposes unverified evidence when no mature scanner ran", async () => {
+    const octokit = makeMockOctokit({});
+
+    const { structured, text } = await handleReviewPr(securityParams, REF, octokit);
+
+    expect(structured.secretScannerEvidence).toMatchObject({
+      status: "unverified",
+      verified: false,
+      providers: [],
+    });
+    expect(structured.findings).toContainEqual(
+      expect.objectContaining({ category: "MissingMatureSecretScannerEvidence", severity: "high" })
+    );
+    expect(structured.conclusion).toBe("needs_changes");
+    expect(text).toContain("Mature Secret Scanner Evidence");
+  });
+
+  it("does not trust a passing Gitleaks check without workflow provenance", async () => {
+    const octokit = makeMockOctokit({
+      checkRuns: [
+        {
+          id: 1,
+          name: "gitleaks",
+          status: "completed",
+          conclusion: "success",
+          details_url: "https://github.com/checks/1",
+          app: { id: 15368 },
+        },
+      ],
+    });
+
+    const { structured } = await handleReviewPr(securityParams, REF, octokit);
+
+    expect(structured.secretScannerEvidence).toMatchObject({
+      status: "unverified",
+      verified: false,
+      providers: ["gitleaks"],
+    });
+    expect(structured.secretScannerEvidence?.signals[0]).toMatchObject({
+      provenanceVerified: false,
+    });
+    expect(structured.findings).toContainEqual(
+      expect.objectContaining({ category: "MissingMatureSecretScannerEvidence", severity: "high" })
+    );
+  });
+
+  it("turns a failing TruffleHog check into a critical blocker", async () => {
+    const octokit = makeMockOctokit({
+      checkRuns: [
+        {
+          id: 2,
+          name: "TruffleHog Secrets Scan",
+          status: "completed",
+          conclusion: "failure",
+          details_url: "https://github.com/checks/2",
+          app: { id: 15368 },
+        },
+      ],
+    });
+
+    const { structured } = await handleReviewPr(securityParams, REF, octokit);
+
+    expect(structured.secretScannerEvidence?.status).toBe("failing");
+    expect(structured.findings).toContainEqual(
+      expect.objectContaining({ category: "MatureSecretScannerFailed", severity: "critical" })
+    );
+    expect(structured.conclusion).toBe("needs_changes");
+  });
+
+  it("does not accept a same-name passing commit status when check-runs are unavailable", async () => {
+    const octokit = makeMockOctokit({
+      checkRunsError: Object.assign(new Error("Forbidden"), { status: 403 }),
+      commitStatuses: [
+        {
+          context: "gitleaks",
+          state: "success",
+          target_url: "https://example.test/status/1",
+        },
+      ],
+    });
+
+    const { structured } = await handleReviewPr(securityParams, REF, octokit);
+
+    expect(structured.secretScannerEvidence).toMatchObject({
+      status: "unverified",
+      verified: false,
+      degraded: true,
+    });
+    expect(structured.findings).toContainEqual(
+      expect.objectContaining({ category: "MissingMatureSecretScannerEvidence", severity: "high" })
+    );
+    expect(structured.errors.some((error) => error.startsWith("Secret scanner CI:"))).toBe(true);
+  });
+
+  it("does not trust a passing scanner when the PR changes workflow policy", async () => {
+    const octokit = makeMockOctokit({
+      files: [
+        {
+          filename: ".github/workflows/secret-scan.yml",
+          status: "modified",
+          additions: 2,
+          deletions: 1,
+        },
+      ],
+      checkRuns: [
+        {
+          id: 3,
+          name: "gitleaks",
+          status: "completed",
+          conclusion: "success",
+          details_url: "https://github.com/checks/3",
+          app: { id: 15368 },
+        },
+      ],
+    });
+
+    const { structured } = await handleReviewPr(securityParams, REF, octokit);
+
+    expect(structured.secretScannerEvidence).toMatchObject({
+      status: "unverified",
+      verified: false,
+      degraded: true,
+    });
+    expect(structured.secretScannerEvidence?.reason).toMatch(/policy/i);
+  });
+
+  it("fails closed when the changed-file list is truncated before a policy file", async () => {
+    const ordinaryPage = (page: number) =>
+      Array.from({ length: 100 }, (_, index) => ({
+        filename: `src/generated/file-${page}-${index}.ts`,
+        status: "modified",
+        additions: 1,
+        deletions: 0,
+      }));
+    const octokit = makeMockOctokit({
+      filePages: [
+        ordinaryPage(1),
+        ordinaryPage(2),
+        ordinaryPage(3),
+        [
+          {
+            filename: ".github/workflows/secret-scan.yml",
+            status: "modified",
+            additions: 1,
+            deletions: 1,
+          },
+        ],
+      ],
+      checkRuns: [
+        {
+          id: 4,
+          name: "gitleaks",
+          status: "completed",
+          conclusion: "success",
+          details_url: "https://github.com/checks/4",
+          app: { id: 15368 },
+        },
+      ],
+    });
+
+    const { structured } = await handleReviewPr(securityParams, REF, octokit);
+
+    expect(octokit.pulls.listFiles).toHaveBeenCalledTimes(4);
+    expect(structured.secretScannerEvidence).toMatchObject({
+      status: "unverified",
+      verified: false,
+      degraded: true,
+    });
+    expect(structured.secretScannerEvidence?.reason).toMatch(/changed_files/i);
+  });
+
+  it("fails closed when a scanner policy file is renamed out of its protected path", async () => {
+    const octokit = makeMockOctokit({
+      files: [
+        {
+          filename: "docs/retired-secret-scan.yml",
+          previous_filename: ".github/workflows/secret-scan.yml",
+          status: "renamed",
+          additions: 0,
+          deletions: 0,
+        },
+      ],
+      checkRuns: [
+        {
+          id: 5,
+          name: "gitleaks",
+          status: "completed",
+          conclusion: "success",
+          details_url: "https://github.com/checks/5",
+          app: { id: 15368 },
+        },
+      ],
+    });
+
+    const { structured } = await handleReviewPr(securityParams, REF, octokit);
+
+    expect(structured.secretScannerEvidence).toMatchObject({
+      status: "unverified",
+      verified: false,
+      degraded: true,
+    });
+    expect(structured.secretScannerEvidence?.reason).toMatch(/policy/i);
   });
 });

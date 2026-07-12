@@ -31,6 +31,14 @@ Run a single test by name: `npx vitest run -t "dryRun=true"`
 
 **GitHub layer** (`src/github/`):
 - `client.ts` — lazy-singleton `getOctokit()`, `resolveRepo(owner?, repo?)` (falls back to config defaults, throws if still missing), `paginateAll()` generic pagination helper (default cap 300 items), and `handleGitHubError()` which maps Octokit HTTP status codes (401/403/404/422/429) to actionable messages.
+- `pull-request-evidence.ts` — shared, bounded evidence collector for check runs, commit statuses, reviews, changed files, CODEOWNERS, branch protection/rulesets, labels, and linked issues. Critical consumers must preserve `unverifiedSignals`/`errors` and fail closed where the evidence affects a security or policy decision.
+- `codeowners.ts` — CODEOWNERS parsing, bounded matching, repository lookup, and ownership-gap calculation shared by gates and reviews.
+
+**Review and security layers**:
+- `src/review/pull-request-review.ts` is the pure work-type classifier and structured PR evaluator. The GitHub-facing `src/tools/review-pr.ts` gathers evidence and complete workflow files, then renders the single evaluation result; do not duplicate conclusions in Markdown code.
+- `src/security/secret-scanner-evidence.ts` evaluates mature scanner CI signals. Passing requires a trusted app-backed check run and complete, unchanged scanner policy evidence.
+- `src/tools/workflow-permissions-audit.ts` exports a pure complete-document workflow evaluator reused by PR review. Never parse a GitHub patch as a complete YAML document.
+- `src/tools/release-readiness.ts` consumes the shared CI evidence model. Only explicit `passing` CI can produce `isReady: true`; external names and raw errors must not be echoed into summaries.
 - `context.ts` — `fetchRepoContext()` fetches repo metadata + optional README/package.json/issues/PRs in one call.
 
 **Tool pattern** — every file in `src/tools/` follows the same shape:
@@ -57,7 +65,9 @@ When adding a new tool, copy this shape (`repo-context.ts` for a read-only examp
 ## Conventions to preserve
 
 - No auto-merge, no force-push, no branch deletion — the server must never expose a tool that does these, per the security model in the README/SDLC standard resource.
-- Secret-pattern scanning (`review-pr.ts`'s `scanPatchForSecrets`) only matches added (`+`) patch lines with assignment-like patterns (`key\s*[:=]\s*['"...]`), not just keyword mentions — keep new secret patterns similarly conservative to avoid noisy false positives.
+- Secret review has two distinct evidence tiers. `src/security/secret-scanner-evidence.ts` recognizes Gitleaks, TruffleHog, Secretlint, detect-secrets, and explicit GitHub Secret Scanning names, but v1.6 trusted passing is limited to Gitleaks/TruffleHog after concrete workflow-job provenance verifies the job URL, run, PR head, and a unique matching base-ref workflow job that unconditionally uses a known scanner action pinned to a full commit SHA. Verification is cached by job/run/workflow and capped at 20 recognized candidates; overflow or provenance errors fail closed. Other recognized providers remain unverified claims. Same-name/duplicate jobs or commit statuses, mutable tags, conditional/error-tolerant scanner jobs or steps, incomplete sources, and scanner-policy changes fail closed. `src/review/pull-request-review.ts`'s `scanPatchForSecrets` runs for every standard and remains a bounded, statement/hunk-aware patch-local heuristic: it detects literal assignments plus aggregated dynamic credential-field/authentication-header sink patterns, including capped patch-local field aliases, but is not cross-file data-flow analysis and must never be described as a complete secret scan.
+- This repository runs Gitleaks from `.github/workflows/secret-scan.yml` using a full action commit SHA and least-privilege permissions. `.gitleaks.toml` narrows its only fixture exception to the `generic-api-key` rule in the dedicated scanner test file; do not broaden that exception to a directory or all rules.
+- Evidence and review tests live under `src/__tests__/github/pull-request-evidence.test.ts`, `src/__tests__/review/pull-request-review.test.ts`, and the corresponding `src/__tests__/tools/*` integration suites. Changes to decision precedence, truncation boundaries, or degraded behavior require regression tests at both the pure and handler layers when applicable.
 - All Windows-facing docs/comments use PowerShell syntax (`$env:VAR="value"`), not bash `export`.
 
 ## Repository governance (this repo, not the MCP server's tool capabilities)

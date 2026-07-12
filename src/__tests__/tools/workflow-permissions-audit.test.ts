@@ -22,6 +22,7 @@ const {
   parseWorkflowYaml,
   normalizePermissions,
   generatePermissionsFindings,
+  evaluateWorkflowContents,
   handleWorkflowPermissionsAudit,
 } = await import("../../tools/workflow-permissions-audit.js");
 
@@ -298,10 +299,12 @@ describe("handleWorkflowPermissionsAudit", () => {
     } as any;
 
     const params: WorkflowPermissionsAuditInput = {};
-    const { structured } = await handleWorkflowPermissionsAudit(params, REF, octokit);
+    const { structured, text } = await handleWorkflowPermissionsAudit(params, REF, octokit);
 
     expect(structured.errors).toHaveLength(1);
     expect(structured.errors[0]).toContain("Internal server error");
+    expect(structured.conclusion).toBe("needs_review");
+    expect(text).not.toContain("No findings -- scanned workflows declare explicit, least-privilege permissions.");
   });
 
   it("logs errors when encountering invalid YAML format", async () => {
@@ -316,10 +319,75 @@ describe("handleWorkflowPermissionsAudit", () => {
     });
 
     const params: WorkflowPermissionsAuditInput = {};
-    const { structured } = await handleWorkflowPermissionsAudit(params, REF, octokit);
+    const { structured, text } = await handleWorkflowPermissionsAudit(params, REF, octokit);
 
     expect(structured.errors).toHaveLength(1);
     expect(structured.errors[0]).toContain("unable to parse");
     expect(structured.workflowsScanned).toHaveLength(0);
+    expect(structured.conclusion).toBe("needs_review");
+    expect(text).not.toContain("No findings -- scanned workflows declare explicit, least-privilege permissions.");
+  });
+
+  it("does not claim least privilege when no workflow was scanned", async () => {
+    const octokit = makeMockOctokit({ files: [] });
+
+    const { structured, text } = await handleWorkflowPermissionsAudit({}, REF, octokit);
+
+    expect(structured.workflowsScanned).toEqual([]);
+    expect(structured.conclusion).toBe("needs_review");
+    expect(text).toContain("audit evidence is incomplete");
+    expect(text).not.toContain("No findings -- scanned workflows declare explicit, least-privilege permissions.");
+  });
+
+  it("escapes external workflow audit values in Markdown while preserving structured values", async () => {
+    const maliciousPath = ".github/workflows/ci.yml\r\n## forged";
+    const octokit = makeMockOctokit({
+      files: [
+        {
+          name: "ci.yml",
+          path: maliciousPath,
+          content: "not: [valid",
+        },
+      ],
+    });
+
+    const { structured, text } = await handleWorkflowPermissionsAudit(
+      { ref: "main\r\n## injected" },
+      REF,
+      octokit
+    );
+
+    expect(structured.ref).toBe("main\r\n## injected");
+    expect(structured.errors[0]).toContain(maliciousPath);
+    expect(text).not.toContain("\n## forged");
+    expect(text).not.toContain("\n## injected");
+    expect(text).toContain("\\#\\# injected");
+  });
+});
+
+describe("evaluateWorkflowContents", () => {
+  it("evaluates supplied complete workflow content and reports parse errors", () => {
+    const result = evaluateWorkflowContents([
+      {
+        filename: ".github/workflows/safe.yml",
+        content: "permissions:\n  contents: read\njobs:\n  test:\n    steps: []",
+      },
+      {
+        filename: ".github/workflows/unsafe.yml",
+        content: "on: pull_request_target\npermissions: write-all\njobs: {}",
+      },
+      { filename: ".github/workflows/invalid.yml", content: "not: [valid" },
+    ]);
+
+    expect(result.workflowsScanned).toEqual([
+      ".github/workflows/safe.yml",
+      ".github/workflows/unsafe.yml",
+    ]);
+    expect(result.findings).toContainEqual(
+      expect.objectContaining({ severity: "critical", category: "Workflow Permissions" })
+    );
+    expect(result.errors).toEqual([
+      ".github/workflows/invalid.yml: unable to parse as a GitHub Actions workflow (expected a YAML mapping at the document root).",
+    ]);
   });
 });
