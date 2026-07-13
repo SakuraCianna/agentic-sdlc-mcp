@@ -132,7 +132,7 @@ node dist/index.js
 
 ## ⚙️ 客户端接入配置
 
-本服务已按 preview MCP Registry 名称 `io.github.sakuracianna/agentic-sdlc-mcp` 准备发布；`npx -y agentic-sdlc-mcp` 仍是兼容性安装入口。
+本服务使用 preview MCP Registry 名称 `io.github.SakuraCianna/agentic-sdlc-mcp`；Registry 的 GitHub namespace 大小写敏感，必须与认证账号 login 一致。`npx -y agentic-sdlc-mcp` 仍是兼容性安装入口。
 
 将本服务器注册进你的 MCP 客户端配置文件（例如 `claude_desktop_config.json` 或 Cursor、Windsurf 的配置页面）：
 

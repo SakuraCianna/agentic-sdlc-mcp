@@ -48,12 +48,12 @@ describe("MCP Registry metadata", () => {
     const server = await readJson<RegistryServerMetadata>("server.json");
     const registryPackage = server.packages?.[0];
 
-    expect(pkg.mcpName).toBe("io.github.sakuracianna/agentic-sdlc-mcp");
+    expect(pkg.mcpName).toBe("io.github.SakuraCianna/agentic-sdlc-mcp");
     expect(server.$schema).toBe(
       "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json"
     );
     expect(server.name).toBe(pkg.mcpName);
-    expect(server.version).toBe("1.7.0");
+    expect(server.version).toBe("1.7.1");
     expect(server.version).toBe(pkg.version);
     expect(registryPackage).toMatchObject({
       registryType: "npm",

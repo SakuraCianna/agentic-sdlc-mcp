@@ -130,7 +130,7 @@ If you need to verify this MCP server in any MCP-capable AI coding agent, follow
 
 ## ⚙️ MCP Client Configuration
 
-The server is prepared for the preview MCP Registry as `io.github.sakuracianna/agentic-sdlc-mcp`. `npx -y agentic-sdlc-mcp` remains the compatibility installation path.
+The server uses the preview MCP Registry identity `io.github.SakuraCianna/agentic-sdlc-mcp`. Registry GitHub namespaces are case-sensitive and follow the authenticated account login. `npx -y agentic-sdlc-mcp` remains the compatibility installation path.
 
 Add this server configuration to your MCP client setting files (e.g., `claude_desktop_config.json`, Cursor, or Windsurf settings):
 

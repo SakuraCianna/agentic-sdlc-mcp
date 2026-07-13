@@ -82,7 +82,7 @@ jobs:
       - name: Verify Registry publication
         run: |
           VERSION=$(node -p "require('./package.json').version")
-          NAME="io.github.sakuracianna/agentic-sdlc-mcp"
+          NAME="io.github.SakuraCianna/agentic-sdlc-mcp"
           for attempt in $(seq 1 12); do
             curl --fail --silent --show-error --get \
               --data-urlencode "search=$NAME" \
