@@ -20,6 +20,7 @@ import { resolveRepo, getOctokit, paginateAll, handleGitHubError } from "../gith
 import { fetchRepoContext } from "../github/context.js";
 import type { SdlcPlanPhase, SdlcPhase, SdlcWorkType, IssueDraft, IssueRiskLevel, RepoRef } from "../types.js";
 import type { Octokit } from "@octokit/rest";
+import type { AppliedPolicyRule, PolicySource } from "../policy/repository-policy.js";
 
 // ---------------------------------------------------------------------------
 // Schema
@@ -82,6 +83,17 @@ export const PlanFromContextOutputSchema = {
   suggestedIssues: z.array(z.string()),
   issueDrafts: z.array(IssueDraftShape),
   risks: z.array(z.string()),
+  policyDigest: z.string().optional(),
+  policySources: z.array(z.object({
+    kind: z.enum(["default", "repository"]),
+    path: z.string().nullable(),
+    ref: z.string().nullable(),
+    blobSha: z.string().nullable(),
+    digest: z.string(),
+  })),
+  appliedPolicyRules: z.array(z.object({ id: z.string(), source: z.literal("repository") })),
+  policyDegraded: z.boolean(),
+  policyErrors: z.array(z.string()),
 };
 
 // ---------------------------------------------------------------------------
@@ -103,6 +115,11 @@ export interface PlanFromContextResult {
   suggestedIssues: string[];
   issueDrafts: IssueDraft[];
   risks: string[];
+  policyDigest?: string;
+  policySources: PolicySource[];
+  appliedPolicyRules: AppliedPolicyRule[];
+  policyDegraded: boolean;
+  policyErrors: string[];
 }
 
 export interface WorkTypeInference {
@@ -842,10 +859,55 @@ export async function handlePlanFromContext(
   const acceptance = params.acceptanceCriteria ?? [];
 
   const ref = resolveRepo(params.owner, params.repo);
-  const ctx = await fetchContext({ ...ref });
+  const ctx = await fetchContext({ ...ref, includePolicy: true });
 
-  const inference = inferWorkType(params.goal, acceptance, params.workType);
-  const plan = buildPlan(params.goal, ctx.fullName, inference.workType);
+  const inference =
+    params.workType || !ctx.policy?.defaultWorkType
+      ? inferWorkType(params.goal, acceptance, params.workType)
+      : {
+          workType: ctx.policy.defaultWorkType,
+          confidence: "high" as const,
+          reasoning:
+            `Repository policy rule work.default_type selected ${ctx.policy.defaultWorkType}; ` +
+            "the caller did not provide workType.",
+          needsClarification: false,
+        };
+  const plan = buildPlan(params.goal, ctx.fullName, inference.workType).map((phase) => ({
+    ...phase,
+    tasks: [...phase.tasks],
+  }));
+  const policyConstraints: string[] = [];
+  const appendTask = (phaseName: SdlcPhase, task: string): void => {
+    const phase = plan.find((candidate) => candidate.phase === phaseName);
+    if (phase && !phase.tasks.includes(task)) phase.tasks.push(task);
+  };
+  for (const check of ctx.policy?.requiredChecks ?? []) {
+    appendTask(
+      "test",
+      `Run required repository check: ${check.name} (check_run App ${check.appId}) [ci.required_checks]`
+    );
+  }
+  if (ctx.policy?.protectedPaths.length) {
+    policyConstraints.push(
+      `Confirm whether the change touches protected paths: ${ctx.policy.protectedPaths.join(", ")} [paths.protected]`
+    );
+  }
+  if (ctx.policy?.requireIssueLink) {
+    appendTask("review", "Verify the pull request links its governing issue [review.require_issue_link]");
+  }
+  if (ctx.policy?.requireCodeOwnersForProtectedPaths) {
+    appendTask(
+      "review",
+      "Obtain CODEOWNERS review when protected paths are changed [review.require_codeowners_for_protected_paths]"
+    );
+  }
+  if (inference.workType === "release" && ctx.policy?.requireChangelog) {
+    appendTask("create", "Update the changelog for this release [release.require_changelog]");
+  }
+  if (inference.workType === "release" && ctx.policy?.requireRollbackPlan) {
+    appendTask("plan", "Document and validate a rollback plan [release.require_rollback_plan]");
+  }
+  const effectiveConstraints = [...constraints, ...policyConstraints];
   const suggestedIssues = buildSuggestedIssues(params.goal, inference.workType);
 
   let repoLabelNames: string[] = [];
@@ -869,6 +931,10 @@ export async function handlePlanFromContext(
     "Unknown scope may expand during implementation",
     "Existing tests may need updating",
     "Review latency may block the cycle",
+    ...(ctx.policy?.degraded
+      ? ["Repository policy could not be verified; safe built-in defaults were applied"]
+      : []),
+    ...(ctx.policyErrors ?? []).map((error) => `Repository policy: ${error}`),
   ];
 
   const structured: PlanFromContextResult = {
@@ -880,12 +946,17 @@ export async function handlePlanFromContext(
     confidence: inference.confidence,
     reasoning: inference.reasoning,
     needsClarification: inference.needsClarification,
-    constraints,
+    constraints: effectiveConstraints,
     acceptanceCriteria: acceptance,
     phases: plan,
     suggestedIssues,
     issueDrafts,
     risks,
+    ...(ctx.policyDigest ? { policyDigest: ctx.policyDigest } : {}),
+    policySources: ctx.policySources ?? [],
+    appliedPolicyRules: ctx.appliedPolicyRules ?? [],
+    policyDegraded: ctx.policy?.degraded ?? false,
+    policyErrors: ctx.policyErrors ?? [],
   };
 
   const lines: string[] = [
@@ -908,14 +979,27 @@ export async function handlePlanFromContext(
 
   lines.push("", "## Background", `Goal: **${params.goal}**`);
 
-  if (constraints.length > 0) {
+  if (effectiveConstraints.length > 0) {
     lines.push("", "### Constraints");
-    constraints.forEach((c) => lines.push(`- ${c}`));
+    effectiveConstraints.forEach((c) => lines.push(`- ${c}`));
   }
 
   if (acceptance.length > 0) {
     lines.push("", "### Acceptance Criteria");
     acceptance.forEach((a) => lines.push(`- ${a}`));
+  }
+
+  if (ctx.policy || ctx.policySources?.length) {
+    lines.push(
+      "",
+      "## Policy provenance",
+      `**Status:** ${ctx.policy?.degraded ? "degraded (safe defaults applied)" : ctx.policy?.found ? "repository policy loaded" : "built-in defaults"}`,
+      `**Digest:** ${ctx.policyDigest ? `\`${ctx.policyDigest}\`` : "unknown"}`,
+      `**Applied rule IDs:** ${ctx.appliedPolicyRules?.length ? ctx.appliedPolicyRules.map((rule) => rule.id).join(", ") : "(none)"}`
+    );
+    for (const source of ctx.policySources ?? []) {
+      lines.push(`- ${source.kind}: ${source.path ?? "built-in"} @ ${source.ref ?? "default"} (blob: ${source.blobSha ?? "n/a"})`);
+    }
   }
 
   lines.push("", "## Phase-by-Phase Plan");

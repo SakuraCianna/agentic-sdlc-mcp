@@ -4,6 +4,7 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
+import { z } from "zod";
 
 vi.mock("../../config.js", () => ({
   config: {
@@ -16,7 +17,7 @@ vi.mock("../../config.js", () => ({
   isSmokeMode: false,
 }));
 
-const { handleAgentHandoff } = await import("../../tools/agent-handoff.js");
+const { handleAgentHandoff, AgentHandoffOutputSchema } = await import("../../tools/agent-handoff.js");
 
 import type { AgentHandoffInput } from "../../tools/agent-handoff.js";
 import type { RepoRef } from "../../types.js";
@@ -26,11 +27,21 @@ const REF: RepoRef = { owner: "test-org", repo: "test-repo" };
 function makeMockOctokit(overrides: {
   issue?: any;
   pr?: any;
+  policyContent?: string;
 } = {}) {
   return {
     repos: {
       get: vi.fn().mockResolvedValue({
         data: { full_name: "test-org/test-repo", default_branch: "main" },
+      }),
+      getContent: vi.fn().mockImplementation(({ path }: { path: string }) => {
+        if (path === ".agentic-sdlc.yml" && overrides.policyContent) {
+          return Promise.resolve({ data: {
+            type: "file", encoding: "base64", sha: "policy-sha",
+            content: Buffer.from(overrides.policyContent).toString("base64"),
+          }});
+        }
+        return Promise.reject({ status: 404 });
       }),
     },
     issues: {
@@ -47,6 +58,29 @@ function makeMockOctokit(overrides: {
 }
 
 describe("handleAgentHandoff", () => {
+  it("carries verified policy provenance and required next actions", async () => {
+    const octokit = makeMockOctokit({
+      policyContent: [
+        "schemaVersion: 1",
+        "requiredChecks: [{ name: policy-check, source: check_run, appId: 15368 }]",
+        "review:",
+        "  requireIssueLink: true",
+      ].join("\n"),
+    });
+    const { structured, text } = await handleAgentHandoff(
+      { currentStatus: "Implementation complete" }, REF, octokit
+    );
+
+    expect(structured.policyDigest).toMatch(/^[a-f0-9]{64}$/);
+    expect(structured.policySummary?.requiredChecks).toEqual([
+      { name: "policy-check", source: "check_run", appId: 15368 },
+    ]);
+    expect(structured.nextSteps.some((step) => step.includes("policy-check"))).toBe(true);
+    expect(structured.nextSteps.some((step) => /linked issue/i.test(step))).toBe(true);
+    expect(text).toContain("Policy Provenance");
+    expect(() => z.object(AgentHandoffOutputSchema).parse(structured)).not.toThrow();
+  });
+
   it("returns handoff prompt with repo context", async () => {
     const octokit = makeMockOctokit();
     const params: AgentHandoffInput = {

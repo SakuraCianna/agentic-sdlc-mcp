@@ -20,6 +20,12 @@ import {
 } from "../github/pull-request-evidence.js";
 import type { CheckStatus, RepoRef } from "../types.js";
 import { safeMarkdownInline } from "../rendering/markdown.js";
+import { loadRepositoryPolicy } from "../policy/repository-policy-loader.js";
+import {
+  evaluatePullRequestPolicy,
+  type PullRequestPolicyDecision,
+} from "../policy/pull-request-policy.js";
+import type { AppliedPolicyRule, PolicySource } from "../policy/repository-policy.js";
 
 // ---------------------------------------------------------------------------
 // Schema
@@ -176,6 +182,13 @@ export const QualityGateOutputSchema = {
   degraded: z.boolean(),
   unverifiedSignals: z.array(z.string()),
   errors: z.array(z.string()),
+  policyDigest: z.string().optional(),
+  policySources: z.array(z.object({
+    kind: z.enum(["default", "repository"]), path: z.string().nullable(),
+    ref: z.string().nullable(), blobSha: z.string().nullable(), digest: z.string(),
+  })).optional(),
+  appliedPolicyRules: z.array(z.object({ id: z.string(), source: z.literal("repository") })).optional(),
+  policyDegraded: z.boolean().optional(),
 };
 
 // ---------------------------------------------------------------------------
@@ -256,6 +269,10 @@ export interface QualityGateResult {
   degraded: boolean;
   unverifiedSignals: string[];
   errors: string[];
+  policyDigest?: string;
+  policySources?: PolicySource[];
+  appliedPolicyRules?: AppliedPolicyRule[];
+  policyDegraded?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -905,6 +922,18 @@ function renderQualityGateMarkdown(result: QualityGateResult): string {
       ...result.errors.map((error) => `- ${inline(error, 500)}`)
     );
   }
+  if (result.policyDigest) {
+    lines.push(
+      "",
+      "## Policy Provenance",
+      `- Digest: \`${inline(result.policyDigest, 80)}\``,
+      `- Status: ${result.policyDegraded ? "degraded" : "verified"}`,
+      `- Applied rules: ${result.appliedPolicyRules?.map((rule) => inline(rule.id)).join(", ") || "none"}`
+    );
+    for (const source of result.policySources ?? []) {
+      lines.push(`- Source: ${inline(source.path ?? "built-in")} @ ${inline(source.ref ?? "default")} (blob: ${inline(source.blobSha ?? "n/a")})`);
+    }
+  }
   if (result.categories.failing.length > 0) {
     lines.push(
       "",
@@ -952,11 +981,78 @@ export async function handleQualityGateStatus(
       ref,
       octokit
     );
-    const decision = evaluateQualityGate(
-      evidence,
-      params.blockingLabels ?? DEFAULT_BLOCKING_LABELS
-    );
+    let policyDecision: PullRequestPolicyDecision | null = null;
+    let appliedPolicyRules: AppliedPolicyRule[] = [];
+    const getContent = (octokit.repos as { getContent?: unknown }).getContent;
+    if (typeof getContent === "function") {
+      const loaded = await loadRepositoryPolicy(
+        ref,
+        evidence.pullRequest.baseSha ?? evidence.pullRequest.baseBranch,
+        octokit
+      );
+      policyDecision = evaluatePullRequestPolicy(loaded, {
+        paths: evidence.changedFiles.flatMap((file) =>
+          file.previousFilename ? [file.filename, file.previousFilename] : [file.filename]
+        ),
+        changedFilesComplete: !evidence.unverifiedSignals.includes("changed_files"),
+        linkedIssues: evidence.linkedIssues,
+        approvedUsers: evidence.reviews.approvedUsers,
+        requestedUsers: evidence.reviews.requestedUsers,
+        requestedTeams: evidence.reviews.requestedTeams,
+        codeOwnerReviewSatisfied: evidence.reviews.codeOwnerReviewSatisfied,
+      });
+      for (const required of policyDecision.requiredChecks) {
+        const trustedPassing = evidence.ci.checkRuns.passing.some(
+          (signal) =>
+            signal.name.toLocaleLowerCase() === required.name.toLocaleLowerCase() &&
+            signal.appId === required.appId
+        );
+        if (!trustedPassing) {
+          policyDecision.policyGaps.push({
+            ruleId: "ci.required_checks",
+            message: `Required check ${required.name} is not passing from check_run App ${required.appId}.`,
+          });
+        }
+      }
+      appliedPolicyRules = loaded.appliedRules;
+      evidence.branchProtection.requiredStatusChecks = [
+        ...evidence.branchProtection.requiredStatusChecks,
+        ...policyDecision.requiredChecks
+          .filter((policyCheck) =>
+            !evidence.branchProtection.requiredStatusChecks.some(
+              (check) =>
+                check.context.toLocaleLowerCase() === policyCheck.name.toLocaleLowerCase() &&
+                check.appId === policyCheck.appId
+            )
+          )
+          .map((policyCheck) => ({ context: policyCheck.name, appId: policyCheck.appId })),
+      ];
+    }
+    const labels = [
+      ...(params.blockingLabels ?? DEFAULT_BLOCKING_LABELS),
+      ...(policyDecision?.blockingLabels ?? []),
+    ];
+    const decision = evaluateQualityGate(evidence, labels);
+    if (decision.conclusion !== "failing" && decision.conclusion !== "pending") {
+      if ((policyDecision?.blockers.length ?? 0) > 0 || (policyDecision?.pendingReviews.length ?? 0) > 0) {
+        decision.conclusion = "needs_review";
+      } else if ((policyDecision?.policyGaps.length ?? 0) > 0) {
+        decision.conclusion = "policy_gap";
+      }
+    }
+    const policyReasons = [
+      ...(policyDecision?.blockers ?? []),
+      ...(policyDecision?.pendingReviews ?? []),
+      ...(policyDecision?.policyGaps ?? []),
+    ].map((reason) => `[${reason.ruleId}] ${reason.message}`);
+    decision.blockers = unique([...decision.blockers, ...policyReasons]);
     structured = buildPullRequestResult(evidence, decision);
+    if (policyDecision) {
+      structured.policyDigest = policyDecision.policyDigest;
+      structured.policySources = policyDecision.policySources;
+      structured.appliedPolicyRules = appliedPolicyRules;
+      structured.policyDegraded = policyDecision.policyDegraded;
+    }
   } else if (params.ref) {
     const { data: commit } = await octokit.repos.getCommit({
       owner: ref.owner,

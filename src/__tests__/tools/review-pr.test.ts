@@ -381,6 +381,7 @@ function makeMockOctokit(opts: {
   prDraft?: boolean;
   commits?: number;
   prTitle?: string;
+  policyContent?: string;
 }) {
   return {
     checks: {
@@ -446,7 +447,17 @@ function makeMockOctokit(opts: {
       getBranchRules: vi.fn().mockResolvedValue({ data: [] }),
       getContent: opts.contentError
         ? vi.fn().mockRejectedValue(opts.contentError)
-        : vi.fn().mockImplementation(({ path }: { path: string }) => {
+          : vi.fn().mockImplementation(({ path }: { path: string }) => {
+            if (path === ".agentic-sdlc.yml" && opts.policyContent !== undefined) {
+              return Promise.resolve({
+                data: {
+                  type: "file",
+                  encoding: "base64",
+                  content: Buffer.from(opts.policyContent).toString("base64"),
+                  sha: "policy-blob-sha",
+                },
+              });
+            }
             if (path === ".github/CODEOWNERS" && opts.codeownersContent !== undefined) {
               return Promise.resolve({
                 data: {
@@ -554,6 +565,65 @@ describe("handleReviewPr — ownership check", () => {
 });
 
 describe("handleReviewPr — structured review contract", () => {
+  it("evaluates base-SHA repository policy and exposes matched risk/reviewer rules", async () => {
+    const policyContent = [
+      "schemaVersion: 1",
+      "protectedPaths: [src/auth/**]",
+      "riskRules:",
+      "  - id: risk.auth",
+      "    paths: [src/auth/**]",
+      "    workTypes: []",
+      "    level: critical",
+      "    domains: [identity]",
+      "review:",
+      "  requiredReviewers:",
+      "    - id: review.auth",
+      "      riskRuleIds: [risk.auth]",
+      "      reviewers: ['@org/security']",
+    ].join("\n");
+    const octokit = makeMockOctokit({
+      policyContent,
+      files: [{
+        filename: "src/public/login.ts",
+        previous_filename: "src/auth/login.ts",
+        status: "renamed",
+        additions: 1,
+        deletions: 1,
+      }],
+    });
+
+    const { structured, text } = await handleReviewPr(BASE_PARAMS, REF, octokit);
+
+    expect((octokit.repos.getContent as unknown as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
+      expect.objectContaining({ path: ".agentic-sdlc.yml", ref: "base-sha" })
+    );
+    expect(structured.findings.some((finding) => finding.reason.includes("risk.auth"))).toBe(true);
+    expect(structured.findings.some((finding) => finding.reason.includes("review.auth"))).toBe(true);
+    expect(structured.conclusion).toBe("needs_changes");
+    expect(structured.policyDigest).toMatch(/^[a-f0-9]{64}$/);
+    expect(text).toContain("Policy Provenance");
+  });
+
+  it("raises findings for protected paths and repository-policy self-modification", async () => {
+    const policyContent = [
+      "schemaVersion: 1",
+      "protectedPaths: [src/config/**]",
+    ].join("\n");
+    const octokit = makeMockOctokit({
+      policyContent,
+      files: [
+        { filename: "src/config/runtime.ts", status: "modified", additions: 1, deletions: 0 },
+        { filename: ".agentic-sdlc.yml", status: "modified", additions: 1, deletions: 0 },
+      ],
+    });
+
+    const { structured } = await handleReviewPr(BASE_PARAMS, REF, octokit);
+
+    expect(structured.findings.some((finding) => finding.category === "ProtectedPath")).toBe(true);
+    expect(structured.findings.some((finding) => finding.category === "RepositoryPolicyChange")).toBe(true);
+    expect(structured.conclusion).toBe("needs_changes");
+  });
+
   it("runs supplemental dynamic credential detection under the default basic standard", async () => {
     const octokit = makeMockOctokit({
       files: [

@@ -147,6 +147,49 @@ describe("fetchRepoContext", () => {
     expect(getReadme).not.toHaveBeenCalled();
   });
 
+  it("loads an additive repository policy summary from the exact default branch", async () => {
+    const source = [
+      "schemaVersion: 1",
+      "defaultWorkType: security",
+      "requiredChecks:",
+      "  - { name: policy-check, source: check_run, appId: 15368 }",
+      "protectedPaths:",
+      "  - src/auth/**",
+    ].join("\n");
+    getContent.mockResolvedValueOnce({
+      data: {
+        type: "file",
+        encoding: "base64",
+        content: Buffer.from(source).toString("base64"),
+        sha: "policy-blob-sha",
+      },
+    });
+
+    const ctx = await fetchRepoContext({
+      owner: "test-org",
+      repo: "test-repo",
+      includePolicy: true,
+    });
+
+    expect(getContent).toHaveBeenCalledWith(
+      expect.objectContaining({ path: ".agentic-sdlc.yml", ref: "main" })
+    );
+    expect(ctx.policy).toMatchObject({
+      found: true,
+      degraded: false,
+      schemaVersion: 1,
+      defaultWorkType: "security",
+      requiredChecks: [{ name: "policy-check", source: "check_run", appId: 15368 }],
+      protectedPaths: ["src/auth/**"],
+    });
+    expect(ctx.policySources?.at(-1)).toMatchObject({
+      kind: "repository",
+      ref: "main",
+      blobSha: "policy-blob-sha",
+    });
+    expect(ctx.policyDigest).toMatch(/^[a-f0-9]{64}$/);
+  });
+
   it("calls getContent exactly once for governance when includeGovernance is on and CODEOWNERS exists at the first candidate path", async () => {
     getContent.mockImplementation(async ({ path }: { path: string }) => {
       if (path === ".github/CODEOWNERS") return { data: "* @someone" };

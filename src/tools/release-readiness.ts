@@ -12,6 +12,13 @@ import { config } from "../config.js";
 import { safeMarkdownInline } from "../rendering/markdown.js";
 import type { RepoRef } from "../types.js";
 import type { Octokit } from "@octokit/rest";
+import {
+  loadRepositoryPolicy,
+  summarizeRepositoryPolicy,
+  unavailableRepositoryPolicyResult,
+  type RepositoryPolicySummary,
+} from "../policy/repository-policy-loader.js";
+import type { AppliedPolicyRule, PolicySource } from "../policy/repository-policy.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -33,9 +40,30 @@ export const ReleaseReadinessInputSchema = z.object({
   headRef: z.string().optional().describe("Branch, tag, or commit SHA to release. Defaults to default branch."),
   pullNumber: z.number().int().positive().optional()
     .describe("If provided, checks the PR's head commit CI status."),
+  rollbackPlanEvidence: z.object({
+    reference: z.string().min(1).max(500),
+    tested: z.boolean(),
+  }).optional().describe("Caller-provided rollback runbook/reference and whether it was tested."),
 });
 
 export type ReleaseReadinessInput = z.infer<typeof ReleaseReadinessInputSchema>;
+
+const PolicySummaryShape = z.object({
+  found: z.boolean(), degraded: z.boolean(), schemaVersion: z.literal(1),
+  defaultWorkType: z.enum(["docs", "feature", "bugfix", "refactor", "security", "release", "infra"]).optional(),
+  requiredChecks: z.array(z.object({
+    name: z.string(), source: z.literal("check_run"), appId: z.number().int().positive(),
+  })), protectedPaths: z.array(z.string()),
+  riskRuleIds: z.array(z.string()), requiredReviewerRuleIds: z.array(z.string()),
+  releaseBlockingLabels: z.array(z.string()), requireIssueLink: z.boolean(),
+  requireCodeOwnersForProtectedPaths: z.boolean(), requireChangelog: z.boolean(),
+  requireRollbackPlan: z.boolean(),
+});
+const PolicySourceShape = z.object({
+  kind: z.enum(["default", "repository"]), path: z.string().nullable(),
+  ref: z.string().nullable(), blobSha: z.string().nullable(), digest: z.string(),
+});
+const AppliedPolicyRuleShape = z.object({ id: z.string(), source: z.literal("repository") });
 
 export const ReleaseReadinessOutputSchema = {
   repo: z.string(),
@@ -46,6 +74,14 @@ export const ReleaseReadinessOutputSchema = {
   openBugCount: z.number().int(),
   blockingIssues: z.array(z.string()),
   hasChangelog: z.boolean(),
+  rollbackPlanEvidence: z.object({
+    reference: z.string(), tested: z.boolean(), source: z.literal("caller"),
+  }).nullable(),
+  policy: PolicySummaryShape,
+  policyDigest: z.string(),
+  policySources: z.array(PolicySourceShape),
+  appliedPolicyRules: z.array(AppliedPolicyRuleShape),
+  policyDegraded: z.boolean(),
 };
 
 // ---------------------------------------------------------------------------
@@ -61,6 +97,12 @@ export interface ReleaseReadinessResult {
   openBugCount: number;
   blockingIssues: string[];
   hasChangelog: boolean;
+  rollbackPlanEvidence: { reference: string; tested: boolean; source: "caller" } | null;
+  policy: RepositoryPolicySummary;
+  policyDigest: string;
+  policySources: PolicySource[];
+  appliedPolicyRules: AppliedPolicyRule[];
+  policyDegraded: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -83,9 +125,12 @@ export async function handleReleaseReadiness(
   // --- CI status for head ---
   let ciStatus: ReleaseReadinessResult["ciStatus"] = "unknown";
   let ciSummary = "";
+  let headSha = headRef;
+  let headShaResolved = false;
+  let pullLabels: string[] | null = null;
+  let passingPolicyChecks: Array<{ name: string; appId: number | null }> = [];
 
   try {
-    let headSha: string;
     if (params.pullNumber) {
       const { data: pr } = await octokit.pulls.get({
         owner: ref.owner,
@@ -93,6 +138,10 @@ export async function handleReleaseReadiness(
         pull_number: params.pullNumber,
       });
       headSha = pr.head.sha;
+      headShaResolved = true;
+      pullLabels = pr.labels.map((label) =>
+        typeof label === "string" ? label : label.name ?? ""
+      );
     } else {
       const { data: commit } = await octokit.repos.getCommit({
         owner: ref.owner,
@@ -100,9 +149,14 @@ export async function handleReleaseReadiness(
         ref: headRef,
       });
       headSha = commit.sha;
+      headShaResolved = true;
     }
 
     const ci = await collectCiEvidence(ref, headSha, octokit);
+    passingPolicyChecks = ci.checkRuns.passing.map((signal) => ({
+      name: signal.name,
+      appId: signal.appId,
+    }));
     const anySourceUnverified = ci.unverifiedSignals.length > 0;
     const unavailableSources = [
       ci.unverifiedSignals.includes("check_runs") ? "check runs unavailable or incomplete" : null,
@@ -172,11 +226,18 @@ export async function handleReleaseReadiness(
 
   // --- CHANGELOG check ---
   let hasChangelog = false;
-  try {
-    await octokit.repos.getContent({ owner: ref.owner, repo: ref.repo, path: "CHANGELOG.md" });
-    hasChangelog = true;
-  } catch {
-    // not found - leave false
+  if (headShaResolved) {
+    try {
+      await octokit.repos.getContent({
+        owner: ref.owner,
+        repo: ref.repo,
+        path: "CHANGELOG.md",
+        ref: headSha,
+      });
+      hasChangelog = true;
+    } catch {
+      // not found - leave false
+    }
   }
 
   const blockingIssues: string[] = [];
@@ -186,6 +247,47 @@ export async function handleReleaseReadiness(
   if (bugEvidenceIncomplete) blockingIssues.push("Open bug issues could not be fully verified");
   if (bugIssues.length > 0)
     blockingIssues.push(`${bugIssues.length} open bug issue(s) - review before release`);
+
+  const loadedPolicy = headShaResolved
+    ? await loadRepositoryPolicy(ref, headSha, octokit)
+    : unavailableRepositoryPolicyResult(
+        "Repository policy could not be bound to an immutable release target SHA."
+      );
+  const policy = summarizeRepositoryPolicy(loadedPolicy);
+  if (loadedPolicy.degraded) {
+    blockingIssues.push("Repository policy could not be verified");
+  }
+  const missingPolicyChecks = loadedPolicy.policy.requiredChecks.filter(
+    (required) =>
+      !passingPolicyChecks.some(
+        (actual) =>
+          actual.name.toLocaleLowerCase() === required.name.toLocaleLowerCase() &&
+          actual.appId === required.appId
+      )
+  );
+  if (missingPolicyChecks.length > 0) {
+    blockingIssues.push(
+      `Repository required checks are not passing from the trusted App: ${missingPolicyChecks
+        .map((check) => `${check.name} (App ${check.appId})`)
+        .join(", ")}`
+    );
+  }
+  if (loadedPolicy.found && pullLabels !== null) {
+    const blocking = new Set(
+      loadedPolicy.policy.labels.releaseBlocking.map((label) => label.toLocaleLowerCase())
+    );
+    const matched = pullLabels.filter((label) => blocking.has(label.toLocaleLowerCase()));
+    if (matched.length > 0) blockingIssues.push(`Release-blocking PR label matched: ${matched.join(", ")}`);
+  }
+  if (loadedPolicy.policy.release.requireChangelog && !hasChangelog) {
+    blockingIssues.push("Repository policy requires CHANGELOG.md");
+  }
+  if (
+    loadedPolicy.policy.release.requireRollbackPlan &&
+    (!params.rollbackPlanEvidence || !params.rollbackPlanEvidence.tested)
+  ) {
+    blockingIssues.push("Repository policy requires an explicitly tested rollback plan");
+  }
 
   const isReady = blockingIssues.length === 0 && ciStatus === "passing";
 
@@ -198,6 +300,14 @@ export async function handleReleaseReadiness(
     openBugCount: bugIssues.length,
     blockingIssues,
     hasChangelog,
+    rollbackPlanEvidence: params.rollbackPlanEvidence
+      ? { ...params.rollbackPlanEvidence, source: "caller" }
+      : null,
+    policy,
+    policyDigest: loadedPolicy.digest,
+    policySources: loadedPolicy.policySources,
+    appliedPolicyRules: loadedPolicy.appliedRules,
+    policyDegraded: loadedPolicy.degraded,
   };
 
   const renderedRepo = safeMarkdownInline(`${ref.owner}/${ref.repo}`, { maxLength: 200 });
@@ -214,6 +324,17 @@ export async function handleReleaseReadiness(
     "",
     "## Open Bugs",
   ];
+
+  lines.push(
+    "",
+    "## Policy Provenance",
+    `- Digest: \`${loadedPolicy.digest}\``,
+    `- Status: ${loadedPolicy.degraded ? "degraded" : loadedPolicy.found ? "repository policy loaded" : "built-in defaults"}`,
+    `- Applied rules: ${loadedPolicy.appliedRules.map((rule) => rule.id).join(", ") || "none"}`
+  );
+  loadedPolicy.policySources.forEach((source) =>
+    lines.push(`- Source: ${source.path ?? "built-in"} @ ${source.ref ?? "default"} (blob: ${source.blobSha ?? "n/a"})`)
+  );
 
   if (bugEvidenceIncomplete) {
     lines.push("[WARN] Open bug issue evidence is incomplete; release remains blocked.");

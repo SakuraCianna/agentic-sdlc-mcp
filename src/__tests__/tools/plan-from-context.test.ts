@@ -357,6 +357,92 @@ describe("handlePlanFromContext", () => {
     expect(structured.needsClarification).toBe(false);
   });
 
+  it("uses repository defaultWorkType only when the caller omitted workType", async () => {
+    const policyFetch = vi.fn().mockResolvedValue({
+      ...(await mockFetch()),
+      policy: {
+        found: true,
+        degraded: false,
+        schemaVersion: 1,
+        defaultWorkType: "security",
+        requiredChecks: [],
+        protectedPaths: [],
+        riskRuleIds: [],
+        requiredReviewerRuleIds: [],
+        releaseBlockingLabels: ["blocked"],
+        requireIssueLink: false,
+        requireCodeOwnersForProtectedPaths: false,
+        requireChangelog: false,
+        requireRollbackPlan: false,
+      },
+      policyDigest: "b".repeat(64),
+      policySources: [],
+      appliedPolicyRules: [{ id: "work.default_type", source: "repository" }],
+      policyErrors: [],
+      policyWarnings: [],
+    });
+
+    const inferred = await handlePlanFromContext(
+      { goal: "Improve the onboarding experience", owner: "myorg", repo: "myrepo" },
+      policyFetch,
+      mockFetchLabels
+    );
+    const explicit = await handlePlanFromContext(
+      { goal: "Improve the onboarding experience", owner: "myorg", repo: "myrepo", workType: "docs" },
+      policyFetch,
+      mockFetchLabels
+    );
+
+    expect(inferred.structured.workType).toBe("security");
+    expect(inferred.structured.reasoning).toContain("work.default_type");
+    expect(explicit.structured.workType).toBe("docs");
+  });
+
+  it("adds required checks and exposes policy rule provenance without removing built-in tasks", async () => {
+    const policyFetch = vi.fn().mockResolvedValue({
+      ...(await mockFetch()),
+      policy: {
+        found: true,
+        degraded: false,
+        schemaVersion: 1,
+        requiredChecks: [{ name: "policy-check", source: "check_run", appId: 15368 }],
+        protectedPaths: ["src/auth/**"],
+        riskRuleIds: ["risk.auth"],
+        requiredReviewerRuleIds: ["review.auth"],
+        releaseBlockingLabels: ["blocked"],
+        requireIssueLink: true,
+        requireCodeOwnersForProtectedPaths: true,
+        requireChangelog: false,
+        requireRollbackPlan: false,
+      },
+      policyDigest: "c".repeat(64),
+      policySources: [{ kind: "repository", path: ".agentic-sdlc.yml", ref: "main", blobSha: "sha", digest: "c".repeat(64) }],
+      appliedPolicyRules: [
+        { id: "ci.required_checks", source: "repository" },
+        { id: "paths.protected", source: "repository" },
+      ],
+      policyErrors: [],
+      policyWarnings: [],
+    });
+
+    const { structured, text } = await handlePlanFromContext(
+      { goal: "Audit authentication permissions", owner: "myorg", repo: "myrepo", workType: "security" },
+      policyFetch,
+      mockFetchLabels
+    );
+
+    const testPhase = structured.phases.find((phase) => phase.phase === "test")!;
+    expect(testPhase.tasks).toContain(
+      "Run required repository check: policy-check (check_run App 15368) [ci.required_checks]"
+    );
+    expect(structured.policyDigest).toBe("c".repeat(64));
+    expect(structured.appliedPolicyRules.map((rule) => rule.id)).toContain("ci.required_checks");
+    expect(structured.constraints).toContain("Confirm whether the change touches protected paths: src/auth/** [paths.protected]");
+    expect(text).toContain("Confirm whether the change touches protected paths: src/auth/** [paths.protected]");
+    expect(text).toContain("Policy provenance");
+    expect(structured.phases.find((phase) => phase.phase === "secure")!.tasks.length).toBeGreaterThan(0);
+  });
+
   it("infers workType: docs for a docs-only goal and does not require unit tests in Create", async () => {
     const params: PlanFromContextInput = {
       goal: "Document the MCP configuration and dryRun usage",
