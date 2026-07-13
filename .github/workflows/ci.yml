@@ -29,6 +29,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Check line endings
+        run: npm run check:line-endings
+
       - name: Type check
         run: npm run typecheck
 

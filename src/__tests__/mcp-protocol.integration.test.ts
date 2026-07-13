@@ -21,7 +21,7 @@ describe("real MCP protocol contract", () => {
 
     expect(client.getServerVersion()).toEqual({
       name: "agentic-sdlc-mcp",
-      version: "1.7.1",
+      version: "1.8.0",
     });
     const { tools } = await client.listTools();
     expect(tools.map((tool) => tool.name).sort()).toEqual([

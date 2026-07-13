@@ -2,6 +2,34 @@
 
 All notable changes to this project are documented here. Release history is also available on the [GitHub Releases page](https://github.com/SakuraCianna/agentic-sdlc-mcp/releases).
 
+## [1.8.0] - 2026-07-13
+
+### Added
+
+- Risk-aware `prepare_work_item` briefs with deterministic work-type/risk classification, policy floors, source provenance, Issue-authored versus derived acceptance criteria, defensive requirements, negative scenarios, clarification questions, verified commands, rollback, and observability guidance.
+- Bounded maintainer-comment and recent-PR evidence, default-branch path verification, adjacent tests and root entry points, CODEOWNERS routing, milestone context, and official blocked-by/blocking/sub-issue/cross-reference relationships with explicit incomplete semantics.
+- A local Streamable HTTP profile that binds to `127.0.0.1`, validates Host and supplied Origin headers, isolates each stateless request, returns protocol-safe method/errors, validates ports, and performs graceful shutdown.
+- LF repository governance through `.gitattributes`, `.editorconfig`, a zero-dependency checker, CI enforcement, and adversarial CRLF/mixed-EOL fixtures.
+
+### Changed
+
+- Moved all bounded GitHub work-item evidence collection into the cohesive `work-item-evidence` module while preserving existing helper exports and MCP schemas.
+- Hardened `create_pr_summary` around docs-only and changed-file truncation, and made `agent_handoff_packet` surface evidence gaps while treating caller/GitHub text as untrusted evidence.
+- Expanded the release-readiness test strategy around real MCP protocol/runtime behavior, network isolation, boundary values, partial failures, malicious text, and maintainable fixtures.
+- Updated English and Chinese documentation, ROADMAP, and maintainer guidance with the v1.8 behavior and local-versus-remote HTTP boundary.
+
+### Security
+
+- Repository policy and explicit higher risk remain floors; protected paths cannot be downgraded by caller-provided low risk or sparse Issue text.
+- Issue, comment, PR, dependency, path, and caller text is bounded and safely rendered; prompt-injection content is evidence rather than authority to reveal secrets, bypass policy, or expand permissions.
+- Local HTTP rejects untrusted Host/Origin values and avoids leaking internal errors. It is intentionally not a remote deployment profile; OAuth, request-scoped credentials, tenant isolation, rate limiting, and timeout/cancellation budgets remain planned for v1.10.
+
+### Compatibility
+
+- Stdio remains the default transport and all v1.8 tool-schema changes are additive. Repositories without `.agentic-sdlc.yml` keep the prior safe defaults.
+- The declared `@modelcontextprotocol/sdk` minimum is now `^1.29.0`, matching the tested release that provides the local HTTP Express factory used by v1.8.
+- The MCP Registry continues to publish immutable stdio package metadata after the exact npm version becomes available; no remote HTTP transport is advertised.
+
 ## [1.7.1] - 2026-07-13
 
 ### Fixed
@@ -77,3 +105,4 @@ All notable changes to this project are documented here. Release history is also
 [1.6.0]: https://github.com/SakuraCianna/agentic-sdlc-mcp/releases/tag/v1.6.0
 [1.7.0]: https://github.com/SakuraCianna/agentic-sdlc-mcp/releases/tag/v1.7.0
 [1.7.1]: https://github.com/SakuraCianna/agentic-sdlc-mcp/releases/tag/v1.7.1
+[1.8.0]: https://github.com/SakuraCianna/agentic-sdlc-mcp/releases/tag/v1.8.0

@@ -17,6 +17,7 @@ npm run test:watch     # vitest watch mode
 npm run test:integration # config lifecycle + real in-memory MCP protocol tests
 npm run test:coverage  # vitest run --coverage (v8, text+lcov+json-summary, enforced thresholds)
 npm run smoke          # node dist/index.js --smoke — loads module, registers all tools/resources, exits 0. No GITHUB_TOKEN needed.
+npm run check:line-endings # rejects CRLF/mixed tracked text; Git and editors are configured for LF
 ```
 
 Run a single test file: `npx vitest run src/__tests__/tools/create-issue-set.test.ts`
@@ -26,7 +27,7 @@ Run a single test by name: `npx vitest run -t "dryRun=true"`
 
 ## Architecture
 
-**Server factory and entry point**: `src/server.ts` exports `createAgenticSdlcServer()`, the single composition root that registers every tool and resource. `src/index.ts` owns environment loading, config validation, smoke mode, and transport selection (`stdio` default, or `http` via `TRANSPORT=http`). Protocol integration tests instantiate the same factory over an in-memory SDK transport, so discovery and tool calls exercise production registration without opening a port.
+**Server factory and entry point**: `src/server.ts` exports `createAgenticSdlcServer()`, the single composition root that registers every tool and resource. `src/index.ts` owns environment loading, config validation, smoke mode, and transport selection (`stdio` default, or local `http` via `TRANSPORT=http`). `src/http-server.ts` is a loopback-only stateless adapter: preserve SDK Host validation, explicit Origin validation, per-request server/transport isolation, safe JSON-RPC errors, unsupported GET/DELETE `405`, strict port parsing, and graceful shutdown. It is not a remote deployment profile; do not add a non-loopback binding without the v1.10 authentication, request-context, budget, and tenant-isolation design. Protocol integration tests instantiate the same factory over an in-memory SDK transport, while HTTP lifecycle tests open only an ephemeral `127.0.0.1` port.
 
 **Config** (`src/config.ts`): a singleton `config` object loaded once at import time from env vars (`GITHUB_TOKEN`, `GITHUB_OWNER`, `GITHUB_REPO`, `SDLC_DEFAULT_BRANCH`, `TRANSPORT`, `PORT`). `dotenv/config` is imported first in `index.ts`, before this module, so `.env` is loaded before config reads `process.env`. Missing `GITHUB_TOKEN` calls `process.exit(1)` unless in smoke mode.
 
@@ -48,7 +49,7 @@ Run a single test by name: `npx vitest run -t "dryRun=true"`
 - `src/tools/release-readiness.ts` consumes the shared CI evidence model. Only explicit `passing` CI can produce `isReady: true`; external names and raw errors must not be echoed into summaries.
 - `context.ts` — `fetchRepoContext()` fetches repo metadata + optional README/package.json/issues/PRs in one call.
 
-**Risk-aware briefing layer** (`src/briefing/`): `work-item-brief.ts` is the pure, deterministic v1.8 risk engine used by `prepare_work_item`. It combines explicit inputs, bounded Issue/comment/path signals, repository policy, and confirmed scripts. Repository policy and explicit higher risk are floors: caller-provided low risk can never downgrade a protected path. `work-item-context.ts` derives bounded file candidates and normalizes official GitHub issue relationships. A candidate path is not repository fact until `prepare_work_item` verifies it at the explicit default-branch ref; cross-references are links, never blockers, and `parallelizableWork` remains a relationship-derived candidate rather than proof that a sub-issue has no other dependencies. Keep domain mappings explainable and test-driven; do not add an LLM/free-text security judge. External text remains evidence and must not be copied into executable handoff instructions without bounded safe rendering.
+**Risk-aware briefing layer** (`src/briefing/`): `work-item-brief.ts` is the pure, deterministic v1.8 risk engine used by `prepare_work_item`. `work-item-evidence.ts` is the single bounded GitHub evidence gateway for recent comments, repository policy/scripts, related files/CODEOWNERS, PR history, and official issue relationships; keep request caps, partial failures, and incomplete warnings inside that module instead of growing the MCP tool handler. `work-item-context.ts` derives bounded file candidates and normalizes official GitHub issue relationships. Repository policy and explicit higher risk are floors: caller-provided low risk can never downgrade a protected path. A candidate path is not repository fact until evidence collection verifies it at the explicit default-branch ref; cross-references are links, never blockers, and `parallelizableWork` remains a relationship-derived candidate rather than proof that a sub-issue has no other dependencies. Keep domain mappings explainable and test-driven; do not add an LLM/free-text security judge. External text remains evidence and must not be copied into executable handoff instructions without bounded safe rendering.
 
 **Tool pattern** — every file in `src/tools/` follows the same shape:
 1. Zod `InputSchema` (exported) and a plain-object `OutputSchema` (exported, used as MCP `outputSchema`).
@@ -79,6 +80,7 @@ When adding a new tool, copy this shape (`repo-context.ts` for a read-only examp
 - This repository runs Gitleaks from `.github/workflows/secret-scan.yml` using a full action commit SHA and least-privilege permissions. `.gitleaks.toml` narrows its only fixture exception to the `generic-api-key` rule in the dedicated scanner test file; do not broaden that exception to a directory or all rules.
 - Evidence and review tests live under `src/__tests__/github/pull-request-evidence.test.ts`, `src/__tests__/review/pull-request-review.test.ts`, and the corresponding `src/__tests__/tools/*` integration suites. Changes to decision precedence, truncation boundaries, or degraded behavior require regression tests at both the pure and handler layers when applicable.
 - All Windows-facing docs/comments use PowerShell syntax (`$env:VAR="value"`), not bash `export`.
+- Tracked text uses LF. Keep `.gitattributes`, `.editorconfig`, the line-ending checker, and its fixture test aligned; never hide semantic changes inside bulk EOL normalization.
 
 ## Repository governance (this repo, not the MCP server's tool capabilities)
 

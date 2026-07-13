@@ -29,7 +29,7 @@
 
 ## 动态运行感知的边界
 
-`src/__tests__/fixtures/mcp-client.ts` 是内存协议测试的共享入口。它连接生产 server factory 和 SDK 内存 transport，不监听端口、不访问网络，但会执行真实 MCP 初始化、schema 校验、注册路由和序列化流程。工具运行测试只 mock GitHub 客户端边界，因此能捕获“单元 handler 正确但注册/schema/协议默认值错误”的问题。HTTP 生命周期测试另行绑定 `127.0.0.1` 随机端口，验证并发请求隔离与清理；测试 setup 允许 loopback/本地 IPC，但在连接前拒绝所有外部 fetch 和 socket。
+`src/__tests__/fixtures/mcp-client.ts` 是内存协议测试的共享入口。它连接生产 server factory 和 SDK 内存 transport，不监听端口、不访问网络，但会执行真实 MCP 初始化、schema 校验、注册路由和序列化流程。工具运行测试只 mock GitHub 客户端边界，因此能捕获“单元 handler 正确但注册/schema/协议默认值错误”的问题。HTTP 生命周期测试另行绑定 `127.0.0.1` 随机端口，验证并发请求隔离与清理、Host/Origin 拒绝、GET/DELETE `405`、畸形/过大/内部错误的有界响应、端口解析和幂等关闭；测试 setup 允许 loopback/本地 IPC，但在连接前拒绝所有外部 fetch 和 socket。
 
 涉及远程 HTTP、OAuth、多租户 request context 或取消/超时的能力落地后，应增加真实 HTTP transport 的本地端到端套件；在此之前，不得用内存 transport 测试声称已经验证网络层安全。
 
@@ -41,6 +41,13 @@
 - 避免只断言快照或大段 Markdown。优先断言结构化决策，再检查关键安全文本、边界标记和 schema 契约。
 - 测试不得依赖执行顺序、真实 home、真实 token、当前时间或持续变化的公开仓库。
 - 测试名称描述业务规则和失败条件，不描述实现函数的内部步骤。
+
+## 仓库卫生门禁
+
+- tracked text 统一使用 LF：`.gitattributes` 定义 Git 归一化，`.editorconfig` 提供编辑器默认值，`npm run check:line-endings` 在 CI 中扫描已跟踪文本。
+- `src/__tests__/quality/line-endings.test.ts` 使用临时 fixture 分别覆盖 LF、CRLF 与 mixed EOL，并断言失败输出只包含文件名、不回显文件内容。
+- 行尾规范化属于机械变更；提交前必须用 `git diff --ignore-space-at-eol` 与常规 diff 分别核对，不能让大规模格式噪声掩盖语义修改。
+- 大文件不是自动重构信号。先确认稳定的职责边界、调用方向和可独立验证的契约，再抽取深模块；`prepare_work_item` 的 GitHub I/O 预算与降级语义统一由 `work-item-evidence.ts` 维护。
 
 ## 覆盖率门槛
 
@@ -57,4 +64,5 @@ npm run test:coverage
 npm run typecheck
 npm run build
 npm run smoke
+npm run check:line-endings
 ```

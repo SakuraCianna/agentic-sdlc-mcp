@@ -43,13 +43,39 @@ if (transport === "http") {
    * Windows PowerShell:
    *   $env:TRANSPORT="http"; $env:PORT="3000"; node dist/index.js
    */
-  const { createMcpHttpApp } = await import("./http-server.js");
+  const {
+    closeMcpHttp,
+    createMcpHttpApp,
+    DEFAULT_MCP_HTTP_HOST,
+    listenMcpHttp,
+    parseMcpHttpPort,
+  } = await import("./http-server.js");
   const app = createMcpHttpApp();
 
-  const port = parseInt(process.env["PORT"] ?? "3000", 10);
-  app.listen(port, () => {
-    console.error(`[agentic-sdlc-mcp] HTTP server listening on http://localhost:${port}/mcp`);
+  const port = parseMcpHttpPort(process.env["PORT"]);
+  const listener = listenMcpHttp(app, port);
+  listener.once("listening", () => {
+    console.error(`[agentic-sdlc-mcp] HTTP server listening on http://${DEFAULT_MCP_HTTP_HOST}:${port}/mcp`);
   });
+  listener.once("error", () => {
+    console.error("[agentic-sdlc-mcp] HTTP server failed to listen");
+    process.exitCode = 1;
+  });
+
+  let shuttingDown = false;
+  const shutdown = async (): Promise<void> => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    try {
+      await closeMcpHttp(listener);
+      process.exit(0);
+    } catch {
+      console.error("[agentic-sdlc-mcp] HTTP server shutdown failed");
+      process.exit(1);
+    }
+  };
+  process.once("SIGINT", () => void shutdown());
+  process.once("SIGTERM", () => void shutdown());
 } else {
   // Default: stdio
   const server = createAgenticSdlcServer();

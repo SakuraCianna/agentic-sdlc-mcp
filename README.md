@@ -120,6 +120,20 @@ npm run build
 node dist/index.js
 ```
 
+### 4. Local Streamable HTTP (Loopback Profile)
+
+Stdio remains the default and recommended local transport. For a local client that requires Streamable HTTP, opt in explicitly after building:
+
+```powershell
+$env:TRANSPORT = "http"
+$env:PORT = "3000"
+node dist/index.js
+```
+
+The endpoint is `http://127.0.0.1:3000/mcp`. `PORT` must be an integer from 1 through 65535. This profile binds only to `127.0.0.1`, validates `Host` and any supplied `Origin`, creates an isolated stateless MCP server/transport for each POST, returns `405` for unsupported GET/DELETE streaming or session operations, bounds HTTP error details, and closes cleanly on `SIGINT`/`SIGTERM`.
+
+This is **not a remote deployment profile**. It has no MCP OAuth, caller-specific GitHub credentials, tenant isolation, rate limiting, or product-level timeout/cancellation budgets. Do not expose or reverse-proxy this port to another machine; remote HTTP security remains planned for v1.10.
+
 ---
 
 ## ✅ Generic AI Coding Agent Smoke Test
@@ -355,7 +369,7 @@ To prevent AI coding agents from performing destructive or unintended actions on
 
 ---
 
-## 📦 Developer Guide & npm Publishing
+## 📦 Developer Guide & Release Publishing
 
 ### Development Scripts
 * `npm run typecheck`: Runs TypeScript compiler type checking.
@@ -364,11 +378,14 @@ To prevent AI coding agents from performing destructive or unintended actions on
 * `npm run test:integration`: Exercises configuration lifecycle and the production MCP server factory through the SDK's in-memory transport.
 * `npm run test:coverage`: Enforces the coverage regression floor and writes text, LCOV, and JSON summary reports.
 * `npm run smoke`: Verifies registration and loading without external credentials.
+* `npm run check:line-endings`: Rejects tracked CRLF or mixed-EOL text before CI.
 
 See [`docs/testing-strategy.md`](docs/testing-strategy.md) for the adversarial test matrix, fixture rules, dynamic-runtime boundary, and coverage maintenance policy.
 
 ### OIDC Trusted Publishing (For Maintainers)
 This package is securely published to npm via GitHub Actions using **Trusted Publishing (OIDC)**, eliminating the need to store static `NPM_TOKEN` secrets in the repository. Publishing is triggered by creating a GitHub Release or manually running the Action.
+
+The same published GitHub Release also starts the separate MCP Registry workflow. It verifies that the tag, npm package, runtime, and `server.json` versions agree; waits for that exact npm version to become visible; then authenticates to the Registry with GitHub OIDC, publishes immutable stdio metadata, and verifies discovery through the Registry API. Registry publication has no long-lived secret and cannot run ahead of npm.
 
 ### GitHub Actions Workflows
 
@@ -377,6 +394,7 @@ This package is securely published to npm via GitHub Actions using **Trusted Pub
 | `.github/workflows/ci.yml` | Pull requests and pushes to `main` | Runs typecheck, build, tests, smoke, and coverage on Node 24 |
 | `.github/workflows/secret-scan.yml` | Pull requests, pushes to `main`, and manual dispatch | Runs pinned Gitleaks with read-only permissions; this is the primary mature secret-scanner evidence |
 | `.github/workflows/publish.yml` | Published GitHub Release or manual dispatch | Publishes to npm through OIDC Trusted Publishing |
+| `.github/workflows/publish-registry.yml` | Published GitHub Release | Waits for the exact npm version, then publishes and verifies MCP Registry metadata through GitHub OIDC |
 | `.github/dependabot.yml` | Weekly | Opens npm and GitHub Actions dependency update PRs |
 
 ---
