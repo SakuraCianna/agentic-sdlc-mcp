@@ -122,6 +122,20 @@ npm run build
 node dist/index.js
 ```
 
+### 4. 本地 Streamable HTTP（仅 loopback）
+
+stdio 仍是默认且推荐的本地传输方式。如果本机 MCP 客户端必须使用 Streamable HTTP，可在构建后显式启用：
+
+```powershell
+$env:TRANSPORT = "http"
+$env:PORT = "3000"
+node dist/index.js
+```
+
+服务端点为 `http://127.0.0.1:3000/mcp`，`PORT` 只能是 1 到 65535 的整数。该 profile 只监听 `127.0.0.1`，校验 `Host` 与调用方提供的 `Origin`；每个 POST 都使用隔离的无状态 MCP server/transport；不支持的 GET/DELETE 流式或 session 操作返回 `405`；HTTP 错误不会泄露内部细节，并在 `SIGINT`/`SIGTERM` 时执行有序关闭。
+
+这**不是远程部署模式**：当前没有 MCP OAuth、调用方级 GitHub 凭据、多租户隔离、限流，也没有产品级 timeout/cancellation 预算。请勿将该端口暴露到其他机器或直接挂到反向代理；远程 HTTP 安全仍属于 v1.10。
+
 ---
 
 ## ✅ 通用 AI Coding Agent 冒烟测试
@@ -412,10 +426,13 @@ npm run build
 npm run test
 npm run smoke
 npm run test:coverage
+npm run check:line-endings
 npm pack --dry-run
 ```
 
-`npm pack --dry-run` 会列出即将打包进发布压缩包的所有文件，但不会真正生成压缩包。请确认其中只包含 `dist/`、`README.md` 和 `.env.example` —— 测试文件和 `package-lock.json` 不应出现在其中 (这由 `tsconfig.build.json` 保证，它在编译用于发布的 `dist/` 输出时排除了 `src/__tests__/**`)。
+`npm pack --dry-run` 会列出即将打包进发布压缩包的所有文件，但不会真正生成压缩包。请确认其中只包含 `dist/`、`README.md`、`server.json`、`.env.example`，以及 npm 自动包含的 `package.json` 与 `LICENSE` —— 测试文件、TypeScript 源码和 `package-lock.json` 不应出现在其中 (这由 package files 清单与 `tsconfig.build.json` 共同保证，发布用 `dist/` 构建会排除 `src/__tests__/**`)。
+
+同一个已发布 GitHub Release 还会触发独立的 MCP Registry 工作流。它先校验 tag、npm package、runtime 与 `server.json` 版本完全一致，再等待精确 npm 版本可见；随后使用 GitHub OIDC 发布不可变的 stdio metadata，并通过 Registry API 验证可发现性。该流程没有长期 Registry secret，也不会抢在 npm 发布成功之前执行。
 
 ### GitHub Actions 工作流说明
 
@@ -424,6 +441,7 @@ npm pack --dry-run
 | `.github/workflows/ci.yml` | `pull_request`、推送到 `main` | 在 Node 24 上运行类型检查、构建、测试、冒烟测试和覆盖率检查 |
 | `.github/workflows/secret-scan.yml` | `pull_request`、推送到 `main`、手动触发 | 使用只读权限运行固定提交版本的 Gitleaks，作为主要成熟密钥扫描证据 |
 | `.github/workflows/publish.yml` | GitHub Release 发布、或手动触发 | 通过 OIDC Trusted Publishing 方式发布到 npm |
+| `.github/workflows/publish-registry.yml` | GitHub Release 发布 | 等待精确 npm 版本后，通过 GitHub OIDC 发布并验证 MCP Registry metadata |
 | `.github/dependabot.yml` | 每周定时 | 自动提交 npm 依赖与 GitHub Actions 依赖的更新 PR (打上 `dependencies` 标签) |
 
 ---

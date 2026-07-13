@@ -1,6 +1,6 @@
 {
   "name": "agentic-sdlc-mcp",
-  "version": "1.7.1",
+  "version": "1.8.0",
   "mcpName": "io.github.SakuraCianna/agentic-sdlc-mcp",
   "description": "An MCP Server acting as an Agentic SDLC Control Plane — helps AI coding agents plan, create, test, review, secure, and release software following GitHub Agentic AI best practices.",
   "type": "module",
@@ -19,6 +19,7 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
+    "check:line-endings": "node scripts/check-line-endings.mjs",
     "clean": "rimraf dist",
     "prebuild": "npm run clean",
     "test": "vitest run",
@@ -55,7 +56,7 @@
   },
   "homepage": "https://github.com/SakuraCianna/agentic-sdlc-mcp#readme",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.6.1",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@octokit/rest": "^22.0.1",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",

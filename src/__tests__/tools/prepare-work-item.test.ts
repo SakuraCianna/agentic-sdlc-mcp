@@ -583,6 +583,25 @@ describe("handlePrepareWorkItem", () => {
     expect(structured.evidenceWarnings.join(" ")).toMatch(/recent pr evidence is incomplete/i);
   });
 
+  it("keeps the brief usable when the recent PR candidate source is unavailable", async () => {
+    const octokit = makeMockOctokit({ body: "Change src/auth.ts" });
+    const pullsList = (octokit as unknown as {
+      pulls: { list: ReturnType<typeof vi.fn> };
+    }).pulls.list;
+    pullsList.mockRejectedValue(new Error("private-upstream-detail"));
+
+    const { structured, text } = await handlePrepareWorkItem(
+      { issueNumber: 1, includeRelatedFiles: true, includeRecentPRs: true },
+      REF,
+      octokit
+    );
+
+    expect(structured.recentPRs).toEqual([]);
+    expect(structured.recentPRsIncomplete).toBe(true);
+    expect(structured.evidenceWarnings.join(" ")).toMatch(/GitHub history could not be read/i);
+    expect(text).not.toContain("private-upstream-detail");
+  });
+
   it("does not mark an exactly 200-file PR incomplete when the third page is empty", async () => {
     const octokit = makeMockOctokit(
       { body: "Change src/auth.ts" },
