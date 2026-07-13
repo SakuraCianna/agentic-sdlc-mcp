@@ -17,6 +17,15 @@ import {
   type RiskAwareBrief,
   type WorkItemRiskLevel,
 } from "../briefing/work-item-brief.js";
+import {
+  buildDependencyGraph,
+  deriveAdjacentFileCandidates,
+  deriveRepositoryEntryCandidates,
+  type DependencyGraph,
+  type DependencyIssueInput,
+  type WorkItemDependency,
+} from "../briefing/work-item-context.js";
+import { fetchCodeownersRules, ownersForFile } from "../github/codeowners.js";
 
 // ---------------------------------------------------------------------------
 // Schema
@@ -34,6 +43,10 @@ export const PrepareWorkItemInputSchema = z.object({
     .boolean()
     .default(false)
     .describe("Include recent merged PRs touching related files."),
+  includeDependencies: z
+    .boolean()
+    .default(false)
+    .describe("Include bounded official sub-issue, blocked-by, blocking, and cross-reference evidence."),
   workType: z.enum(["docs", "feature", "bugfix", "refactor", "security", "release", "infra"])
     .optional()
     .describe("Explicit work type. When omitted, deterministic issue/policy signals are used."),
@@ -42,7 +55,7 @@ export const PrepareWorkItemInputSchema = z.object({
     .describe("Explicit minimum risk level. Repository policy may raise but never lower it."),
 });
 
-export type PrepareWorkItemInput = z.infer<typeof PrepareWorkItemInputSchema>;
+export type PrepareWorkItemInput = z.input<typeof PrepareWorkItemInputSchema>;
 
 // ---------------------------------------------------------------------------
 // Output schema
@@ -92,6 +105,32 @@ const CommentEvidenceShape = z.object({
   excerpt: z.string(),
 });
 
+const RelatedFileShape = z.object({
+  path: z.string(),
+  reason: z.string(),
+  confidence: z.enum(["high", "medium", "low"]),
+  verified: z.boolean(),
+  owners: z.array(z.string()),
+});
+
+const DependencyShape = z.object({
+  relation: z.enum(["blocked_by", "blocking", "sub_issue", "cross_reference"]),
+  repository: z.string(),
+  number: z.number().int().positive(),
+  title: z.string(),
+  state: z.string(),
+  url: z.string(),
+  verified: z.literal(true),
+});
+
+const MilestoneShape = z.object({
+  number: z.number().int().positive(),
+  title: z.string(),
+  state: z.string(),
+  url: z.string(),
+  dueOn: z.string().nullable(),
+});
+
 export const PrepareWorkItemOutputSchema = {
   issueNumber: z.number().int(),
   title: z.string(),
@@ -100,7 +139,14 @@ export const PrepareWorkItemOutputSchema = {
   labels: z.array(z.string()),
   assignees: z.array(z.string()),
   relatedFileHints: z.array(z.string()),
+  relatedFiles: z.array(RelatedFileShape),
+  relatedFilesIncomplete: z.boolean(),
   recentPRs: z.array(RecentPrMatchShape),
+  dependencies: z.array(DependencyShape),
+  blockers: z.array(DependencyShape),
+  parallelizableWork: z.array(DependencyShape),
+  dependencyEvidenceIncomplete: z.boolean(),
+  milestone: MilestoneShape.nullable(),
   workType: z.enum(["docs", "feature", "bugfix", "refactor", "security", "release", "infra"]),
   workTypeConfidence: z.enum(["low", "medium", "high"]),
   riskProfile: RiskProfileShape,
@@ -140,12 +186,33 @@ export interface WorkItemResult extends RiskAwareBrief {
   labels: string[];
   assignees: string[];
   relatedFileHints: string[];
+  relatedFiles: RelatedFileEvidence[];
+  relatedFilesIncomplete: boolean;
   recentPRs: RecentPrMatch[];
+  dependencies: WorkItemDependency[];
+  blockers: WorkItemDependency[];
+  parallelizableWork: WorkItemDependency[];
+  dependencyEvidenceIncomplete: boolean;
+  milestone: {
+    number: number;
+    title: string;
+    state: string;
+    url: string;
+    dueOn: string | null;
+  } | null;
   commentsTruncated: boolean;
   recentPRsIncomplete: boolean;
   evidenceWarnings: string[];
   commentEvidence: MaintainerCommentEvidence[];
   handoffPrompt: string;
+}
+
+export interface RelatedFileEvidence {
+  path: string;
+  reason: string;
+  confidence: "high" | "medium" | "low";
+  verified: boolean;
+  owners: string[];
 }
 
 export interface MaintainerCommentEvidence {
@@ -161,6 +228,7 @@ export interface MaintainerCommentEvidence {
 const RECENT_PRS_TO_SCAN = 20;
 const MAX_RECENT_PR_MATCHES = 5;
 const MAX_COMMENT_EVIDENCE = 5;
+const MAX_DEPENDENCIES_PER_SOURCE = 20;
 
 const REPOSITORY_FILE_EXTENSIONS = new Set([
   "ts", "tsx", "js", "jsx", "mjs", "cjs", "py", "go", "rs", "java", "kt",
@@ -190,6 +258,13 @@ interface RepositoryBriefingEvidence {
   policy?: Awaited<ReturnType<typeof loadRepositoryPolicy>>;
   defaultBranch?: string;
   warnings: string[];
+}
+
+function githubErrorStatus(error: unknown): number | null {
+  return typeof error === "object" && error !== null && "status" in error &&
+    typeof (error as { status?: unknown }).status === "number"
+    ? (error as { status: number }).status
+    : null;
 }
 
 async function collectRepositoryBriefingEvidence(
@@ -232,6 +307,163 @@ async function collectRepositoryBriefingEvidence(
   }
 
   return { scripts, policy, defaultBranch, warnings };
+}
+
+async function collectRelatedFileEvidence(
+  octokit: Octokit,
+  ref: RepoRef,
+  defaultBranch: string | undefined,
+  fileHints: readonly string[]
+): Promise<{ files: RelatedFileEvidence[]; incomplete: boolean; warnings: string[] }> {
+  if (fileHints.length === 0) return { files: [], incomplete: false, warnings: [] };
+  const warnings: string[] = [];
+  let incomplete = defaultBranch === undefined;
+  const codeowners = defaultBranch
+    ? await fetchCodeownersRules(ref, octokit, defaultBranch)
+    : { rules: [], error: "Default branch is unavailable." };
+  if (codeowners.error) {
+    incomplete = true;
+    warnings.push("CODEOWNERS evidence is incomplete; related-file ownership may be missing.");
+  }
+
+  const verifyPath = async (path: string): Promise<"exists" | "missing" | "unknown"> => {
+    if (!defaultBranch) return "unknown";
+    try {
+      const { data } = await octokit.repos.getContent({
+        owner: ref.owner,
+        repo: ref.repo,
+        path,
+        ref: defaultBranch,
+      });
+      return !Array.isArray(data) && data.type === "file" ? "exists" : "missing";
+    } catch (error) {
+      if (githubErrorStatus(error) === 404) return "missing";
+      incomplete = true;
+      return "unknown";
+    }
+  };
+
+  const files: RelatedFileEvidence[] = [];
+  for (const path of fileHints.slice(0, 20)) {
+    const state = await verifyPath(path);
+    files.push({
+      path,
+      reason: "Explicitly referenced by the GitHub issue.",
+      confidence: "high",
+      verified: state === "exists",
+      owners: ownersForFile(path, codeowners.rules),
+    });
+  }
+  for (const candidate of deriveAdjacentFileCandidates(fileHints)) {
+    const state = await verifyPath(candidate.path);
+    if (state !== "exists") continue;
+    files.push({
+      path: candidate.path,
+      reason: candidate.reason,
+      confidence: "medium",
+      verified: true,
+      owners: ownersForFile(candidate.path, codeowners.rules),
+    });
+  }
+  for (const path of deriveRepositoryEntryCandidates(fileHints)) {
+    if (files.some((file) => file.path === path)) continue;
+    const state = await verifyPath(path);
+    if (state !== "exists") continue;
+    files.push({
+      path,
+      reason: "Verified repository entry point adjacent to the requested root-scope code change.",
+      confidence: "low",
+      verified: true,
+      owners: ownersForFile(path, codeowners.rules),
+    });
+  }
+  if (incomplete) warnings.push("Related file evidence is incomplete because one or more repository paths could not be verified.");
+  return { files, incomplete, warnings };
+}
+
+function dependencyIssue(value: unknown): DependencyIssueInput | null {
+  if (!value || typeof value !== "object") return null;
+  const issue = value as Record<string, unknown>;
+  const number = issue["number"];
+  if (typeof number !== "number" || !Number.isSafeInteger(number) || number <= 0 ||
+      typeof issue["title"] !== "string" ||
+      typeof issue["state"] !== "string" || typeof issue["html_url"] !== "string") return null;
+  return {
+    number,
+    title: issue["title"],
+    state: issue["state"],
+    html_url: issue["html_url"],
+    ...(typeof issue["repository_url"] === "string" ? { repository_url: issue["repository_url"] } : {}),
+  };
+}
+
+async function collectDependencyEvidence(
+  octokit: Octokit,
+  ref: RepoRef,
+  issueNumber: number
+): Promise<DependencyGraph & { incomplete: boolean; warnings: string[] }> {
+  const requests = [
+    ["blocked-by", () => octokit.issues.listDependenciesBlockedBy({ owner: ref.owner, repo: ref.repo, issue_number: issueNumber, per_page: MAX_DEPENDENCIES_PER_SOURCE + 1 })],
+    ["blocking", () => octokit.issues.listDependenciesBlocking({ owner: ref.owner, repo: ref.repo, issue_number: issueNumber, per_page: MAX_DEPENDENCIES_PER_SOURCE + 1 })],
+    ["sub-issues", () => octokit.issues.listSubIssues({ owner: ref.owner, repo: ref.repo, issue_number: issueNumber, per_page: MAX_DEPENDENCIES_PER_SOURCE + 1 })],
+    ["timeline cross-references", () => octokit.issues.listEventsForTimeline({ owner: ref.owner, repo: ref.repo, issue_number: issueNumber, per_page: MAX_DEPENDENCIES_PER_SOURCE + 1 })],
+  ] as const;
+  const settled = await Promise.allSettled(requests.map(([, request]) => request()));
+  const warnings: string[] = [];
+  let incomplete = false;
+  const sourceItems: DependencyIssueInput[][] = [[], [], [], []];
+  settled.forEach((result, index) => {
+    const name = requests[index]?.[0] ?? "dependency";
+    if (result.status === "rejected") {
+      incomplete = true;
+      warnings.push(`${name} dependency evidence is unavailable.`);
+      return;
+    }
+    const raw = result.value.data;
+    if (!Array.isArray(raw)) {
+      incomplete = true;
+      warnings.push(`${name} dependency evidence returned an unexpected response shape.`);
+      return;
+    }
+    if (raw.length > MAX_DEPENDENCIES_PER_SOURCE) incomplete = true;
+    const bounded = raw.slice(0, MAX_DEPENDENCIES_PER_SOURCE);
+    let invalidRecords = false;
+    sourceItems[index] = index === 3
+      ? bounded.flatMap((event): DependencyIssueInput[] => {
+          if (!event || typeof event !== "object") return [];
+          const record = event as Record<string, unknown>;
+          if (record["event"] !== "cross-referenced") return [];
+          const source = record["source"];
+          if (!source || typeof source !== "object") {
+            invalidRecords = true;
+            return [];
+          }
+          const issue = dependencyIssue((source as Record<string, unknown>)["issue"]);
+          if (!issue) invalidRecords = true;
+          return issue ? [issue] : [];
+        })
+      : bounded.flatMap((item): DependencyIssueInput[] => {
+          const issue = dependencyIssue(item);
+          if (!issue) invalidRecords = true;
+          return issue ? [issue] : [];
+        });
+    if (invalidRecords) {
+      incomplete = true;
+      warnings.push(`${name} dependency evidence contained invalid records.`);
+    }
+  });
+  if (incomplete) warnings.push("Dependency graph is incomplete because a source failed, returned malformed evidence, or exceeded its 20-item cap.");
+  return {
+    ...buildDependencyGraph({
+      current: { ...ref, issueNumber },
+      blockedBy: sourceItems[0] ?? [],
+      blocking: sourceItems[1] ?? [],
+      subIssues: sourceItems[2] ?? [],
+      crossReferences: sourceItems[3] ?? [],
+    }),
+    incomplete,
+    warnings,
+  };
 }
 
 /** True if a changed-file path and a heuristic file hint plausibly refer to the same file. */
@@ -454,10 +686,27 @@ export async function handlePrepareWorkItem(
   const fileHints = params.includeRelatedFiles ? riskFileHints : [];
 
   const repositoryEvidence = await collectRepositoryBriefingEvidence(octokit, ref);
+  const relatedFileEvidence = params.includeRelatedFiles
+    ? await collectRelatedFileEvidence(octokit, ref, repositoryEvidence.defaultBranch, riskFileHints)
+    : { files: [], incomplete: false, warnings: [] };
+  const dependencyEvidence = params.includeDependencies
+    ? await collectDependencyEvidence(octokit, ref, params.issueNumber)
+    : {
+        dependencies: [],
+        blockers: [],
+        parallelizableWork: [],
+        incomplete: false,
+        warnings: [],
+      };
 
   let recentPRs: RecentPrMatch[] = [];
   let recentPRsIncomplete = false;
-  const evidenceWarnings = [...recentComments.warnings, ...repositoryEvidence.warnings];
+  const evidenceWarnings = [
+    ...recentComments.warnings,
+    ...repositoryEvidence.warnings,
+    ...relatedFileEvidence.warnings,
+    ...dependencyEvidence.warnings,
+  ];
   if (params.includeRecentPRs) {
     try {
       const history = await findRecentPRsEvidence(octokit, ref, fileHints);
@@ -506,6 +755,15 @@ export async function handlePrepareWorkItem(
     `Resolve clarification questions before making high-impact assumptions, implement the scoped changes, and preserve source evidence.`,
     `Use the quality_gate_status tool to verify CI before marking work complete.`,
   ].join(" ");
+  const milestone = issue.milestone
+    ? {
+        number: issue.milestone.number,
+        title: issue.milestone.title,
+        state: issue.milestone.state,
+        url: issue.milestone.html_url,
+        dueOn: issue.milestone.due_on ?? null,
+      }
+    : null;
 
   const structured: WorkItemResult = {
     issueNumber: issue.number,
@@ -515,7 +773,14 @@ export async function handlePrepareWorkItem(
     labels,
     assignees,
     relatedFileHints: fileHints,
+    relatedFiles: relatedFileEvidence.files,
+    relatedFilesIncomplete: relatedFileEvidence.incomplete,
     recentPRs,
+    dependencies: dependencyEvidence.dependencies,
+    blockers: dependencyEvidence.blockers,
+    parallelizableWork: dependencyEvidence.parallelizableWork,
+    dependencyEvidenceIncomplete: dependencyEvidence.incomplete,
+    milestone,
     ...riskBrief,
     commentsTruncated,
     recentPRsIncomplete,
@@ -588,9 +853,45 @@ export async function handlePrepareWorkItem(
     if (commentsTruncated) lines.push("", "_(comments truncated; additional discussion was not evaluated)_");
   }
 
-  if (fileHints.length > 0) {
-    lines.push("", "## Potentially Related Files (heuristic)");
-    fileHints.forEach((f) => lines.push(`- \`${safeMarkdownInline(f, { maxLength: 300 })}\``));
+  if (params.includeRelatedFiles) {
+    lines.push("", "## Related File Evidence");
+    if (relatedFileEvidence.files.length === 0) {
+      lines.push("(no related repository files were identified)");
+    } else {
+      relatedFileEvidence.files.forEach((file) => lines.push(
+        `- \`${safeMarkdownInline(file.path, { maxLength: 300 })}\` — ${file.confidence} confidence; ${file.verified ? "repository verified" : "unverified"}; ${safeMarkdownInline(file.reason, { maxLength: 500 })}${file.owners.length ? `; owners ${file.owners.map((owner) => safeMarkdownInline(owner, { maxLength: 100 })).join(", ")}` : ""}`
+      ));
+    }
+    if (relatedFileEvidence.incomplete) lines.push("- _(related-file evidence incomplete)_");
+  }
+
+  if (params.includeDependencies) {
+    lines.push("", "## Dependency Graph");
+    if (dependencyEvidence.dependencies.length === 0) {
+      lines.push("(no verified issue relationships returned)");
+    } else {
+      dependencyEvidence.dependencies.slice(0, 20).forEach((dependency) => lines.push(
+        `- **${dependency.relation}** ${safeMarkdownInline(dependency.repository, { maxLength: 200 })}#${dependency.number} [${safeMarkdownInline(dependency.state, { maxLength: 50 })}] ${safeMarkdownInline(dependency.title, { maxLength: 300 })} — ${safeMarkdownInline(dependency.url, { maxLength: 500 })}`
+      ));
+      if (dependencyEvidence.dependencies.length > 20) {
+        lines.push(`- _(${dependencyEvidence.dependencies.length - 20} more relationships in structuredContent)_`);
+      }
+    }
+    lines.push(
+      `- **Open blockers:** ${dependencyEvidence.blockers.length}`,
+      `- **Parallelizable open sub-issues:** ${dependencyEvidence.parallelizableWork.length}`
+    );
+    if (dependencyEvidence.incomplete) lines.push("- _(dependency evidence incomplete)_");
+  }
+
+  if (milestone) {
+    lines.push(
+      "",
+      "## Milestone",
+      `- #${milestone.number} ${safeMarkdownInline(milestone.title, { maxLength: 300 })} [${safeMarkdownInline(milestone.state, { maxLength: 50 })}]`,
+      `- Due: ${safeMarkdownInline(milestone.dueOn ?? "unscheduled", { maxLength: 100 })}`,
+      `- URL: ${safeMarkdownInline(milestone.url, { maxLength: 500 })}`
+    );
   }
 
   if (params.includeRecentPRs) {
@@ -659,11 +960,15 @@ Args:
   - owner, repo: Repository coordinates.
   - issueNumber (number): The issue to prepare.
   - includeRelatedFiles (boolean): Heuristically list related file paths. Default: false.
+    Explicit paths are checked on the default branch, actual adjacent tests are discovered with
+    bounded naming conventions, and CODEOWNERS are attached when available.
   - includeRecentPRs (boolean): Scan recent merged PRs (up to 20) for ones that touched the
     related file hints and return up to 5 matches. Requires includeRelatedFiles to find hints
     to match against — if no hints exist, returns an empty list. Default: false. This opt-in
     deep scan is bounded but can use up to 61 additional sequential GitHub requests (one PR
     candidate page plus up to three file pages for each of 20 candidates).
+  - includeDependencies (boolean): Read official blocked-by, blocking, sub-issue, and timeline
+    cross-reference endpoints, capped at 20 items per source. Default: false.
   - workType (string?): Explicit docs/feature/bugfix/refactor/security/release/infra type.
   - riskLevel (string?): Explicit minimum low/medium/high/critical risk. Repository policy can raise it.
 

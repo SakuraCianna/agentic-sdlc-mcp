@@ -1030,11 +1030,11 @@ v1.7 的 policy consumer 固定为以上 6 个工具。`prepare_work_item` 在 v
 
 ### v1.8: 风险感知的 Work Item Brief 与防御性工程
 
-> **状态：建设中（2026-07-13 完成第一批核心能力，尚未发布 v1.8.0）。** 已实现确定性 `workType`/`riskProfile`、策略保护路径与 risk rule、来源 ref/blob/digest、Issue/派生验收项分离、风险域防御要求、negative scenarios、仓库真实 scripts、monorepo 保守降级、rollback/observability、prompt-injection 隔离、最近评论/PR 的 bounded/incomplete/rename/partial-failure 语义及真实 MCP 契约测试。同时清理 `create_pr_summary` docs-only/300-file 截断和 `agent_handoff_packet` silent evidence failure/外部文本直出债务。完整 related-file reason/confidence、CODEOWNERS/入口/测试邻接、linked/sub-issues/dependency graph 仍待后续批次。
+> **状态：建设中（2026-07-13 完成第二批上下文能力，尚未发布 v1.8.0）。** 第一批已实现确定性 `workType`/`riskProfile`、策略保护路径与 risk rule、来源 ref/blob/digest、Issue/派生验收项分离、风险域防御要求、negative scenarios、仓库真实 scripts、monorepo 保守降级、rollback/observability、prompt-injection 隔离、最近评论/PR 的 bounded/incomplete/rename/partial-failure 语义及真实 MCP 契约测试。第二批补齐显式路径验证、真实测试邻接与根入口、CODEOWNERS、related-file reason/confidence/verified、milestone，以及 GitHub 官方 blocked-by/blocking/sub-issues/timeline cross-reference 依赖证据；各来源均有预算、溢出和 partial-failure 语义。同时清理 `create_pr_summary` docs-only/300-file 截断和 `agent_handoff_packet` silent evidence failure/外部文本直出债务。完整跨文件调用图、自然语言依赖猜测和组织级依赖图不属于本版本目标。
 
 目标：把 `prepare_work_item` 从“复述 Issue + 猜文件 + 通用清单”升级为可直接指导实现的开发简报。对于核心/高风险业务，简报必须主动生成防御性编程、失败模式、负向测试、可观测性和回滚要求；对于低风险 docs/样式任务则保持精简，避免模板膨胀。
 
-当前代码缺口：
+实施前代码缺口（第一、二批已关闭主体能力）：
 
 - `prepare_work_item` 只返回 issue、labels、assignees、正则提取的文件提示、最多 5 个 recent PR 和固定 handoff prompt。
 - Goals、Non-Goals、Acceptance Criteria、Risks 与 verification commands 基本固定，没有从 Issue、仓库脚本、策略和路径风险生成结构化内容。
@@ -1118,6 +1118,14 @@ v1.7 的 policy consumer 固定为以上 6 个工具。`prepare_work_item` 在 v
 - recent PR 支持分页上限、重命名路径与 incomplete 标记；API 失败时不能返回“无相关 PR”。
 - 读取 linked issues、sub-issues、milestone、blocked-by/depends-on（平台可用时），形成 `dependencies`、`blockers` 与 `parallelizableWork`。
 - maintainer 评论只提取明确 decision/action item，并带 author、timestamp、URL；评论截断时标记 `commentsTruncated`。
+
+第二批实施结果：
+
+- `includeRelatedFiles` 默认关闭；开启后在默认分支验证最多 20 个显式路径、12 个测试邻接候选和 5 个常见根入口，并读取最多 3 个 CODEOWNERS 位置。404 表示候选未确认存在，权限/限流/服务错误则标记 `relatedFilesIncomplete`。
+- related file 同时返回 `reason`、`confidence`、`verified` 与 owners；显式 Issue 路径即使不存在也作为高置信度意图保留，但不会伪装成已验证文件。
+- `includeDependencies` 默认关闭；开启后并行读取官方 blocked-by、blocking、sub-issues 和 timeline cross-reference，每个来源最多保留 20 条。单一来源失败、响应畸形或溢出不丢弃其余证据，并标记 `dependencyEvidenceIncomplete`。
+- `blockers` 只包含官方 blocked-by 中仍 open 的 Issue；timeline cross-reference 只表示关联证据。`parallelizableWork` 是基于当前 Issue 关系得出的 open sub-issue 候选，不等同于已验证其自身没有外部依赖，执行前仍需人工或下游工具确认。
+- milestone 从主 Issue 响应提取，不增加请求；所有标题和 URL 在 Markdown 中按不可信外部文本安全渲染。
 
 #### 5. v1.8 必测特殊场景
 
@@ -1711,7 +1719,7 @@ interface ToolDependencies {
 | P1 | `issueDrafts` 与 `create_issue_set` 打通 | 形成 Plan -> Issue 的闭环 | ✅ v1.5.0 |
 | P2 | 合并门禁增强 | 从 CI 查询升级为工程治理判断 | ✅ v1.6.0 |
 | P0 | MCP Registry 发布与 `.agentic-sdlc.yml` 基础 | 先建立可发现、可配置、可解释的统一策略入口 | ✅ v1.7.1 |
-| P0 | 风险感知 `prepare_work_item` | 把高风险任务的防御性编程、负向测试、回滚和可观测性前移到开工阶段 | v1.8 建设中（核心简报已完成，依赖图待补） |
+| P0 | 风险感知 `prepare_work_item` | 把高风险任务的防御性编程、负向测试、回滚、可观测性与有来源的上下文前移到开工阶段 | v1.8 建设中（核心简报与 bounded 依赖上下文已完成，发布收尾待办） |
 | P1 | `sdlc_evidence_packet` 与可信 handoff | 统一 verified/unverified/stale/partial 证据语义 | v1.9 待开始 |
 | P1 | HTTP 运行安全与凭据迁移 | 引入 request-scoped context/client、remote auth 和非明文凭据默认值 | v1.10 待开始 |
 | P1 | MCP 契约与 Agent evaluation | 用 Inspector、稳定评测、性能预算和故障注入验证 agent 真正会用 | v1.11 待开始 |
@@ -1758,6 +1766,8 @@ interface ToolDependencies {
 - [x] Registry metadata、npm 包版本与 MCP server metadata 可验证一致（v1.7.1；namespace 与 GitHub OIDC login 大小写一致）
 - [x] `prepare_work_item` 能根据 auth/payment/migration/workflow/docs 等任务生成不同深度的开发简报（v1.8 建设批次 1）
 - [x] 高风险简报包含防御性要求、negative scenarios、回滚和上线可观测性，且 Issue/派生验收项来源分离（v1.8 建设批次 1）
+- [x] related files 区分意图与仓库验证事实，并包含原因、置信度、CODEOWNERS、测试邻接和 incomplete 语义（v1.8 建设批次 2）
+- [x] blocked-by/blocking/sub-issues/cross-reference 使用官方关系来源，按来源限制预算并在部分失败时保留成功证据（v1.8 建设批次 2）
 - PR/Issue/release evidence packet 能用正交字段区分结论 state、freshness（fresh/stale/unknown）与 completeness（complete/partial/omitted）（v1.9）
 - handoff 不再把调用方自报状态伪装成系统验证事实（v1.9）
 

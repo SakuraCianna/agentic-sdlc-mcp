@@ -25,6 +25,8 @@
 
 结构化内容保留必要的原始证据；新增或本轮触达的外部文本在进入面向用户或 AI 的 Markdown 时必须净化、限长。任何达到证据上限的情况都必须显式标记截断或未验证，不能把“没有读取到”解释为“没有风险”。v1.8 建设已让 `prepare_work_item`、`create_pr_summary` 和 `agent_handoff_packet` 隔离并标记 Issue/评论/PR/调用方文本；语义级 prompt injection 仍不能靠转义彻底消除，客户端必须继续实行最小工具权限、人类复核和受控写出。
 
+关系和邻接证据需要同时测试“来源语义”与“结论语义”：显式路径、测试命名和根入口候选必须分别覆盖存在、404、权限失败与预算溢出；blocked-by、blocking、sub-issue 和 cross-reference 不得互相替代。每个远程来源至少保留一个独立失败用例，断言成功来源仍在、incomplete 标记出现、原始错误未泄露。`parallelizableWork` 只能断言为关系推导候选，不能用它证明子任务自身不存在其他 blocker。
+
 ## 动态运行感知的边界
 
 `src/__tests__/fixtures/mcp-client.ts` 是内存协议测试的共享入口。它连接生产 server factory 和 SDK 内存 transport，不监听端口、不访问网络，但会执行真实 MCP 初始化、schema 校验、注册路由和序列化流程。工具运行测试只 mock GitHub 客户端边界，因此能捕获“单元 handler 正确但注册/schema/协议默认值错误”的问题。HTTP 生命周期测试另行绑定 `127.0.0.1` 随机端口，验证并发请求隔离与清理；测试 setup 允许 loopback/本地 IPC，但在连接前拒绝所有外部 fetch 和 socket。

@@ -9,6 +9,10 @@ const github = vi.hoisted(() => ({
   pullsListFiles: vi.fn(),
   reposGet: vi.fn(),
   reposGetContent: vi.fn(),
+  subIssuesList: vi.fn(),
+  blockedByList: vi.fn(),
+  blockingList: vi.fn(),
+  timelineList: vi.fn(),
 }));
 
 vi.mock("../github/client.js", async (importOriginal) => {
@@ -16,7 +20,14 @@ vi.mock("../github/client.js", async (importOriginal) => {
   return {
     ...actual,
     getOctokit: () => ({
-      issues: { get: github.issuesGet, listComments: github.commentsList },
+      issues: {
+        get: github.issuesGet,
+        listComments: github.commentsList,
+        listSubIssues: github.subIssuesList,
+        listDependenciesBlockedBy: github.blockedByList,
+        listDependenciesBlocking: github.blockingList,
+        listEventsForTimeline: github.timelineList,
+      },
       pulls: { list: github.pullsList, listFiles: github.pullsListFiles },
       repos: { get: github.reposGet, getContent: github.reposGetContent },
     }),
@@ -59,6 +70,10 @@ describe("real MCP tool-call runtime", () => {
       },
     });
     github.reposGetContent.mockReset().mockRejectedValue(Object.assign(new Error("Not found"), { status: 404 }));
+    github.subIssuesList.mockReset().mockResolvedValue({ data: [] });
+    github.blockedByList.mockReset().mockResolvedValue({ data: [] });
+    github.blockingList.mockReset().mockResolvedValue({ data: [] });
+    github.timelineList.mockReset().mockResolvedValue({ data: [] });
     fixture = await connectInMemoryMcp(createAgenticSdlcServer);
   });
 
@@ -90,12 +105,50 @@ describe("real MCP tool-call runtime", () => {
         expect.objectContaining({ kind: "repository", ref: "trunk", verified: true }),
       ]),
       verificationCommands: [],
+      dependencies: [],
+      dependencyEvidenceIncomplete: false,
     });
     expect(result.structuredContent).toHaveProperty(
       "handoffPrompt",
       expect.not.stringContaining("Harden authentication")
     );
     expect(github.pullsList).not.toHaveBeenCalled();
+    expect(github.subIssuesList).not.toHaveBeenCalled();
+  });
+
+  it("returns official issue relationships through the production MCP contract", async () => {
+    const relationship = {
+      number: 7,
+      title: "Provision tenant policy",
+      state: "open",
+      html_url: "https://github.com/example/project/issues/7",
+      repository_url: "https://api.github.com/repos/example/project",
+    };
+    github.blockedByList.mockResolvedValueOnce({ data: [relationship] });
+    github.subIssuesList.mockResolvedValueOnce({ data: [{ ...relationship, number: 43 }] });
+
+    const result = await fixture.client.callTool({
+      name: "prepare_work_item",
+      arguments: {
+        owner: "example",
+        repo: "project",
+        issueNumber: 42,
+        includeDependencies: true,
+      },
+    });
+
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      blockers: [expect.objectContaining({ relation: "blocked_by", number: 7, verified: true })],
+      parallelizableWork: [expect.objectContaining({ relation: "sub_issue", number: 43 })],
+      dependencyEvidenceIncomplete: false,
+    });
+    expect(github.blockedByList).toHaveBeenCalledWith(expect.objectContaining({
+      owner: "example",
+      repo: "project",
+      issue_number: 42,
+      per_page: 21,
+    }));
   });
 
   it("rejects invalid input before any GitHub handler call", async () => {
