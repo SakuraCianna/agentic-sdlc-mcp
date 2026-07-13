@@ -2,6 +2,32 @@
 
 All notable changes to this project are documented here. Release history is also available on the [GitHub Releases page](https://github.com/SakuraCianna/agentic-sdlc-mcp/releases).
 
+## [1.7.0] - 2026-07-12
+
+### Added
+
+- Official MCP Registry metadata and a release-triggered, checksum-verified GitHub OIDC publication workflow.
+- Strict `.agentic-sdlc.yml` schema, bounded YAML parsing, canonical digest, ref/blob provenance, safe defaults, and shared path/reviewer decisions.
+- Required checks are bound to a concrete check-run App ID; same-name commit statuses, other Apps, and skipped checks cannot satisfy policy.
+- Policy consumers for `repo_context`, `plan_from_context`, `quality_gate_status`, `review_pr_against_standard`, `release_readiness_check`, and `agent_handoff_packet`.
+- Explicit caller-sourced rollback-plan evidence for policies requiring a tested rollback plan.
+
+### Changed
+
+- Plans inherit repository defaults and add required checks, protected-path, review, and release constraints without removing built-in safety tasks.
+- PR gates/reviews evaluate base-SHA policy and previous names for renames; release readiness evaluates the target SHA.
+- Policy-aware outputs expose rule IDs, digest, sources, blob SHA, and degraded state.
+
+### Security
+
+- Invalid, oversized, deeply nested, aliased, duplicate-key, unknown-field, traversal, or inconsistent policy files are rejected as a whole.
+- Registry publishing uses pinned Actions, an exact publisher/checksum, minimal permissions, and no long-lived Registry token.
+
+### Compatibility
+
+- Repositories without `.agentic-sdlc.yml` retain v1.6-compatible defaults; all six integrations remain read-only and additive.
+- The MCP Registry is preview infrastructure; `npx -y agentic-sdlc-mcp` remains the primary compatibility path.
+
 ## [1.6.0] - 2026-07-12
 
 ### Added
@@ -38,3 +64,4 @@ All notable changes to this project are documented here. Release history is also
 - The MCP remains a reviewer aid: gate, review, workflow-audit, and release-readiness tools do not approve or merge PRs or modify repository policy.
 
 [1.6.0]: https://github.com/SakuraCianna/agentic-sdlc-mcp/releases/tag/v1.6.0
+[1.7.0]: https://github.com/SakuraCianna/agentic-sdlc-mcp/releases/tag/v1.7.0

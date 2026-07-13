@@ -25,6 +25,7 @@ import {
 } from "../security/secret-scanner-evidence.js";
 import {
   evaluatePullRequestReview,
+  inferWorkType,
   scanPatchForSecrets as scanSharedPatchForSecrets,
   type ReviewDimension,
   type StructuredReviewFinding,
@@ -35,6 +36,9 @@ import {
   type WorkflowContent,
 } from "./workflow-permissions-audit.js";
 import { safeMarkdownInline } from "../rendering/markdown.js";
+import { loadRepositoryPolicy } from "../policy/repository-policy-loader.js";
+import { evaluatePullRequestPolicy } from "../policy/pull-request-policy.js";
+import type { AppliedPolicyRule, PolicySource } from "../policy/repository-policy.js";
 
 export {
   codeownersPatternMatches,
@@ -135,6 +139,13 @@ export const ReviewPrOutputSchema = {
       reason: z.string(),
     })
     .nullable(),
+  policyDigest: z.string(),
+  policySources: z.array(z.object({
+    kind: z.enum(["default", "repository"]), path: z.string().nullable(),
+    ref: z.string().nullable(), blobSha: z.string().nullable(), digest: z.string(),
+  })),
+  appliedPolicyRules: z.array(z.object({ id: z.string(), source: z.literal("repository") })),
+  policyDegraded: z.boolean(),
 };
 
 // ---------------------------------------------------------------------------
@@ -158,6 +169,10 @@ export interface ReviewPrResult {
   ownershipRoutingGaps: OwnershipGap[];
   errors: string[];
   secretScannerEvidence: SecretScannerEvidence | null;
+  policyDigest: string;
+  policySources: PolicySource[];
+  appliedPolicyRules: AppliedPolicyRule[];
+  policyDegraded: boolean;
 }
 
 /** Minimal shape from octokit pulls.listFiles we care about */
@@ -480,6 +495,33 @@ export async function handleReviewPr(
     octokit
   );
   const files: PrFile[] = evidence.changedFiles;
+  const loadedPolicy = await loadRepositoryPolicy(
+    ref,
+    evidence.pullRequest.baseSha ?? evidence.pullRequest.baseBranch,
+    octokit
+  );
+  const inferredWorkType = params.workType ?? inferWorkType(
+    {
+      title: evidence.pullRequest.title,
+      body: evidence.pullRequest.body,
+      labels: evidence.pullRequest.labels,
+      draft: evidence.pullRequest.draft,
+      commits: evidence.pullRequest.commits,
+    },
+    files
+  ).workType;
+  const repositoryPolicy = evaluatePullRequestPolicy(loadedPolicy, {
+    paths: files.flatMap((file) =>
+      file.previousFilename ? [file.filename, file.previousFilename] : [file.filename]
+    ),
+    workType: inferredWorkType,
+    changedFilesComplete: !evidence.unverifiedSignals.includes("changed_files"),
+    linkedIssues: evidence.linkedIssues,
+    approvedUsers: evidence.reviews.approvedUsers,
+    requestedUsers: evidence.reviews.requestedUsers,
+    requestedTeams: evidence.reviews.requestedTeams,
+    codeOwnerReviewSatisfied: evidence.reviews.codeOwnerReviewSatisfied,
+  });
   const errors = evidence.errors.map((error) => {
     if (error.startsWith("requested_reviewers:")) {
       return `Requested reviewers:${error.slice("requested_reviewers:".length)}`;
@@ -567,6 +609,72 @@ export async function handleReviewPr(
       };
     }
   );
+  const repositoryPolicyFindings: StructuredReviewFinding[] = [
+    ...(repositoryPolicy.matchedProtectedPaths.length > 0
+      ? [{
+          severity: "medium" as const,
+          category: "ProtectedPath",
+          description: `Changed files match protected path rules: ${repositoryPolicy.matchedProtectedPaths.join(", ")}.`,
+          suggestion: "Apply focused ownership and risk review before merge.",
+          dimension: "policy" as const,
+          paths: files.map((file) => file.filename),
+          reason: "Repository policy rule paths.protected matched the changed paths.",
+        }]
+      : []),
+    ...(files.some(
+      (file) =>
+        file.filename.toLocaleLowerCase() === ".agentic-sdlc.yml" ||
+        file.previousFilename?.toLocaleLowerCase() === ".agentic-sdlc.yml"
+    )
+      ? [{
+          severity: "high" as const,
+          category: "RepositoryPolicyChange",
+          description: "This pull request changes the repository policy file.",
+          suggestion: "Review the policy change independently; this review intentionally uses the base-SHA policy.",
+          dimension: "policy" as const,
+          paths: [".agentic-sdlc.yml"],
+          reason: "Policy self-modification cannot govern the pull request that proposes it.",
+        }]
+      : []),
+    ...repositoryPolicy.blockers.map((reason) => ({
+      severity: "high" as const,
+      category: "RepositoryPolicy",
+      description: reason.message,
+      suggestion: "Satisfy the repository policy requirement before merge.",
+      dimension: "policy" as const,
+      paths: repositoryPolicy.matchedProtectedPaths,
+      reason: `Repository policy rule ${reason.ruleId} from the PR base SHA was not satisfied.`,
+    })),
+    ...repositoryPolicy.pendingReviews.map((reason) => ({
+      severity: "medium" as const,
+      category: "RepositoryPolicyReviewPending",
+      description: reason.message,
+      suggestion: "Wait for the requested reviewer to approve the current PR head.",
+      dimension: "policy" as const,
+      paths: repositoryPolicy.matchedProtectedPaths,
+      reason: `Repository policy rule ${reason.ruleId} is pending.`,
+    })),
+    ...repositoryPolicy.policyGaps.map((reason) => ({
+      severity: "high" as const,
+      category: "RepositoryPolicyEvidenceUnavailable",
+      description: reason.message,
+      suggestion: "Restore complete policy evidence and rerun the review before merge.",
+      dimension: "policy" as const,
+      paths: [],
+      reason: `Repository policy rule ${reason.ruleId} could not be verified.`,
+    })),
+    ...loadedPolicy.policy.riskRules
+      .filter((rule) => repositoryPolicy.matchedRiskRuleIds.includes(rule.id))
+      .map((rule) => ({
+        severity: rule.level,
+        category: "RepositoryRiskRule",
+        description: `Changed paths match ${rule.id} (${rule.domains.join(", ")}).`,
+        suggestion: "Apply defensive review and testing appropriate to the matched risk domains.",
+        dimension: "policy" as const,
+        paths: files.map((file) => file.filename),
+        reason: `Repository policy risk rule ${rule.id} matched the changed paths.`,
+      })),
+  ];
   const uniqueUnverifiedWorkflowPaths = [...new Set(unverifiedWorkflowPaths)];
   if (uniqueUnverifiedWorkflowPaths.length > 0) {
     workflowPolicyFindings.push({
@@ -627,7 +735,11 @@ export async function handleReviewPr(
     workType: params.workType,
     standard: params.standard,
     secretScannerEvidence: secretScannerEvidence ?? undefined,
-    policyFindings: [...ownershipPolicyFindings, ...workflowPolicyFindings],
+    policyFindings: [
+      ...ownershipPolicyFindings,
+      ...workflowPolicyFindings,
+      ...repositoryPolicyFindings,
+    ],
   });
   const structured: ReviewPrResult = {
     pullNumber: evidence.pullRequest.number,
@@ -646,6 +758,10 @@ export async function handleReviewPr(
     ownershipRoutingGaps,
     errors,
     secretScannerEvidence: review.secretScannerEvidence,
+    policyDigest: repositoryPolicy.policyDigest,
+    policySources: repositoryPolicy.policySources,
+    appliedPolicyRules: loadedPolicy.appliedRules,
+    policyDegraded: repositoryPolicy.policyDegraded,
   };
   const conclusionLabel =
     structured.conclusion === "pass"
@@ -670,6 +786,18 @@ export async function handleReviewPr(
     errors.forEach((error) => lines.push(`- ${inline(error, 500)}`));
     lines.push("");
   }
+
+  lines.push(
+    "## Policy Provenance",
+    "",
+    `- Digest: \`${inline(structured.policyDigest, 80)}\``,
+    `- Status: ${structured.policyDegraded ? "degraded" : "verified"}`,
+    `- Applied rules: ${structured.appliedPolicyRules.map((rule) => inline(rule.id)).join(", ") || "none"}`
+  );
+  structured.policySources.forEach((source) =>
+    lines.push(`- Source: ${inline(source.path ?? "built-in")} @ ${inline(source.ref ?? "default")} (blob: ${inline(source.blobSha ?? "n/a")})`)
+  );
+  lines.push("");
 
   lines.push(
     "## Work Type",

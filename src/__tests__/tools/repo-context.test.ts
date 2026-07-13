@@ -189,6 +189,59 @@ describe("registerRepoContextTool", () => {
     expect(result.content[0].text).toContain("CLAUDE.md");
   });
 
+  it("passes includePolicy through and returns policy provenance", async () => {
+    let handler: (params: any) => Promise<any> = async () => undefined;
+    const mockServer = {
+      registerTool: vi.fn((_name: string, _config: unknown, fn: (params: any) => Promise<any>) => {
+        handler = fn;
+      }),
+    };
+    registerRepoContextTool(mockServer as any);
+    (fetchRepoContext as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      name: "test-repo",
+      fullName: "test-org/test-repo",
+      description: "Test repository",
+      defaultBranch: "main",
+      visibility: "public",
+      language: "TypeScript",
+      stargazersCount: 10,
+      openIssuesCount: 2,
+      topics: [],
+      pushedAt: "2026-01-01T00:00:00Z",
+      policy: {
+        found: true,
+        degraded: false,
+        schemaVersion: 1,
+        defaultWorkType: "security",
+        requiredChecks: [{ name: "policy-check", source: "check_run", appId: 15368 }],
+        protectedPaths: ["src/auth/**"],
+        riskRuleIds: ["risk.auth"],
+        requiredReviewerRuleIds: ["review.auth"],
+        releaseBlockingLabels: ["blocked"],
+        requireIssueLink: true,
+        requireCodeOwnersForProtectedPaths: true,
+        requireChangelog: true,
+        requireRollbackPlan: true,
+      },
+      policyDigest: "a".repeat(64),
+      policySources: [{ kind: "repository", path: ".agentic-sdlc.yml", ref: "main", blobSha: "sha", digest: "a".repeat(64) }],
+      appliedPolicyRules: [{ id: "ci.required_checks", source: "repository" }],
+      policyErrors: [],
+      policyWarnings: [],
+    });
+
+    const response = await handler({
+      owner: "test-org",
+      repo: "test-repo",
+      includePolicy: true,
+    });
+
+    expect(fetchRepoContext).toHaveBeenCalledWith(expect.objectContaining({ includePolicy: true }));
+    expect(response.structuredContent.policy.defaultWorkType).toBe("security");
+    expect(response.structuredContent.policySources[0].blobSha).toBe("sha");
+    expect(response.content[0].text).toContain("Repository Policy");
+  });
+
   it("declares README and package.json summaries in outputSchema and returns them through the registered handler", async () => {
     let handler: (params: any) => Promise<any> = async () => undefined;
     let outputSchema: Record<string, { safeParse: (value: unknown) => { success: boolean } }> = {};

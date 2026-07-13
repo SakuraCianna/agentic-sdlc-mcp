@@ -5,6 +5,12 @@
 import { getOctokit } from "./client.js";
 import type { RepoRef } from "../types.js";
 import type { Octokit } from "@octokit/rest";
+import {
+  loadRepositoryPolicy,
+  summarizeRepositoryPolicy,
+  type RepositoryPolicySummary,
+} from "../policy/repository-policy-loader.js";
+import type { AppliedPolicyRule, PolicySource } from "../policy/repository-policy.js";
 
 export interface RepoContextOptions extends RepoRef {
   includeReadme?: boolean;
@@ -17,6 +23,8 @@ export interface RepoContextOptions extends RepoRef {
   includeAgentInstructions?: boolean;
   /** Include lightweight governance signals, e.g. whether a CODEOWNERS file exists. */
   includeGovernance?: boolean;
+  /** Include the validated `.agentic-sdlc.yml` summary and provenance. */
+  includePolicy?: boolean;
   /** Max number of open issues to fetch. Default: 20. */
   issueLimit?: number;
   /** Max number of open PRs to fetch. Default: 20. */
@@ -68,6 +76,12 @@ export interface RepoContextResult {
   governance?: { codeownersFound: boolean };
   /** Summaries of agent instruction files found at the repo root (e.g. AGENTS.md, CLAUDE.md). */
   agentInstructions?: Array<{ path: string; summary: string }>;
+  policy?: RepositoryPolicySummary;
+  policyDigest?: string;
+  policySources?: PolicySource[];
+  appliedPolicyRules?: AppliedPolicyRule[];
+  policyErrors?: string[];
+  policyWarnings?: string[];
   openIssues?: Array<{
     number: number;
     title: string;
@@ -333,6 +347,20 @@ export async function fetchRepoContext(
     topics: repoData.topics ?? [],
     pushedAt: repoData.pushed_at ?? null,
   };
+
+  if (opts.includePolicy) {
+    const loaded = await loadRepositoryPolicy(
+      { owner, repo },
+      repoData.default_branch,
+      octokit
+    );
+    result.policy = summarizeRepositoryPolicy(loaded);
+    result.policyDigest = loaded.digest;
+    result.policySources = loaded.policySources;
+    result.appliedPolicyRules = loaded.appliedRules;
+    result.policyErrors = loaded.errors;
+    result.policyWarnings = loaded.warnings;
+  }
 
   // Optional: README
   if (opts.includeReadme) {

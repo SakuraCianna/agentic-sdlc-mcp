@@ -1,0 +1,54 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.sakuracianna/agentic-sdlc-mcp",
+  "title": "Agentic SDLC MCP",
+  "description": "Agentic SDLC governance and security controls for AI coding agents working with GitHub.",
+  "version": "1.7.0",
+  "repository": {
+    "url": "https://github.com/SakuraCianna/agentic-sdlc-mcp",
+    "source": "github",
+    "id": "1290091977"
+  },
+  "websiteUrl": "https://github.com/SakuraCianna/agentic-sdlc-mcp#readme",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "agentic-sdlc-mcp",
+      "version": "1.7.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "GITHUB_TOKEN",
+          "description": "GitHub token with the least privileges required by the tools you call.",
+          "format": "string",
+          "isRequired": true,
+          "isSecret": true
+        },
+        {
+          "name": "GITHUB_OWNER",
+          "description": "Optional default GitHub organization or user name.",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "GITHUB_REPO",
+          "description": "Optional default GitHub repository name.",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "SDLC_DEFAULT_BRANCH",
+          "description": "Optional default branch used when repository metadata is unavailable.",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": false,
+          "default": "main"
+        }
+      ]
+    }
+  ]
+}

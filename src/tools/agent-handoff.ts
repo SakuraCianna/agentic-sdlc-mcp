@@ -9,6 +9,12 @@ import { z } from "zod";
 import { resolveRepo, getOctokit, handleGitHubError } from "../github/client.js";
 import type { RepoRef } from "../types.js";
 import type { Octokit } from "@octokit/rest";
+import {
+  loadRepositoryPolicy,
+  summarizeRepositoryPolicy,
+  type RepositoryPolicySummary,
+} from "../policy/repository-policy-loader.js";
+import type { AppliedPolicyRule, PolicySource } from "../policy/repository-policy.js";
 
 // ---------------------------------------------------------------------------
 // Schema
@@ -28,6 +34,23 @@ export const AgentHandoffInputSchema = z.object({
 });
 
 export type AgentHandoffInput = z.infer<typeof AgentHandoffInputSchema>;
+
+const PolicySummaryShape = z.object({
+  found: z.boolean(), degraded: z.boolean(), schemaVersion: z.literal(1),
+  defaultWorkType: z.enum(["docs", "feature", "bugfix", "refactor", "security", "release", "infra"]).optional(),
+  requiredChecks: z.array(z.object({
+    name: z.string(), source: z.literal("check_run"), appId: z.number().int().positive(),
+  })), protectedPaths: z.array(z.string()),
+  riskRuleIds: z.array(z.string()), requiredReviewerRuleIds: z.array(z.string()),
+  releaseBlockingLabels: z.array(z.string()), requireIssueLink: z.boolean(),
+  requireCodeOwnersForProtectedPaths: z.boolean(), requireChangelog: z.boolean(),
+  requireRollbackPlan: z.boolean(),
+});
+const PolicySourceShape = z.object({
+  kind: z.enum(["default", "repository"]), path: z.string().nullable(),
+  ref: z.string().nullable(), blobSha: z.string().nullable(), digest: z.string(),
+});
+const AppliedPolicyRuleShape = z.object({ id: z.string(), source: z.literal("repository") });
 
 // ---------------------------------------------------------------------------
 // Output schema
@@ -56,6 +79,11 @@ export const AgentHandoffOutputSchema = {
       url: z.string(),
     })
     .nullable(),
+  policySummary: PolicySummaryShape.optional(),
+  policyDigest: z.string().optional(),
+  policySources: z.array(PolicySourceShape).optional(),
+  appliedPolicyRules: z.array(AppliedPolicyRuleShape).optional(),
+  policyDegraded: z.boolean().optional(),
 };
 
 // ---------------------------------------------------------------------------
@@ -70,6 +98,11 @@ export interface AgentHandoffResult {
   handoffPrompt: string;
   issueRef: { number: number; title: string; state: string; url: string } | null;
   prRef: { number: number; title: string; state: string; branch: string; url: string } | null;
+  policySummary?: RepositoryPolicySummary;
+  policyDigest?: string;
+  policySources?: PolicySource[];
+  appliedPolicyRules?: AppliedPolicyRule[];
+  policyDegraded?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -106,6 +139,7 @@ export async function handleAgentHandoff(
   }
 
   let prRef: AgentHandoffResult["prRef"] = null;
+  let policyRef = repoData.default_branch;
   if (params.pullNumber) {
     try {
       const { data: pr } = await octokit.pulls.get({
@@ -120,17 +154,49 @@ export async function handleAgentHandoff(
         branch: `${pr.head.ref} -> ${pr.base.ref}`,
         url: pr.html_url,
       };
+      policyRef = pr.base.sha ?? pr.base.ref;
     } catch {
       // Could not fetch — leave null
     }
   }
 
-  const nextSteps = params.nextSteps ?? [
+  const nextSteps = params.nextSteps ? [...params.nextSteps] : [
     "Review the current state of the issue/PR",
     "Run quality_gate_status to check CI",
     "Address any remaining review comments",
     "Ensure tests pass before proceeding",
   ];
+  let policyFields: Pick<
+    AgentHandoffResult,
+    "policySummary" | "policyDigest" | "policySources" | "appliedPolicyRules" | "policyDegraded"
+  > = {};
+  if (typeof (octokit.repos as { getContent?: unknown }).getContent === "function") {
+    const loaded = await loadRepositoryPolicy(ref, policyRef, octokit);
+    const summary = summarizeRepositoryPolicy(loaded);
+    policyFields = {
+      policySummary: summary,
+      policyDigest: loaded.digest,
+      policySources: loaded.policySources,
+      appliedPolicyRules: loaded.appliedRules,
+      policyDegraded: loaded.degraded,
+    };
+    for (const check of summary.requiredChecks) {
+      const step = `Run and verify repository-required check: ${check.name} from check_run App ${check.appId} [ci.required_checks]`;
+      if (!nextSteps.includes(step)) nextSteps.push(step);
+    }
+    if (summary.requireIssueLink) {
+      const step = "Verify the pull request has a linked issue [review.require_issue_link]";
+      if (!nextSteps.includes(step)) nextSteps.push(step);
+    }
+    if (summary.requireChangelog) {
+      const step = "Verify CHANGELOG.md is updated [release.require_changelog]";
+      if (!nextSteps.includes(step)) nextSteps.push(step);
+    }
+    if (summary.requireRollbackPlan) {
+      const step = "Verify explicit tested rollback-plan evidence [release.require_rollback_plan]";
+      if (!nextSteps.includes(step)) nextSteps.push(step);
+    }
+  }
 
   const handoffLines: string[] = [
     `You are taking over work on ${ref.owner}/${ref.repo}.`,
@@ -165,6 +231,7 @@ export async function handleAgentHandoff(
     handoffPrompt,
     issueRef,
     prRef,
+    ...policyFields,
   };
 
   const lines: string[] = [
@@ -201,6 +268,19 @@ export async function handleAgentHandoff(
       `State: ${prRef.state}`,
       `Branch: ${prRef.branch}`,
       `URL: ${prRef.url}`
+    );
+  }
+
+  if (structured.policyDigest) {
+    lines.push(
+      "",
+      "### Policy Provenance",
+      `Digest: \`${structured.policyDigest}\``,
+      `Status: ${structured.policyDegraded ? "degraded" : structured.policySummary?.found ? "repository policy loaded" : "built-in defaults"}`,
+      `Applied rules: ${structured.appliedPolicyRules?.map((rule) => rule.id).join(", ") || "none"}`
+    );
+    structured.policySources?.forEach((source) =>
+      lines.push(`Source: ${source.path ?? "built-in"} @ ${source.ref ?? "default"} (blob: ${source.blobSha ?? "n/a"})`)
     );
   }
 

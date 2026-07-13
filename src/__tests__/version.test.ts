@@ -12,7 +12,7 @@ describe("SERVER_INFO", () => {
     };
 
     expect(SERVER_INFO.name).toBe(packageJson.name);
-    expect(SERVER_INFO.version).toBe("1.6.0");
+    expect(SERVER_INFO.version).toBe("1.7.0");
     expect(SERVER_INFO.version).toBe(packageJson.version);
   });
 });

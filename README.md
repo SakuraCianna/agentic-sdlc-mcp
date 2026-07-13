@@ -130,6 +130,8 @@ If you need to verify this MCP server in any MCP-capable AI coding agent, follow
 
 ## ⚙️ MCP Client Configuration
 
+The server is prepared for the preview MCP Registry as `io.github.sakuracianna/agentic-sdlc-mcp`. `npx -y agentic-sdlc-mcp` remains the compatibility installation path.
+
 Add this server configuration to your MCP client setting files (e.g., `claude_desktop_config.json`, Cursor, or Windsurf settings):
 
 ### Claude Desktop / Cursor / Windsurf (Using npm package)
@@ -217,6 +219,7 @@ When requested, the bounded `readmeSummary` and `packageJsonSummary` values are 
   * `includeWorkflows` (boolean, default: `false`): Include `.github/workflows/*.yml` file names (names only -- use `workflow_permissions_audit` for permission contents).
   * `includeAgentInstructions` (boolean, default: `false`): Include summaries of agent instruction files found at the repo root (`AGENTS.md`, `CLAUDE.md`).
   * `includeGovernance` (boolean, default: `false`): Include whether a CODEOWNERS file exists (for full branch protection details, use `branch_protection_status`).
+  * `includePolicy` (boolean, default: `false`): Include validated repository policy, digest, stable rule IDs, and source ref/blob SHA.
   * `includeOpenIssues` / `includeOpenPRs` (boolean, default: `false`): Include recent open issues/PRs.
   * `issueLimit` / `prLimit` (number, default: `20`, max: `100`): Cap how many issues/PRs are fetched.
   * `maxReadmeChars` (number, default: `3000`): Max README characters before truncation.
@@ -225,6 +228,7 @@ When requested, the bounded `readmeSummary` and `packageJsonSummary` values are 
 ### `plan_from_context`
 Generates a structured, phase-by-phase SDLC plan matching the standard milestones, tailored to a `workType`. Each work type gets a materially different plan -- e.g. `docs` never defaults to requiring code unit tests, `bugfix` always includes repro + regression tests, `security` always includes a threat model and least-privilege review, and `release`/`infra` always include changelog/rollback and workflow-permission checks respectively.
 The response includes 3-5 structured `issueDrafts` whose titles, Markdown bodies, confirmed repository labels, SDLC phases, acceptance criteria, risk levels, and source goal can be passed directly to `create_issue_set`.
+Repository policy can add a default work type, required checks, protected-path constraints, and review/release tasks. An explicit caller `workType` always wins.
 * **Arguments:**
   * `owner` / `repo` (string, optional): Repo coordinates.
   * `goal` (string, required): The target feature or fix description.
@@ -254,6 +258,8 @@ Aggregates check runs and commit statuses. In PR mode it also evaluates reviews,
   * `pullNumber` (number, optional): Query checks by PR number.
   * `ref` (string, optional): Query checks by branch, tag, or SHA.
   * `blockingLabels` (string[], default: `blocked`, `do-not-merge`, `release-blocker`, `security-blocker`): Exact, case-insensitive PR labels that block the gate; pass `[]` to disable this built-in list.
+
+PR policy is evaluated from the base SHA. Repository-required checks and labels cannot be disabled by caller overrides or by editing policy in the PR itself.
 
 ### `create_pr_summary`
 Generates a structured pull request description and changelog draft.
@@ -287,6 +293,12 @@ Assesses pre-release health (combined check runs and commit statuses, open bugs,
 * **Arguments:**
   * `owner` / `repo` (string, optional): Repo coordinates.
   * `headRef` (string, optional): Target release branch/tag.
+  * `pullNumber` (number, optional): Evaluate the PR head and its real blocking labels.
+  * `rollbackPlanEvidence` (object, optional): Caller-sourced `{ reference, tested }`, required when repository policy requires a tested rollback plan.
+
+### Repository policy
+
+Add `.agentic-sdlc.yml` to strengthen checks, protected paths, reviewers, blocking labels, and release requirements. See [Repository policy](docs/repository-policy.md) for schema, examples, provenance, base-SHA self-modification behavior, limits, and migration.
 
 ### `branch_protection_status`
 Queries classic branch protection and repository rulesets for required reviews, status checks, and push limits.
@@ -331,7 +343,7 @@ To prevent AI coding agents from performing destructive or unintended actions on
 * **Zero Self-Merge Policy**: No tools exist to auto-merge pull requests. Human approval is required on all merge gates.
 * **Access Restraints**: The server does not support force-pushing or deleting branch rules.
 * **CODEOWNERS Enforced Review**: Special paths (such as workflows under `.github/` and core files under `src/`) require owner approvals.
-* **Read-only Decision Tools**: v1.6 gate, PR review, workflow audit, security triage, and release-readiness tools only read evidence. They never approve or merge PRs and never modify branch protection, rulesets, or repository policy. The separate issue-creation tool remains protected by `dryRun: true` by default.
+* **Read-only Decision Tools**: v1.7 policy-aware gate, PR review, workflow audit, security triage, release-readiness, and handoff tools only read evidence. They never approve or merge PRs and never modify branch protection, rulesets, or repository policy. The separate issue-creation tool remains protected by `dryRun: true` by default.
 
 ---
 

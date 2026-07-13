@@ -34,6 +34,12 @@ Run a single test by name: `npx vitest run -t "dryRun=true"`
 - `pull-request-evidence.ts` — shared, bounded evidence collector for check runs, commit statuses, reviews, changed files, CODEOWNERS, branch protection/rulesets, labels, and linked issues. Critical consumers must preserve `unverifiedSignals`/`errors` and fail closed where the evidence affects a security or policy decision.
 - `codeowners.ts` — CODEOWNERS parsing, bounded matching, repository lookup, and ownership-gap calculation shared by gates and reviews.
 
+**Repository policy layer** (`src/policy/`):
+- `repository-policy.ts` owns the strict schema, bounded YAML parsing, canonical digest, glob matching, and safe v1.6-compatible defaults.
+- `repository-policy-loader.ts` reads `.agentic-sdlc.yml` at an explicit ref and returns source ref/blob SHA, rule IDs, errors, and degraded state. A missing file is normal; an invalid/unreadable file is degraded.
+- `pull-request-policy.ts` is the shared pure PR decision helper. Gate/review consumers must use the PR base SHA and include both current and previous names for renames; never let a PR's proposed policy evaluate itself.
+- Policy may strengthen checks/reviews/releases but never enable auto-merge, force-push, branch deletion, approval bypass, or suppression of verified failures. Keep policy-aware output schema, structured content, Markdown, tests, and `docs/repository-policy.md` aligned.
+
 **Review and security layers**:
 - `src/review/pull-request-review.ts` is the pure work-type classifier and structured PR evaluator. The GitHub-facing `src/tools/review-pr.ts` gathers evidence and complete workflow files, then renders the single evaluation result; do not duplicate conclusions in Markdown code.
 - `src/security/secret-scanner-evidence.ts` evaluates mature scanner CI signals. Passing requires a trusted app-backed check run and complete, unchanged scanner policy evidence.

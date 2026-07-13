@@ -4,6 +4,7 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
+import { z } from "zod";
 
 vi.mock("../../config.js", () => ({
   config: {
@@ -16,7 +17,7 @@ vi.mock("../../config.js", () => ({
   isSmokeMode: false,
 }));
 
-const { handleReleaseReadiness } = await import("../../tools/release-readiness.js");
+const { handleReleaseReadiness, ReleaseReadinessOutputSchema } = await import("../../tools/release-readiness.js");
 
 import type { ReleaseReadinessInput } from "../../tools/release-readiness.js";
 import type { RepoRef } from "../../types.js";
@@ -24,7 +25,12 @@ import type { RepoRef } from "../../types.js";
 const REF: RepoRef = { owner: "test-org", repo: "test-repo" };
 
 function makeMockOctokit(opts: {
-  checks?: Array<{ name: string; status: string; conclusion: string | null }>;
+  checks?: Array<{
+    name: string;
+    status: string;
+    conclusion: string | null;
+    app?: { id: number } | null;
+  }>;
   statuses?: Array<{ context: string; state: string; target_url: string | null }>;
   checkPages?: Array<Array<{ name: string; status: string; conclusion: string | null }>>;
   statusPages?: Array<Array<{ context: string; state: string; target_url: string | null }>>;
@@ -34,6 +40,8 @@ function makeMockOctokit(opts: {
   bugIssues?: Array<{ number: number; title: string; html_url: string; pull_request?: object }>;
   bugPages?: Array<Array<{ number: number; title: string; html_url: string; pull_request?: object }>>;
   hasChangelog?: boolean;
+  policyContent?: string;
+  prLabels?: string[];
 } = {}) {
   const checks = opts.checks ?? [{ name: "CI", status: "completed", conclusion: "success" }];
   const statuses = opts.statuses ?? [];
@@ -47,9 +55,16 @@ function makeMockOctokit(opts: {
       getCommit: opts.refError
         ? vi.fn().mockRejectedValue(opts.refError)
         : vi.fn().mockResolvedValue({ data: { sha: "abc123456" } }),
-      getContent: opts.hasChangelog
-        ? vi.fn().mockResolvedValue({ data: {} })
-        : vi.fn().mockRejectedValue({ status: 404 }),
+      getContent: vi.fn().mockImplementation(({ path, ref }: { path: string; ref?: string }) => {
+        if (path === ".agentic-sdlc.yml" && opts.policyContent !== undefined) {
+          return Promise.resolve({ data: {
+            type: "file", encoding: "base64", sha: "policy-sha",
+            content: Buffer.from(opts.policyContent).toString("base64"),
+          }});
+        }
+        if (path === "CHANGELOG.md" && opts.hasChangelog) return Promise.resolve({ data: {}, ref });
+        return Promise.reject({ status: 404 });
+      }),
       getCombinedStatusForRef: opts.statusesError
         ? vi.fn().mockRejectedValue(opts.statusesError)
         : vi.fn().mockImplementation(({ page = 1 }: { page?: number }) =>
@@ -72,10 +87,116 @@ function makeMockOctokit(opts: {
         Promise.resolve({ data: opts.bugPages ? (opts.bugPages[page - 1] ?? []) : bugs })
       ),
     },
+    pulls: {
+      get: vi.fn().mockResolvedValue({ data: {
+        head: { sha: "pr-head-sha" },
+        base: { sha: "pr-base-sha", ref: "main" },
+        labels: (opts.prLabels ?? []).map((name) => ({ name })),
+      }}),
+    },
   } as unknown as Parameters<typeof handleReleaseReadiness>[2];
 }
 
 describe("handleReleaseReadiness", () => {
+  it("applies release policy at the target SHA with explicit rollback evidence", async () => {
+    const policyContent = [
+      "schemaVersion: 1",
+      "labels:",
+      "  releaseBlocking: [release-hold]",
+      "release:",
+      "  requireChangelog: true",
+      "  requireRollbackPlan: true",
+    ].join("\n");
+    const octokit = makeMockOctokit({
+      policyContent,
+      hasChangelog: true,
+      prLabels: ["release-hold"],
+    });
+
+    const blocked = await handleReleaseReadiness({ pullNumber: 42 }, REF, octokit);
+    expect(blocked.structured.blockingIssues.join(" ")).toMatch(/release-hold/);
+    expect(blocked.structured.blockingIssues.join(" ")).toMatch(/rollback/i);
+    expect(blocked.structured.policyDigest).toMatch(/^[a-f0-9]{64}$/);
+    expect(octokit.repos.getContent).toHaveBeenCalledWith(
+      expect.objectContaining({ path: ".agentic-sdlc.yml", ref: "pr-head-sha" })
+    );
+    expect(octokit.repos.getContent).toHaveBeenCalledWith(
+      expect.objectContaining({ path: "CHANGELOG.md", ref: "pr-head-sha" })
+    );
+
+    const readyOctokit = makeMockOctokit({ policyContent, hasChangelog: true });
+    const ready = await handleReleaseReadiness(
+      { pullNumber: 42, rollbackPlanEvidence: { reference: "runbook://release-42", tested: true } },
+      REF,
+      readyOctokit
+    );
+    expect(ready.structured.isReady).toBe(true);
+    expect(ready.structured.rollbackPlanEvidence).toEqual({
+      reference: "runbook://release-42", tested: true, source: "caller",
+    });
+    expect(() => z.object(ReleaseReadinessOutputSchema).parse(ready.structured)).not.toThrow();
+  });
+
+  it("does not count a skipped repository-required check as passing", async () => {
+    const octokit = makeMockOctokit({
+      checks: [
+        { name: "CI", status: "completed", conclusion: "success" },
+        { name: "policy-check", status: "completed", conclusion: "skipped", app: { id: 15368 } },
+      ],
+      policyContent: "schemaVersion: 1\nrequiredChecks: [{ name: policy-check, source: check_run, appId: 15368 }]\n",
+      hasChangelog: true,
+    });
+
+    const { structured } = await handleReleaseReadiness({ headRef: "main" }, REF, octokit);
+
+    expect(structured.isReady).toBe(false);
+    expect(structured.blockingIssues).toContain(
+      "Repository required checks are not passing from the trusted App: policy-check (App 15368)"
+    );
+  });
+
+  it("rejects same-name commit statuses and check runs from another App", async () => {
+    const policyContent =
+      "schemaVersion: 1\nrequiredChecks: [{ name: policy-check, source: check_run, appId: 15368 }]\n";
+    const untrustedCases = [
+      makeMockOctokit({
+        checks: [{ name: "CI", status: "completed", conclusion: "success", app: { id: 15368 } }],
+        statuses: [{ context: "policy-check", state: "success", target_url: null }],
+        policyContent,
+        hasChangelog: true,
+      }),
+      makeMockOctokit({
+        checks: [
+          { name: "CI", status: "completed", conclusion: "success", app: { id: 15368 } },
+          { name: "policy-check", status: "completed", conclusion: "success", app: { id: 999 } },
+        ],
+        policyContent,
+        hasChangelog: true,
+      }),
+    ];
+
+    for (const octokit of untrustedCases) {
+      const { structured } = await handleReleaseReadiness({ headRef: "main" }, REF, octokit);
+      expect(structured.isReady).toBe(false);
+      expect(structured.blockingIssues.join(" ")).toContain("policy-check (App 15368)");
+    }
+  });
+
+  it("accepts the required check only from its configured App", async () => {
+    const octokit = makeMockOctokit({
+      checks: [
+        { name: "CI", status: "completed", conclusion: "success", app: { id: 15368 } },
+        { name: "policy-check", status: "completed", conclusion: "success", app: { id: 15368 } },
+      ],
+      policyContent:
+        "schemaVersion: 1\nrequiredChecks: [{ name: policy-check, source: check_run, appId: 15368 }]\n",
+      hasChangelog: true,
+    });
+
+    const { structured } = await handleReleaseReadiness({ headRef: "main" }, REF, octokit);
+    expect(structured.isReady).toBe(true);
+  });
+
   it("reports isReady=true when CI passes and no open bugs", async () => {
     const octokit = makeMockOctokit({
       checks: [{ name: "CI", status: "completed", conclusion: "success" }],

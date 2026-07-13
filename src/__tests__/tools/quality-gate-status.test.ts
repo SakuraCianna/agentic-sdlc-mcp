@@ -111,6 +111,7 @@ type PullRequestOverrides = {
   degraded?: boolean;
   unverifiedSignals?: string[];
   errors?: string[];
+  changedFiles?: PullRequestEvidence["changedFiles"];
 };
 
 function pullRequestRuleRequirements(
@@ -151,7 +152,7 @@ function pullRequestEvidence(overrides: PullRequestOverrides = {}): PullRequestE
       labels: [],
       ...overrides.pullRequest,
     },
-    changedFiles: [],
+    changedFiles: overrides.changedFiles ?? [],
     ci: overrides.ci ?? ciEvidence({ checkRuns: [signal("test")] }),
     reviews: {
       reviewDecision: "APPROVED",
@@ -1239,6 +1240,122 @@ describe("handleQualityGateStatus ref compatibility", () => {
 });
 
 describe("handleQualityGateStatus output", () => {
+  it("loads policy from the PR base SHA and enforces repository required checks", async () => {
+    evidenceMocks.collectPullRequestEvidence.mockResolvedValueOnce(
+      pullRequestEvidence({
+        pullRequest: { baseSha: "base-policy-sha" },
+        changedFiles: [{
+          filename: "src/auth/login.ts", status: "modified", additions: 1,
+          deletions: 0, changes: 1,
+        }],
+      })
+    );
+    const policy = [
+      "schemaVersion: 1",
+      "requiredChecks: [{ name: policy-check, source: check_run, appId: 15368 }]",
+      "protectedPaths: [src/auth/**]",
+    ].join("\n");
+    const octokit = makeOctokit() as unknown as {
+      repos: Record<string, unknown> & { getContent: ReturnType<typeof vi.fn> };
+    };
+    octokit.repos.getContent = vi.fn().mockResolvedValue({
+      data: {
+        type: "file", encoding: "base64",
+        content: Buffer.from(policy).toString("base64"), sha: "policy-blob",
+      },
+    });
+
+    const { structured, text } = await handleQualityGateStatus(
+      { pullNumber: 42 }, REF,
+      octokit as unknown as Parameters<typeof handleQualityGateStatus>[2]
+    );
+
+    expect(octokit.repos.getContent).toHaveBeenCalledWith(
+      expect.objectContaining({ path: ".agentic-sdlc.yml", ref: "base-policy-sha" })
+    );
+    expect(structured.conclusion).toBe("pending");
+    expect(structured.evidence.checks.missingRequiredContexts).toContain("policy-check");
+    expect(structured.policyDigest).toMatch(/^[a-f0-9]{64}$/);
+    expect(text).toContain("Policy Provenance");
+  });
+
+  it("does not let a commit status, wrong App, or skipped check satisfy a policy check", async () => {
+    const policy = [
+      "schemaVersion: 1",
+      "requiredChecks: [{ name: policy-check, source: check_run, appId: 15368 }]",
+    ].join("\n");
+    const cases: CiEvidence[] = [
+      ciEvidence({
+        checkRuns: [signal("test", "passing", "check_run", 15368)],
+        commitStatuses: [signal("policy-check", "passing", "commit_status")],
+      }),
+      ciEvidence({
+        checkRuns: [
+          signal("test", "passing", "check_run", 15368),
+          signal("policy-check", "passing", "check_run", 999),
+        ],
+      }),
+      ciEvidence({
+        checkRuns: [
+          signal("test", "passing", "check_run", 15368),
+          signal("policy-check", "skipped", "check_run", 15368),
+        ],
+      }),
+    ];
+
+    for (const ci of cases) {
+      evidenceMocks.collectPullRequestEvidence.mockResolvedValueOnce(
+        pullRequestEvidence({ pullRequest: { baseSha: "base-policy-sha" }, ci })
+      );
+      const octokit = makeOctokit() as unknown as {
+        repos: Record<string, unknown> & { getContent: ReturnType<typeof vi.fn> };
+      };
+      octokit.repos.getContent = vi.fn().mockResolvedValue({
+        data: {
+          type: "file", encoding: "base64",
+          content: Buffer.from(policy).toString("base64"), sha: "policy-blob",
+        },
+      });
+
+      const { structured } = await handleQualityGateStatus(
+        { pullNumber: 42 }, REF,
+        octokit as unknown as Parameters<typeof handleQualityGateStatus>[2]
+      );
+      expect(structured.conclusion).not.toBe("passing");
+      expect(structured.blockers.join(" ")).toContain(
+        "Required check policy-check is not passing from check_run App 15368"
+      );
+    }
+  });
+
+  it("accepts a policy check only from its configured check-run App", async () => {
+    const policy =
+      "schemaVersion: 1\nrequiredChecks: [{ name: policy-check, source: check_run, appId: 15368 }]\n";
+    evidenceMocks.collectPullRequestEvidence.mockResolvedValueOnce(
+      pullRequestEvidence({
+        pullRequest: { baseSha: "base-policy-sha" },
+        ci: ciEvidence({
+          checkRuns: [signal("policy-check", "passing", "check_run", 15368)],
+        }),
+      })
+    );
+    const octokit = makeOctokit() as unknown as {
+      repos: Record<string, unknown> & { getContent: ReturnType<typeof vi.fn> };
+    };
+    octokit.repos.getContent = vi.fn().mockResolvedValue({
+      data: {
+        type: "file", encoding: "base64",
+        content: Buffer.from(policy).toString("base64"), sha: "policy-blob",
+      },
+    });
+
+    const { structured } = await handleQualityGateStatus(
+      { pullNumber: 42 }, REF,
+      octokit as unknown as Parameters<typeof handleQualityGateStatus>[2]
+    );
+    expect(structured.conclusion).toBe("passing");
+  });
+
   it("keeps aggregate APPROVED passing but marks unverified REST reviews degraded", async () => {
     evidenceMocks.collectPullRequestEvidence.mockResolvedValueOnce(
       pullRequestEvidence({

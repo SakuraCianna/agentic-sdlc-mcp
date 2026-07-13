@@ -42,6 +42,10 @@ const RepoContextInputSchema = z.object({
     .boolean()
     .default(false)
     .describe("Include lightweight governance signals (currently: whether a CODEOWNERS file exists). For full branch protection details, use branch_protection_status."),
+  includePolicy: z
+    .boolean()
+    .default(false)
+    .describe("Include the validated .agentic-sdlc.yml policy summary, rule IDs, digest, and source ref/SHA."),
   includeOpenIssues: z
     .boolean()
     .default(false)
@@ -108,6 +112,37 @@ const AgentInstructionShape = z.object({
   summary: z.string(),
 });
 
+const PolicySourceShape = z.object({
+  kind: z.enum(["default", "repository"]),
+  path: z.string().nullable(),
+  ref: z.string().nullable(),
+  blobSha: z.string().nullable(),
+  digest: z.string(),
+});
+
+const AppliedPolicyRuleShape = z.object({
+  id: z.string(),
+  source: z.literal("repository"),
+});
+
+const RepositoryPolicySummaryShape = z.object({
+  found: z.boolean(),
+  degraded: z.boolean(),
+  schemaVersion: z.literal(1),
+  defaultWorkType: z.enum(["docs", "feature", "bugfix", "refactor", "security", "release", "infra"]).optional(),
+  requiredChecks: z.array(z.object({
+    name: z.string(), source: z.literal("check_run"), appId: z.number().int().positive(),
+  })),
+  protectedPaths: z.array(z.string()),
+  riskRuleIds: z.array(z.string()),
+  requiredReviewerRuleIds: z.array(z.string()),
+  releaseBlockingLabels: z.array(z.string()),
+  requireIssueLink: z.boolean(),
+  requireCodeOwnersForProtectedPaths: z.boolean(),
+  requireChangelog: z.boolean(),
+  requireRollbackPlan: z.boolean(),
+});
+
 export const RepoContextOutputSchema = {
   fullName: z.string(),
   description: z.string().nullable(),
@@ -126,6 +161,12 @@ export const RepoContextOutputSchema = {
   workflows: z.array(z.string()).optional(),
   governance: z.object({ codeownersFound: z.boolean() }).optional(),
   agentInstructions: z.array(AgentInstructionShape).optional(),
+  policy: RepositoryPolicySummaryShape.optional(),
+  policyDigest: z.string().optional(),
+  policySources: z.array(PolicySourceShape).optional(),
+  appliedPolicyRules: z.array(AppliedPolicyRuleShape).optional(),
+  policyErrors: z.array(z.string()).optional(),
+  policyWarnings: z.array(z.string()).optional(),
   openIssues: z.array(OpenIssueShape).optional(),
   openPRs: z.array(OpenPrShape).optional(),
 };
@@ -147,6 +188,7 @@ Args:
   - includeWorkflows (boolean): Include .github/workflows/*.yml file names. Default: false.
   - includeAgentInstructions (boolean): Include summaries of AGENTS.md/CLAUDE.md if present. Default: false.
   - includeGovernance (boolean): Include whether a CODEOWNERS file exists. Default: false.
+  - includePolicy (boolean): Include validated repository policy and provenance. Default: false.
   - includeOpenIssues (boolean): Include recent open issues. Default: false.
   - includeOpenPRs (boolean): Include open pull requests. Default: false.
   - issueLimit (number): Max open issues to fetch. Default: 20, max: 100.
@@ -174,6 +216,7 @@ Returns: Markdown summary of the repository context, plus structured content. Mi
           includeWorkflows: params.includeWorkflows,
           includeAgentInstructions: params.includeAgentInstructions,
           includeGovernance: params.includeGovernance,
+          includePolicy: params.includePolicy,
           includeOpenIssues: params.includeOpenIssues,
           includeOpenPRs: params.includeOpenPRs,
           issueLimit: params.issueLimit,
@@ -212,6 +255,29 @@ Returns: Markdown summary of the repository context, plus structured content. Mi
             scriptEntries.forEach(([name, cmd]) => lines.push(`- \`npm run ${name}\`: \`${cmd}\``));
           } else {
             lines.push("", "**Common scripts:** (none of the recognised script names were found)");
+          }
+        }
+
+        if (params.includePolicy) {
+          const policy = ctx.policy;
+          lines.push(
+            "",
+            "## Repository Policy",
+            `**Status:** ${policy?.degraded ? "degraded (safe defaults applied)" : policy?.found ? "loaded" : "not found (built-in defaults)"}`,
+            `**Digest:** ${ctx.policyDigest ? `\`${ctx.policyDigest}\`` : "unknown"}`,
+            `**Default work type:** ${policy?.defaultWorkType ?? "(none)"}`,
+            `**Required checks:** ${policy?.requiredChecks.length ? policy.requiredChecks.map((check) => `${check.name} (App ${check.appId})`).join(", ") : "(none)"}`,
+            `**Protected paths:** ${policy?.protectedPaths.length ? policy.protectedPaths.join(", ") : "(none)"}`,
+            `**Applied rule IDs:** ${ctx.appliedPolicyRules?.length ? ctx.appliedPolicyRules.map((rule) => rule.id).join(", ") : "(none)"}`
+          );
+          if (ctx.policySources?.length) {
+            lines.push("", "**Policy sources:**");
+            ctx.policySources.forEach((source) =>
+              lines.push(`- ${source.kind}: ${source.path ?? "built-in"} @ ${source.ref ?? "default"} (blob: ${source.blobSha ?? "n/a"})`)
+            );
+          }
+          if (ctx.policyErrors?.length) {
+            lines.push("", "**Policy errors:**", ...ctx.policyErrors.map((error) => `- ${error}`));
           }
         }
 
@@ -295,6 +361,12 @@ Returns: Markdown summary of the repository context, plus structured content. Mi
           ...(ctx.workflows ? { workflows: ctx.workflows } : {}),
           ...(ctx.governance ? { governance: ctx.governance } : {}),
           ...(ctx.agentInstructions ? { agentInstructions: ctx.agentInstructions } : {}),
+          ...(ctx.policy ? { policy: ctx.policy } : {}),
+          ...(ctx.policyDigest ? { policyDigest: ctx.policyDigest } : {}),
+          ...(ctx.policySources ? { policySources: ctx.policySources } : {}),
+          ...(ctx.appliedPolicyRules ? { appliedPolicyRules: ctx.appliedPolicyRules } : {}),
+          ...(ctx.policyErrors ? { policyErrors: ctx.policyErrors } : {}),
+          ...(ctx.policyWarnings ? { policyWarnings: ctx.policyWarnings } : {}),
           ...(ctx.openIssues ? { openIssues: ctx.openIssues } : {}),
           ...(ctx.openPRs ? { openPRs: ctx.openPRs } : {}),
         };
