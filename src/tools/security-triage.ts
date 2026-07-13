@@ -10,6 +10,7 @@ import { z } from "zod";
 import { resolveRepo, getOctokit, paginateAll, handleGitHubError } from "../github/client.js";
 import type { SecurityAlert, Severity, RepoRef } from "../types.js";
 import type { Octokit } from "@octokit/rest";
+import { safeMarkdownInline } from "../rendering/markdown.js";
 
 // ---------------------------------------------------------------------------
 // Schema
@@ -210,8 +211,10 @@ export async function handleSecurityTriage(
     severityCounts: counts,
   };
 
+  const renderedRepo = safeMarkdownInline(`${ref.owner}/${ref.repo}`, { maxLength: 200 });
+
   const lines: string[] = [
-    `# Security Triage: ${ref.owner}/${ref.repo}`,
+    `# Security Triage: ${renderedRepo}`,
     "",
   ];
 
@@ -237,8 +240,14 @@ export async function handleSecurityTriage(
   } else {
     lines.push("## Alerts by Priority", "");
     for (const alert of sorted) {
-      const link = alert.url ? ` -- [view](${alert.url})` : "";
-      lines.push(`- ${severityIcon(alert.severity)} **#${alert.id}** ${alert.summary}${link}`);
+      const renderedId = safeMarkdownInline(String(alert.id), { maxLength: 100 });
+      const renderedSummary = safeMarkdownInline(alert.summary, { maxLength: 400 });
+      // GitHub alert fields are external data. Render URLs as bounded text instead
+      // of Markdown link destinations so non-HTTP schemes cannot become active links.
+      const renderedUrl = alert.url
+        ? ` -- URL: ${safeMarkdownInline(alert.url, { maxLength: 500 })}`
+        : "";
+      lines.push(`- ${severityIcon(alert.severity)} **#${renderedId}** ${renderedSummary}${renderedUrl}`);
     }
 
     lines.push(

@@ -84,12 +84,12 @@ const MAX_RECENT_PR_MATCHES = 5;
 
 /** True if a changed-file path and a heuristic file hint plausibly refer to the same file. */
 export function fileMatchesHint(filename: string, hint: string): boolean {
+  const normalizedFilename = filename.replace(/\\/g, "/").replace(/^\.\//, "");
+  const normalizedHint = hint.replace(/\\/g, "/").replace(/^\.\//, "");
   return (
-    filename === hint ||
-    filename.endsWith("/" + hint) ||
-    hint.endsWith("/" + filename) ||
-    filename.endsWith(hint) ||
-    hint.endsWith(filename)
+    normalizedFilename === normalizedHint ||
+    normalizedFilename.endsWith("/" + normalizedHint) ||
+    normalizedHint.endsWith("/" + normalizedFilename)
   );
 }
 
@@ -166,10 +166,14 @@ export async function handlePrepareWorkItem(
     per_page: 5,
   });
 
-  const labels = issue.labels.map((l) =>
-    typeof l === "string" ? l : (l.name ?? "")
-  );
-  const assignees = issue.assignees?.map((a) => "@" + a.login) ?? [];
+  const labels = issue.labels
+    .map((label) => (typeof label === "string" ? label : (label.name ?? "")).trim())
+    .filter((label) => label.length > 0);
+  const assignees =
+    issue.assignees
+      ?.map((assignee) => assignee.login.trim())
+      .filter((login) => login.length > 0)
+      .map((login) => `@${login}`) ?? [];
 
   // Heuristic: extract file paths from body
   const fileHints: string[] = [];

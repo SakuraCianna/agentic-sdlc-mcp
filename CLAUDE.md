@@ -14,7 +14,8 @@ npm run typecheck      # tsc --noEmit
 npm run dev            # tsx watch src/index.ts
 npm run test           # vitest run (whole suite)
 npm run test:watch     # vitest watch mode
-npm run test:coverage  # vitest run --coverage (v8, lcov+text)
+npm run test:integration # config lifecycle + real in-memory MCP protocol tests
+npm run test:coverage  # vitest run --coverage (v8, text+lcov+json-summary, enforced thresholds)
 npm run smoke          # node dist/index.js --smoke — loads module, registers all tools/resources, exits 0. No GITHUB_TOKEN needed.
 ```
 
@@ -25,7 +26,7 @@ Run a single test by name: `npx vitest run -t "dryRun=true"`
 
 ## Architecture
 
-**Entry point** (`src/index.ts`): builds an `McpServer`, calls one `registerXTool(server)` per tool and `registerResources(server)`, then picks a transport (`stdio` default, or `http` via `TRANSPORT=http` using Express + `StreamableHTTPServerTransport`). Smoke mode exits right after registration, before transport connect.
+**Server factory and entry point**: `src/server.ts` exports `createAgenticSdlcServer()`, the single composition root that registers every tool and resource. `src/index.ts` owns environment loading, config validation, smoke mode, and transport selection (`stdio` default, or `http` via `TRANSPORT=http`). Protocol integration tests instantiate the same factory over an in-memory SDK transport, so discovery and tool calls exercise production registration without opening a port.
 
 **Config** (`src/config.ts`): a singleton `config` object loaded once at import time from env vars (`GITHUB_TOKEN`, `GITHUB_OWNER`, `GITHUB_REPO`, `SDLC_DEFAULT_BRANCH`, `TRANSPORT`, `PORT`). `dotenv/config` is imported first in `index.ts`, before this module, so `.env` is loaded before config reads `process.env`. Missing `GITHUB_TOKEN` calls `process.exit(1)` unless in smoke mode.
 
@@ -63,10 +64,11 @@ When adding a new tool, copy this shape (`repo-context.ts` for a read-only examp
 
 ## Testing conventions
 
-- Tests live in `src/__tests__/`, mirroring `src/` (`src/__tests__/tools/*.test.ts`, `src/__tests__/github/*.test.ts`), plus `src/__tests__/smoke.test.ts`.
-- Tests must never hit the real network — mock `../../config.js` (see any file in `src/__tests__/tools/`) and pass a hand-built mock `Octokit` object (cast via `as unknown as Parameters<typeof handleX>[2]`) directly into the exported core handler. This is *why* handlers take `octokit`/`ref` as explicit params instead of importing `getOctokit()` themselves.
+- Tests live in `src/__tests__/`, mirroring `src/` (`src/__tests__/tools/*.test.ts`, `src/__tests__/github/*.test.ts`). Cross-module lifecycle and SDK protocol tests use the `.integration.test.ts` suffix.
+- Tests must never hit the real external network — the global test setup rejects non-loopback fetch/socket access. Mock `../../config.js` (see any file in `src/__tests__/tools/`) and pass a hand-built mock `Octokit` object (cast via `as unknown as Parameters<typeof handleX>[2]`) directly into the exported core handler. Loopback is reserved for explicit HTTP lifecycle integration tests.
 - Assert both the dry-run branch (no Octokit write method called) and the live branch (correct Octokit method called with correct args) for any dryRun-gated tool.
-- `vitest.config.ts` restricts coverage to `src/**/*.ts` excluding `__tests__` and `index.ts`.
+- `vitest.config.ts` restricts coverage to `src/**/*.ts` excluding test code and the side-effectful process entry point. Global thresholds are a regression floor, not a correctness target; do not lower them or expand exclusions to make CI pass.
+- Follow `docs/testing-strategy.md` for adversarial boundaries, shared fixtures, real-runtime coverage, and maintenance rules.
 
 ## Conventions to preserve
 

@@ -6,14 +6,20 @@ export default defineConfig({
     environment: "node",
     // Only pick up files in src/__tests__/
     include: ["src/__tests__/**/*.test.ts"],
-    // Never touch real network — all tests must mock octokit
-    // (enforced by test file structure, not by vitest itself)
+    // Block external fetch/socket access while preserving loopback integration tests.
+    setupFiles: ["src/__tests__/setup/network-guard.ts"],
     globals: false,
     coverage: {
       provider: "v8",
-      reporter: ["text", "lcov"],
+      reporter: ["text", "lcov", "json-summary"],
       include: ["src/**/*.ts"],
       exclude: ["src/__tests__/**", "src/index.ts"],
+      thresholds: {
+        statements: 92,
+        branches: 87,
+        functions: 93,
+        lines: 93,
+      },
     },
   },
 });

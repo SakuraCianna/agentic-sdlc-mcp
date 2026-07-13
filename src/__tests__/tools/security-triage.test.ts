@@ -197,4 +197,98 @@ describe("handleSecurityTriage — permission errors", () => {
     expect(structured.errors).toHaveLength(0);
     expect(mockOctokit.codeScanning.listAlertsForRepo).not.toHaveBeenCalled();
   });
+
+  it("keeps successful sources when one source fails and uses stable missing-field fallbacks", async () => {
+    const mockOctokit = {
+      codeScanning: {
+        listAlertsForRepo: vi.fn().mockRejectedValue({
+          status: 403,
+          response: { data: { message: "denied" } },
+        }),
+      },
+      dependabot: {
+        listAlertsForRepo: vi.fn().mockResolvedValue({
+          data: [{
+            number: 7,
+            security_advisory: null,
+            dependency: null,
+            fixed_at: "2026-07-01T00:00:00Z",
+            dismissed_at: "2026-07-02T00:00:00Z",
+          }],
+        }),
+      },
+      secretScanning: {
+        listAlertsForRepo: vi.fn().mockResolvedValue({ data: [{}] }),
+      },
+    } as unknown as Parameters<typeof handleSecurityTriage>[2];
+
+    const { structured, text } = await handleSecurityTriage(
+      {
+        includeCodeScanning: true,
+        includeDependabot: true,
+        includeSecretScanning: true,
+      },
+      REF,
+      mockOctokit
+    );
+
+    expect(structured.errors).toHaveLength(1);
+    expect(structured.alerts).toEqual([
+      expect.objectContaining({
+        id: 0,
+        severity: "critical",
+        summary: "[Secret Scanning] Unknown secret type",
+      }),
+      expect.objectContaining({
+        id: 7,
+        severity: "info",
+        summary: "[Dependabot] Dependency vulnerability in unknown",
+        state: "open",
+        url: null,
+        fixedAt: "2026-07-01T00:00:00Z",
+        dismissedAt: "2026-07-02T00:00:00Z",
+      }),
+    ]);
+    expect(text).toContain("Permission Errors");
+    expect(text).toContain("2");
+  });
+
+  it("bounds and escapes untrusted alert values in Markdown while preserving structured evidence", async () => {
+    const description = "Finding\n## forged [click](javascript:alert(1)) " + "x".repeat(500);
+    const maliciousUrl = "javascript:alert(1)\n## forged-url";
+    const mockOctokit = {
+      codeScanning: {
+        listAlertsForRepo: vi.fn().mockResolvedValue({
+          data: [{
+            number: 9,
+            state: "open",
+            html_url: maliciousUrl,
+            rule: { severity: "high", description, id: "fallback-id" },
+          }],
+        }),
+      },
+      dependabot: { listAlertsForRepo: vi.fn() },
+      secretScanning: { listAlertsForRepo: vi.fn() },
+    } as unknown as Parameters<typeof handleSecurityTriage>[2];
+
+    const { structured, text } = await handleSecurityTriage(
+      {
+        includeCodeScanning: true,
+        includeDependabot: false,
+        includeSecretScanning: false,
+      },
+      REF,
+      mockOctokit
+    );
+
+    expect(structured.alerts[0]).toMatchObject({
+      summary: `[Code Scanning] ${description}`,
+      url: maliciousUrl,
+    });
+    expect(text).not.toContain("\n## forged");
+    expect(text).not.toContain("[click](javascript:");
+    expect(text).not.toContain("](" + maliciousUrl);
+    expect(text).toContain("\\#\\# forged \\[click\\]\\(javascript:alert\\(1\\)\\)");
+    expect(text.length).toBeLessThan(2_000);
+  });
 });

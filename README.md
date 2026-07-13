@@ -353,7 +353,11 @@ To prevent AI coding agents from performing destructive or unintended actions on
 * `npm run typecheck`: Runs TypeScript compiler type checking.
 * `npm run build`: Compiles TS files to the `dist/` directory.
 * `npm run test`: Executes the full unit test suite.
+* `npm run test:integration`: Exercises configuration lifecycle and the production MCP server factory through the SDK's in-memory transport.
+* `npm run test:coverage`: Enforces the coverage regression floor and writes text, LCOV, and JSON summary reports.
 * `npm run smoke`: Verifies registration and loading without external credentials.
+
+See [`docs/testing-strategy.md`](docs/testing-strategy.md) for the adversarial test matrix, fixture rules, dynamic-runtime boundary, and coverage maintenance policy.
 
 ### OIDC Trusted Publishing (For Maintainers)
 This package is securely published to npm via GitHub Actions using **Trusted Publishing (OIDC)**, eliminating the need to store static `NPM_TOKEN` secrets in the repository. Publishing is triggered by creating a GitHub Release or manually running the Action.
