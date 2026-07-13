@@ -10,6 +10,7 @@ import { z } from "zod";
 import { resolveRepo, getOctokit, paginateAll, handleGitHubError } from "../github/client.js";
 import type { RepoRef } from "../types.js";
 import type { Octokit } from "@octokit/rest";
+import { safeMarkdownInline } from "../rendering/markdown.js";
 
 // ---------------------------------------------------------------------------
 // Schema
@@ -39,6 +40,8 @@ export const CreatePrSummaryOutputSchema = {
   totalDeletions: z.number().int(),
   totalFiles: z.number().int(),
   hasTests: z.boolean(),
+  docsOnly: z.boolean(),
+  filesTruncated: z.boolean(),
   risks: z.array(z.string()),
   labels: z.array(z.string()),
 };
@@ -59,6 +62,8 @@ export interface PrSummaryResult {
   totalDeletions: number;
   totalFiles: number;
   hasTests: boolean;
+  docsOnly: boolean;
+  filesTruncated: boolean;
   risks: string[];
   labels: string[];
 }
@@ -79,15 +84,17 @@ export async function handleCreatePrSummary(
   });
 
   // Paginate — large PRs can have > 100 files
-  const files = await paginateAll(
+  const fileEvidence = await paginateAll(
     (page, perPage) =>
       octokit.pulls
         .listFiles({ owner: ref.owner, repo: ref.repo, pull_number: params.pullNumber, per_page: perPage, page })
         .then((r) => r.data),
-    300
+    301
   );
+  const filesTruncated = fileEvidence.length > 300;
+  const files = fileEvidence.slice(0, 300);
 
-  const labels = pr.labels.map((l) => l.name ?? "");
+  const labels = pr.labels.map((label) => (label.name ?? "").trim()).filter(Boolean);
   const isDraft = pr.draft ?? false;
   const totalAdditions = files.reduce((s, f) => s + f.additions, 0);
   const totalDeletions = files.reduce((s, f) => s + f.deletions, 0);
@@ -116,12 +123,14 @@ export async function handleCreatePrSummary(
   );
 
   const hasTests = testFiles.length > 0;
+  const docsOnly = !filesTruncated && files.length > 0 && files.every((file) => docFiles.includes(file));
 
   // Compute risks
   const risks: string[] = [];
   if (configFiles.length > 0) risks.push("Config file changes — verify no hardcoded secrets.");
   if (totalAdditions > 500) risks.push("Large diff (>500 added lines) — consider splitting.");
-  if (!hasTests) risks.push("No test files detected — risk of regression.");
+  if (!hasTests && !docsOnly) risks.push("No test files detected — risk of regression.");
+  if (filesTruncated) risks.push("File evidence is incomplete after the 300-file safety cap.");
 
   const structured: PrSummaryResult = {
     pullNumber: pr.number,
@@ -135,56 +144,69 @@ export async function handleCreatePrSummary(
     totalDeletions,
     totalFiles: files.length,
     hasTests,
+    docsOnly,
+    filesTruncated,
     risks,
     labels,
   };
 
+  const renderedTitle = safeMarkdownInline(pr.title, { maxLength: 300 });
+  const renderedBody = pr.body
+    ? safeMarkdownInline(pr.body, { maxLength: 2_000 })
+    : "_No PR description provided._";
+  const renderFile = (filename: string) => safeMarkdownInline(filename, { maxLength: 300 });
+
   const lines: string[] = [
-    `# PR Summary: #${pr.number} — ${pr.title}`,
+    `# PR Summary: #${pr.number} — ${renderedTitle}`,
     "",
-    `**Author:** @${pr.user?.login ?? "unknown"}`,
+    `**Author:** @${safeMarkdownInline(pr.user?.login ?? "unknown", { maxLength: 100 })}`,
     `**Status:** ${isDraft ? "Draft" : "Ready for review"}`,
-    `**Base -> Head:** \`${pr.base.ref}\` <- \`${pr.head.ref}\``,
-    `**Labels:** ${labels.length > 0 ? labels.join(", ") : "(none)"}`,
-    `**Created:** ${pr.created_at}`,
+    `**Base -> Head:** \`${safeMarkdownInline(pr.base.ref, { maxLength: 200 })}\` <- \`${safeMarkdownInline(pr.head.ref, { maxLength: 200 })}\``,
+    `**Labels:** ${labels.length > 0 ? labels.map((label) => safeMarkdownInline(label, { maxLength: 100 })).join(", ") : "(none)"}`,
+    `**Created:** ${safeMarkdownInline(pr.created_at, { maxLength: 100 })}`,
     `**Commits:** ${pr.commits}`,
     "",
     "## Change Overview",
     "",
-    pr.body ?? "_No PR description provided._",
+    renderedBody,
     "",
     "## Affected Files",
     "",
-    `**+${totalAdditions} / -${totalDeletions}** across **${files.length} files**`,
+    `**+${totalAdditions} / -${totalDeletions}** across **${files.length} files**${filesTruncated ? " _(truncated; evidence incomplete)_" : ""}`,
     "",
     "### Source Files",
   ];
 
   srcFiles.slice(0, 20).forEach((f) => {
-    lines.push(`- \`${f.filename}\` (+${f.additions}/-${f.deletions}) [${f.status}]`);
+    lines.push(`- \`${renderFile(f.filename)}\` (+${f.additions}/-${f.deletions}) [${safeMarkdownInline(f.status, { maxLength: 50 })}]`);
   });
   if (srcFiles.length > 20) lines.push(`- _(${srcFiles.length - 20} more)_`);
 
   if (testFiles.length > 0) {
     lines.push("", "### Test Files");
-    testFiles.forEach((f) => lines.push(`- \`${f.filename}\``));
+    testFiles.slice(0, 20).forEach((f) => lines.push(`- \`${renderFile(f.filename)}\``));
+    if (testFiles.length > 20) lines.push(`- _(${testFiles.length - 20} more)_`);
   }
 
   if (configFiles.length > 0) {
     lines.push("", "### Config / Schema Files (review carefully)");
-    configFiles.forEach((f) => lines.push(`- \`${f.filename}\``));
+    configFiles.slice(0, 20).forEach((f) => lines.push(`- \`${renderFile(f.filename)}\``));
+    if (configFiles.length > 20) lines.push(`- _(${configFiles.length - 20} more)_`);
   }
 
   if (docFiles.length > 0) {
     lines.push("", "### Documentation");
-    docFiles.forEach((f) => lines.push(`- \`${f.filename}\``));
+    docFiles.slice(0, 20).forEach((f) => lines.push(`- \`${renderFile(f.filename)}\``));
+    if (docFiles.length > 20) lines.push(`- _(${docFiles.length - 20} more)_`);
   }
 
   lines.push(
     "",
     "## Test Coverage Signals",
     "",
-    hasTests
+    docsOnly
+      ? "Documentation-only change; validate commands, links, and rendered output instead of requiring code tests."
+      : hasTests
       ? `${testFiles.length} test file(s) included in this PR.`
       : "No test files detected in this PR. Consider adding or updating tests.",
     "",
@@ -212,9 +234,9 @@ export async function handleCreatePrSummary(
     "## Release Notes Draft",
     "",
     "```markdown",
-    `### ${pr.title}`,
+    `### ${renderedTitle}`,
     "",
-    pr.body ? pr.body.split("\n").slice(0, 5).join("\n") : `Added/fixed: ${pr.title}`,
+    pr.body ? renderedBody : `Added/fixed: ${renderedTitle}`,
     "```"
   );
 
