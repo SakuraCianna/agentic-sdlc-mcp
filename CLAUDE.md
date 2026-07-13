@@ -48,6 +48,8 @@ Run a single test by name: `npx vitest run -t "dryRun=true"`
 - `src/tools/release-readiness.ts` consumes the shared CI evidence model. Only explicit `passing` CI can produce `isReady: true`; external names and raw errors must not be echoed into summaries.
 - `context.ts` — `fetchRepoContext()` fetches repo metadata + optional README/package.json/issues/PRs in one call.
 
+**Risk-aware briefing layer** (`src/briefing/`): `work-item-brief.ts` is the pure, deterministic v1.8 risk engine used by `prepare_work_item`. It combines explicit inputs, bounded Issue/comment/path signals, repository policy, and confirmed scripts. Repository policy and explicit higher risk are floors: caller-provided low risk can never downgrade a protected path. Keep domain mappings explainable and test-driven; do not add an LLM/free-text security judge. External text remains evidence and must not be copied into executable handoff instructions without bounded safe rendering.
+
 **Tool pattern** — every file in `src/tools/` follows the same shape:
 1. Zod `InputSchema` (exported) and a plain-object `OutputSchema` (exported, used as MCP `outputSchema`).
 2. A pure/testable core handler function (e.g. `handleCreateIssueSet(params, ref: RepoRef, octokit: Octokit)`) that takes an already-resolved `RepoRef` and an `Octokit` instance as arguments rather than reaching for globals — this is what makes the handlers unit-testable without mocking modules deeply.

@@ -16,7 +16,8 @@ vi.mock("../../config.js", () => ({
   isSmokeMode: false,
 }));
 
-const { handleCreatePrSummary } = await import("../../tools/create-pr-summary.js");
+const { handleCreatePrSummary, CreatePrSummaryOutputSchema } = await import("../../tools/create-pr-summary.js");
+import { z } from "zod";
 
 import type { CreatePrSummaryInput } from "../../tools/create-pr-summary.js";
 import type { RepoRef } from "../../types.js";
@@ -122,5 +123,71 @@ describe("handleCreatePrSummary", () => {
 
     expect(text).toContain("Release Notes Draft");
     expect(text).toContain("My feature PR");
+  });
+
+  it("does not demand code tests for a documentation-only PR", async () => {
+    const octokit = makeMockOctokit({}, [
+      makeFile("README.md"),
+      makeFile("docs/setup.rst"),
+    ]);
+
+    const { structured, text } = await handleCreatePrSummary({ pullNumber: 42 }, REF, octokit);
+
+    expect(structured.docsOnly).toBe(true);
+    expect(structured.risks.join(" ")).not.toMatch(/No test files detected/i);
+    expect(text).toMatch(/documentation-only/i);
+  });
+
+  it("marks a 300-file evidence cap instead of presenting it as complete", async () => {
+    const octokit = makeMockOctokit({}, []);
+    const listFiles = (octokit as unknown as {
+      pulls: { listFiles: ReturnType<typeof vi.fn> };
+    }).pulls.listFiles;
+    listFiles.mockImplementation(async ({ page }: { page: number }) => ({
+      data: page <= 3
+        ? Array.from({ length: 100 }, (_, index) => makeFile(`src/page-${page}-${index}.ts`))
+        : [makeFile("src/overflow.ts")],
+    }));
+
+    const { structured, text } = await handleCreatePrSummary({ pullNumber: 42 }, REF, octokit);
+
+    expect(structured.totalFiles).toBe(300);
+    expect(structured.filesTruncated).toBe(true);
+    expect(structured.risks.join(" ")).toMatch(/incomplete.*300|300.*incomplete/i);
+    expect(text).toMatch(/truncated|incomplete/i);
+    expect(() => z.object(CreatePrSummaryOutputSchema).parse(structured)).not.toThrow();
+  });
+
+  it("does not claim docs-only when the 301st unseen file is code", async () => {
+    const octokit = makeMockOctokit({}, []);
+    const listFiles = (octokit as unknown as {
+      pulls: { listFiles: ReturnType<typeof vi.fn> };
+    }).pulls.listFiles;
+    listFiles.mockImplementation(async ({ page }: { page: number }) => ({
+      data: page <= 3
+        ? Array.from({ length: 100 }, (_, index) => makeFile(`docs/page-${page}-${index}.md`))
+        : [makeFile("src/hidden-code.ts")],
+    }));
+
+    const { structured } = await handleCreatePrSummary({ pullNumber: 42 }, REF, octokit);
+
+    expect(structured.filesTruncated).toBe(true);
+    expect(structured.docsOnly).toBe(false);
+    expect(structured.risks.join(" ")).toMatch(/No test files detected/i);
+  });
+
+  it("escapes and bounds untrusted PR metadata in Markdown while preserving structured values", async () => {
+    const malicious = "PR\n## forged [click](javascript:alert(1)) " + "x".repeat(500);
+    const octokit = makeMockOctokit(
+      { title: malicious, body: malicious, user: { login: "dev\n## forged" }, labels: [{ name: malicious }] },
+      [makeFile("src/evil](`javascript:alert(1)`).ts")]
+    );
+
+    const { structured, text } = await handleCreatePrSummary({ pullNumber: 42 }, REF, octokit);
+
+    expect(structured.title).toBe(malicious);
+    expect(text).not.toContain("\n## forged");
+    expect(text).not.toContain("[click](javascript:");
+    expect(text.length).toBeLessThan(8_000);
   });
 });

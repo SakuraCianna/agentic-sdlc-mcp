@@ -244,12 +244,16 @@ Previews or batch-creates GitHub issues mapping to the generated plan. Dry-run r
   * `dryRun` (boolean, default: `true`): If `true`, previews the list without writing to GitHub.
 
 ### `prepare_work_item`
-Generates an agent-ready brief for a specific issue containing goals, non-goals, and technical risks.
+Generates a risk-aware implementation brief. It combines bounded Issue/comment evidence, `.agentic-sdlc.yml` at the default branch, confirmed root package scripts, path signals, and bounded recent-PR history. Structured output separates Issue-authored and derived acceptance criteria and includes work type/confidence, risk level/domains/blast radius/reasons, source provenance, defensive requirements, negative scenarios, clarification questions, rollback, observability, and verified commands.
+
+Issue titles, bodies, comments, PR metadata, and file names are treated as untrusted external evidence. Markdown and the handoff prompt are bounded and escaped; requests to bypass policy, reveal secrets, or expand tool authority become prompt-injection risk signals rather than instructions. Explicit `riskLevel: low` cannot downgrade protected-path or repository-policy risk. Monorepo package paths do not inherit root commands without package-level evidence.
 * **Arguments:**
   * `owner` / `repo` (string, optional): Repo coordinates.
   * `issueNumber` (number, required): The target issue ID.
   * `includeRelatedFiles` (boolean, default: `false`): Heuristically extract mentioned file paths.
-  * `includeRecentPRs` (boolean, default: `false`): Scan up to 5 merged PRs that touched these paths.
+  * `includeRecentPRs` (boolean, default: `false`): Scan up to 20 PR candidates and return up to 5 merged matches. This opt-in deep history path can make up to 61 additional sequential GitHub requests; limits and API failures are reported through `recentPRsIncomplete`/`evidenceWarnings`.
+  * `workType` (string, optional): Explicit `docs`, `feature`, `bugfix`, `refactor`, `security`, `release`, or `infra`; otherwise inferred with confidence.
+  * `riskLevel` (string, optional): Explicit minimum `low`, `medium`, `high`, or `critical`; policy evidence may raise it.
 
 ### `quality_gate_status`
 Aggregates check runs and commit statuses. In PR mode it also evaluates reviews, CODEOWNERS routing, draft/mergeability, branch protection/rulesets, blocking labels, and linked issues. Its six conclusions are `passing`, `failing`, `pending`, `needs_review`, `policy_gap`, and `no_evidence`. Permission failures and bounded/truncated sources are exposed through `degraded`, `unverifiedSignals`, and safe `errors`; missing evidence is never invented as a pass.
@@ -262,7 +266,7 @@ Aggregates check runs and commit statuses. In PR mode it also evaluates reviews,
 PR policy is evaluated from the base SHA. Repository-required checks and labels cannot be disabled by caller overrides or by editing policy in the PR itself.
 
 ### `create_pr_summary`
-Generates a structured pull request description and changelog draft.
+Generates a structured pull request description and changelog draft. Documentation-only PRs receive document validation guidance instead of a false missing-code-tests warning. File evidence is capped at 300 and exposes `filesTruncated` rather than silently claiming completeness; external PR metadata is escaped and bounded in Markdown.
 * **Arguments:**
   * `owner` / `repo` (string, optional): Repo coordinates.
   * `pullNumber` (number, required): The pull request ID.
@@ -313,10 +317,13 @@ Scans `.github/workflows/*.yml` files for `permissions` blocks and flags over-pe
   * `ref` (string, optional): Git ref. Defaults to default branch.
 
 ### `agent_handoff_packet`
-Compiles current issue context, completed work, and remaining tasks into a compact prompt packet for the next agent.
+Compiles current issue context, completed work, repository-policy obligations, and remaining tasks into a compact prompt packet for the next agent. Requested Issue/PR lookup failures are surfaced as evidence warnings, PR policy is read at the immutable base SHA when available, and caller/external text is labeled as untrusted handoff evidence.
 * **Arguments:**
   * `owner` / `repo` (string, optional): Repo coordinates.
-  * `issueNumber` (number, required): Active issue ID.
+  * `issueNumber` (number, optional): Active issue ID.
+  * `pullNumber` (number, optional): Active pull request ID.
+  * `currentStatus` (string, required): Caller-reported status; preserved as an assertion, not system verification.
+  * `nextSteps` (string[], optional): Ordered caller-provided next steps.
 
 ---
 

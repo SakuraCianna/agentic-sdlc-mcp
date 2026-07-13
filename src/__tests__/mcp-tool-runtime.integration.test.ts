@@ -80,7 +80,21 @@ describe("real MCP tool-call runtime", () => {
       assignees: ["@alice"],
       relatedFileHints: [],
       recentPRs: [],
+      workType: "security",
+      riskProfile: {
+        level: "high",
+        confidence: expect.any(String),
+      },
+      sourceEvidence: expect.arrayContaining([
+        expect.objectContaining({ kind: "issue", ref: "#42", verified: true }),
+        expect.objectContaining({ kind: "repository", ref: "trunk", verified: true }),
+      ]),
+      verificationCommands: [],
     });
+    expect(result.structuredContent).toHaveProperty(
+      "handoffPrompt",
+      expect.not.stringContaining("Harden authentication")
+    );
     expect(github.pullsList).not.toHaveBeenCalled();
   });
 

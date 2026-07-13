@@ -1030,6 +1030,8 @@ v1.7 的 policy consumer 固定为以上 6 个工具。`prepare_work_item` 在 v
 
 ### v1.8: 风险感知的 Work Item Brief 与防御性工程
 
+> **状态：建设中（2026-07-13 完成第一批核心能力，尚未发布 v1.8.0）。** 已实现确定性 `workType`/`riskProfile`、策略保护路径与 risk rule、来源 ref/blob/digest、Issue/派生验收项分离、风险域防御要求、negative scenarios、仓库真实 scripts、monorepo 保守降级、rollback/observability、prompt-injection 隔离、最近评论/PR 的 bounded/incomplete/rename/partial-failure 语义及真实 MCP 契约测试。同时清理 `create_pr_summary` docs-only/300-file 截断和 `agent_handoff_packet` silent evidence failure/外部文本直出债务。完整 related-file reason/confidence、CODEOWNERS/入口/测试邻接、linked/sub-issues/dependency graph 仍待后续批次。
+
 目标：把 `prepare_work_item` 从“复述 Issue + 猜文件 + 通用清单”升级为可直接指导实现的开发简报。对于核心/高风险业务，简报必须主动生成防御性编程、失败模式、负向测试、可观测性和回滚要求；对于低风险 docs/样式任务则保持精简，避免模板膨胀。
 
 当前代码缺口：
@@ -1709,7 +1711,7 @@ interface ToolDependencies {
 | P1 | `issueDrafts` 与 `create_issue_set` 打通 | 形成 Plan -> Issue 的闭环 | ✅ v1.5.0 |
 | P2 | 合并门禁增强 | 从 CI 查询升级为工程治理判断 | ✅ v1.6.0 |
 | P0 | MCP Registry 发布与 `.agentic-sdlc.yml` 基础 | 先建立可发现、可配置、可解释的统一策略入口 | ✅ v1.7.1 |
-| P0 | 风险感知 `prepare_work_item` | 把高风险任务的防御性编程、负向测试、回滚和可观测性前移到开工阶段 | v1.8 待开始 |
+| P0 | 风险感知 `prepare_work_item` | 把高风险任务的防御性编程、负向测试、回滚和可观测性前移到开工阶段 | v1.8 建设中（核心简报已完成，依赖图待补） |
 | P1 | `sdlc_evidence_packet` 与可信 handoff | 统一 verified/unverified/stale/partial 证据语义 | v1.9 待开始 |
 | P1 | HTTP 运行安全与凭据迁移 | 引入 request-scoped context/client、remote auth 和非明文凭据默认值 | v1.10 待开始 |
 | P1 | MCP 契约与 Agent evaluation | 用 Inspector、稳定评测、性能预算和故障注入验证 agent 真正会用 | v1.11 待开始 |
@@ -1754,8 +1756,8 @@ interface ToolDependencies {
 - [x] security/release 类任务能自动生成更严格的审查项（v1.6.0）
 - [x] 仓库策略能稳定影响计划、审查和 release readiness，并显示 rule ID、来源 ref/SHA 与 policy digest（v1.7.0）
 - [x] Registry metadata、npm 包版本与 MCP server metadata 可验证一致（v1.7.1；namespace 与 GitHub OIDC login 大小写一致）
-- `prepare_work_item` 能根据 auth/payment/migration/workflow/docs 等任务生成不同深度的开发简报（v1.8）
-- 高风险简报包含防御性要求、negative scenarios、回滚和上线可观测性，且所有派生要求可追溯（v1.8）
+- [x] `prepare_work_item` 能根据 auth/payment/migration/workflow/docs 等任务生成不同深度的开发简报（v1.8 建设批次 1）
+- [x] 高风险简报包含防御性要求、negative scenarios、回滚和上线可观测性，且 Issue/派生验收项来源分离（v1.8 建设批次 1）
 - PR/Issue/release evidence packet 能用正交字段区分结论 state、freshness（fresh/stale/unknown）与 completeness（complete/partial/omitted）（v1.9）
 - handoff 不再把调用方自报状态伪装成系统验证事实（v1.9）
 

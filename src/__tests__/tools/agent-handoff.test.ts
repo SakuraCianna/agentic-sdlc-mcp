@@ -24,15 +24,33 @@ import type { RepoRef } from "../../types.js";
 
 const REF: RepoRef = { owner: "test-org", repo: "test-repo" };
 
+interface HandoffIssueFixture {
+  number: number;
+  title: string;
+  state: string;
+  html_url: string;
+}
+
+interface HandoffPrFixture {
+  number: number;
+  title: string;
+  state: string;
+  draft: boolean;
+  head: { ref: string };
+  base: { ref: string; sha?: string };
+  html_url: string;
+}
+
 function makeMockOctokit(overrides: {
-  issue?: any;
-  pr?: any;
+  issue?: HandoffIssueFixture;
+  pr?: HandoffPrFixture;
   policyContent?: string;
+  repo?: Partial<{ full_name: string; default_branch: string; language: string | null; visibility: string }>;
 } = {}) {
   return {
     repos: {
       get: vi.fn().mockResolvedValue({
-        data: { full_name: "test-org/test-repo", default_branch: "main" },
+        data: { full_name: "test-org/test-repo", default_branch: "main", ...overrides.repo },
       }),
       getContent: vi.fn().mockImplementation(({ path }: { path: string }) => {
         if (path === ".agentic-sdlc.yml" && overrides.policyContent) {
@@ -153,5 +171,82 @@ describe("handleAgentHandoff", () => {
 
     expect(structured.nextSteps.length).toBeGreaterThan(0);
     expect(structured.nextSteps[0]).toContain("Review");
+  });
+
+  it("reports requested issue and PR evidence failures instead of silently dropping them", async () => {
+    const { structured, text } = await handleAgentHandoff(
+      { issueNumber: 404, pullNumber: 405, currentStatus: "Waiting for evidence" },
+      REF,
+      makeMockOctokit()
+    );
+
+    expect(structured.issueRef).toBeNull();
+    expect(structured.prRef).toBeNull();
+    expect(structured.evidenceWarnings).toEqual(expect.arrayContaining([
+      expect.stringMatching(/issue #404.*unavailable/i),
+      expect.stringMatching(/pull request #405.*unavailable/i),
+    ]));
+    expect(text).toContain("Evidence Warnings");
+    expect(structured.policySummary).toBeUndefined();
+    expect(structured.policyDigest).toBeUndefined();
+  });
+
+  it("loads PR policy from the base SHA and adds release obligations once", async () => {
+    const octokit = makeMockOctokit({
+      pr: {
+        number: 10,
+        title: "Release candidate",
+        state: "open",
+        draft: true,
+        head: { ref: "release" },
+        base: { ref: "main", sha: "immutable-base-sha" },
+        html_url: "https://github.com/test-org/test-repo/pull/10",
+      },
+      policyContent: [
+        "schemaVersion: 1",
+        "release:",
+        "  requireChangelog: true",
+        "  requireRollbackPlan: true",
+      ].join("\n"),
+    });
+
+    const { structured } = await handleAgentHandoff(
+      { pullNumber: 10, currentStatus: "Ready" },
+      REF,
+      octokit
+    );
+
+    expect(structured.prRef?.state).toBe("open (draft)");
+    expect(structured.nextSteps.filter((step) => /CHANGELOG/.test(step))).toHaveLength(1);
+    expect(structured.nextSteps.filter((step) => /rollback-plan/.test(step))).toHaveLength(1);
+    expect((octokit as unknown as { repos: { getContent: ReturnType<typeof vi.fn> } }).repos.getContent)
+      .toHaveBeenCalledWith(expect.objectContaining({ ref: "immutable-base-sha" }));
+  });
+
+  it("bounds and escapes untrusted handoff values while preserving structured evidence", async () => {
+    const malicious = "Status\n## forged [click](javascript:alert(1)) " + "x".repeat(600);
+    const { structured, text } = await handleAgentHandoff(
+      {
+        issueNumber: 5,
+        currentStatus: malicious,
+        nextSteps: [malicious],
+      },
+      REF,
+      makeMockOctokit({
+        issue: {
+          number: 5,
+          title: malicious,
+          state: "open",
+          html_url: "https://github.com/test-org/test-repo/issues/5",
+        },
+      })
+    );
+
+    expect(structured.currentStatus).toBe(malicious);
+    expect(structured.issueRef?.title).toBe(malicious);
+    expect(structured.handoffPrompt).toContain("untrusted handoff evidence");
+    expect(text).not.toContain("\n## forged");
+    expect(text).not.toContain("[click](javascript:");
+    expect(text.length).toBeLessThan(10_000);
   });
 });
