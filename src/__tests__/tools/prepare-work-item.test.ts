@@ -40,6 +40,13 @@ interface IssueFixture {
   assignees: Array<{ login: string }> | null;
   created_at: string;
   comments?: number;
+  milestone?: {
+    number: number;
+    title: string;
+    state: string;
+    html_url: string;
+    due_on: string | null;
+  } | null;
 }
 
 interface CommentFixture {
@@ -68,8 +75,19 @@ function makeMockOctokit(
     policy?: string;
     packageJson?: Record<string, unknown>;
     metadataError?: unknown;
+    files?: Record<string, string | Error>;
+  } = {},
+  relationships: {
+    subIssues?: unknown | Error;
+    blockedBy?: unknown | Error;
+    blocking?: unknown | Error;
+    timeline?: unknown | Error;
   } = {}
 ) {
+  const relationResult = (value: unknown | Error | undefined) =>
+    value instanceof Error
+      ? vi.fn().mockRejectedValue(value)
+      : vi.fn().mockResolvedValue({ data: value ?? [] });
   return {
     issues: {
       get: vi.fn().mockResolvedValue({
@@ -86,6 +104,10 @@ function makeMockOctokit(
         },
       }),
       listComments: vi.fn().mockResolvedValue({ data: comments }),
+      listSubIssues: relationResult(relationships.subIssues),
+      listDependenciesBlockedBy: relationResult(relationships.blockedBy),
+      listDependenciesBlocking: relationResult(relationships.blocking),
+      listEventsForTimeline: relationResult(relationships.timeline),
     },
     pulls: {
       list: vi.fn().mockResolvedValue({ data: pulls.list ?? [] }),
@@ -121,6 +143,18 @@ function makeMockOctokit(
         }
         if (path === "package.json" && repository.packageJson) {
           return { data: JSON.stringify(repository.packageJson) };
+        }
+        const repositoryFile = repository.files?.[path];
+        if (repositoryFile instanceof Error) throw repositoryFile;
+        if (typeof repositoryFile === "string") {
+          return {
+            data: {
+              type: "file",
+              encoding: "base64",
+              content: Buffer.from(repositoryFile).toString("base64"),
+              sha: `sha-${path}`,
+            },
+          };
         }
         throw Object.assign(new Error("Not found"), { status: 404 });
       }),
@@ -660,6 +694,216 @@ describe("handlePrepareWorkItem", () => {
     expect(text).toContain("newest-2");
     expect(text).not.toContain("older-96");
     expect(structured.commentsTruncated).toBe(true);
+  });
+
+  it("verifies explicit and adjacent related files and attaches CODEOWNERS", async () => {
+    const octokit = makeMockOctokit(
+      { body: "Change src/auth/session.ts" },
+      [],
+      {},
+      {
+        files: {
+          ".github/CODEOWNERS": "src/auth/** @security-team\n",
+          "src/auth/session.ts": "export const session = true;",
+          "src/auth/session.test.ts": "test('session', () => {});",
+          "src/index.ts": "export * from './auth/session.js';",
+        },
+      }
+    );
+
+    const { structured, text } = await handlePrepareWorkItem(
+      { issueNumber: 1, includeRelatedFiles: true, includeRecentPRs: false, includeDependencies: false },
+      REF,
+      octokit
+    );
+
+    expect(structured.relatedFiles).toEqual(expect.arrayContaining([
+      {
+        path: "src/auth/session.ts",
+        reason: "Explicitly referenced by the GitHub issue.",
+        confidence: "high",
+        verified: true,
+        owners: ["@security-team"],
+      },
+      {
+        path: "src/auth/session.test.ts",
+        reason: "Same-directory test naming convention for src/auth/session.ts.",
+        confidence: "medium",
+        verified: true,
+        owners: ["@security-team"],
+      },
+      {
+        path: "src/index.ts",
+        reason: "Verified repository entry point adjacent to the requested root-scope code change.",
+        confidence: "low",
+        verified: true,
+        owners: [],
+      },
+    ]));
+    expect(structured.relatedFiles.some((file) => file.path.endsWith("session.spec.ts"))).toBe(false);
+    expect(structured.relatedFilesIncomplete).toBe(false);
+    expect(text).toContain("Related File Evidence");
+    expect(text).toContain("@security-team");
+  });
+
+  it("keeps explicit paths but marks related-file evidence partial on permission failure", async () => {
+    const denied = Object.assign(new Error("denied"), { status: 403 });
+    const { structured } = await handlePrepareWorkItem(
+      { issueNumber: 1, includeRelatedFiles: true, includeRecentPRs: false, includeDependencies: false },
+      REF,
+      makeMockOctokit(
+        { body: "Change src/auth/session.ts" },
+        [],
+        {},
+        { files: { ".github/CODEOWNERS": denied, "src/auth/session.ts": denied } }
+      )
+    );
+
+    expect(structured.relatedFiles).toContainEqual(expect.objectContaining({
+      path: "src/auth/session.ts",
+      verified: false,
+      confidence: "high",
+    }));
+    expect(structured.relatedFilesIncomplete).toBe(true);
+    expect(structured.evidenceWarnings.join(" ")).toMatch(/related file|codeowners/i);
+  });
+
+  it("builds a bounded official dependency graph without treating cross-references as blockers", async () => {
+    const dependency = (number: number, repository = "test-org/test-repo") => ({
+      number,
+      title: `Issue ${number}`,
+      state: "open",
+      html_url: `https://github.com/${repository}/issues/${number}`,
+      repository_url: `https://api.github.com/repos/${repository}`,
+    });
+    const malicious = "Dependency\n## forged [click](javascript:alert(1))";
+    const { structured, text } = await handlePrepareWorkItem(
+      { issueNumber: 1, includeRelatedFiles: false, includeRecentPRs: false, includeDependencies: true },
+      REF,
+      makeMockOctokit({}, [], {}, {}, {
+        blockedBy: [dependency(2)],
+        blocking: [dependency(20)],
+        subIssues: [dependency(11), dependency(2)],
+        timeline: [{
+          event: "cross-referenced",
+          source: { issue: { ...dependency(30, "test-org/other"), title: malicious } },
+        }],
+      })
+    );
+
+    expect(structured.blockers.map((item) => item.number)).toEqual([2]);
+    expect(structured.parallelizableWork.map((item) => item.number)).toEqual([11]);
+    expect(structured.dependencies).toContainEqual(expect.objectContaining({
+      relation: "cross_reference",
+      repository: "test-org/other",
+      number: 30,
+      title: malicious,
+    }));
+    expect(structured.dependencyEvidenceIncomplete).toBe(false);
+    expect(text).not.toContain("\n## forged");
+    expect(text).toContain("Dependency Graph");
+  });
+
+  it("retains successful dependency sources when another source fails or overflows", async () => {
+    const issue = (number: number) => ({
+      number,
+      title: `Issue ${number}`,
+      state: "open",
+      html_url: `https://github.com/test-org/test-repo/issues/${number}`,
+      repository_url: "https://api.github.com/repos/test-org/test-repo",
+    });
+    const { structured } = await handlePrepareWorkItem(
+      { issueNumber: 1, includeRelatedFiles: false, includeRecentPRs: false, includeDependencies: true },
+      REF,
+      makeMockOctokit({}, [], {}, {}, {
+        blockedBy: new Error("unavailable"),
+        blocking: [issue(20)],
+        subIssues: Array.from({ length: 21 }, (_, index) => issue(index + 100)),
+      })
+    );
+
+    expect(structured.dependencies).toContainEqual(expect.objectContaining({ relation: "blocking", number: 20 }));
+    expect(structured.dependencies.filter((item) => item.relation === "sub_issue")).toHaveLength(20);
+    expect(structured.dependencyEvidenceIncomplete).toBe(true);
+    expect(structured.evidenceWarnings.join(" ")).toMatch(/blocked-by.*unavailable|dependency.*incomplete/i);
+  });
+
+  it("degrades malformed fulfilled dependency sources without losing valid sources", async () => {
+    const validBlocking = {
+      number: 20,
+      title: "Valid blocking issue",
+      state: "open",
+      html_url: "https://github.com/test-org/test-repo/issues/20",
+      repository_url: "https://api.github.com/repos/test-org/test-repo",
+    };
+    const { structured } = await handlePrepareWorkItem(
+      { issueNumber: 1, includeRelatedFiles: false, includeRecentPRs: false, includeDependencies: true },
+      REF,
+      makeMockOctokit({}, [], {}, {}, {
+        blockedBy: { secretPayload: "do-not-leak" },
+        blocking: [validBlocking],
+        subIssues: [
+          { number: 11, title: "missing state and URL" },
+          {
+            number: -1,
+            title: "invalid negative number do-not-leak",
+            state: "open",
+            html_url: "https://github.com/test-org/test-repo/issues/-1",
+          },
+        ],
+        timeline: [
+          null,
+          { event: "commented" },
+          { event: "cross-referenced" },
+          { event: "cross-referenced", source: { issue: { number: 30 } } },
+          {
+            event: "cross-referenced",
+            source: {
+              issue: {
+                number: 1.5,
+                title: "invalid fractional number do-not-leak",
+                state: "open",
+                html_url: "https://github.com/test-org/test-repo/issues/1.5",
+              },
+            },
+          },
+        ],
+      })
+    );
+
+    expect(structured.dependencies).toEqual([
+      expect.objectContaining({ relation: "blocking", number: 20 }),
+    ]);
+    expect(structured.dependencyEvidenceIncomplete).toBe(true);
+    expect(structured.evidenceWarnings.join(" ")).toMatch(/dependency graph is incomplete/i);
+    expect(structured.evidenceWarnings.join(" ")).not.toContain("do-not-leak");
+  });
+
+  it("includes the issue milestone without an extra API request", async () => {
+    const maliciousTitle = "v1.8\n## forged";
+    const { structured, text } = await handlePrepareWorkItem(
+      { issueNumber: 1, includeRelatedFiles: false, includeRecentPRs: false, includeDependencies: false },
+      REF,
+      makeMockOctokit({
+        milestone: {
+          number: 8,
+          title: maliciousTitle,
+          state: "open",
+          html_url: "https://github.com/test-org/test-repo/milestone/8",
+          due_on: "2026-08-01T00:00:00Z",
+        },
+      })
+    );
+
+    expect(structured.milestone).toEqual({
+      number: 8,
+      title: maliciousTitle,
+      state: "open",
+      url: "https://github.com/test-org/test-repo/milestone/8",
+      dueOn: "2026-08-01T00:00:00Z",
+    });
+    expect(text).toContain("Milestone");
+    expect(text).not.toContain("\n## forged");
   });
 });
 
