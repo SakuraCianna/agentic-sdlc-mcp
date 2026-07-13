@@ -11,26 +11,8 @@
  */
 import "dotenv/config";
 
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { SERVER_INFO } from "./version.js";
-
-// Tools
-import { registerRepoContextTool } from "./tools/repo-context.js";
-import { registerPlanFromContextTool } from "./tools/plan-from-context.js";
-import { registerCreateIssueSetTool } from "./tools/create-issue-set.js";
-import { registerPrepareWorkItemTool } from "./tools/prepare-work-item.js";
-import { registerQualityGateStatusTool } from "./tools/quality-gate-status.js";
-import { registerCreatePrSummaryTool } from "./tools/create-pr-summary.js";
-import { registerReviewPrTool } from "./tools/review-pr.js";
-import { registerSecurityTriageTool } from "./tools/security-triage.js";
-import { registerReleaseReadinessTool } from "./tools/release-readiness.js";
-import { registerAgentHandoffTool } from "./tools/agent-handoff.js";
-import { registerBranchProtectionStatusTool } from "./tools/branch-protection-status.js";
-import { registerWorkflowPermissionsAuditTool } from "./tools/workflow-permissions-audit.js";
-
-// Resources
-import { registerResources } from "./resources/index.js";
+import { createAgenticSdlcServer } from "./server.js";
 
 // Config (exits early if GITHUB_TOKEN missing — skipped in smoke mode)
 import { config, initializeConfig } from "./config.js";
@@ -39,33 +21,11 @@ import { config, initializeConfig } from "./config.js";
 await initializeConfig();
 
 // ---------------------------------------------------------------------------
-// Server initialisation
-// ---------------------------------------------------------------------------
-
-const server = new McpServer(SERVER_INFO);
-
-// Register all tools
-registerRepoContextTool(server);
-registerPlanFromContextTool(server);
-registerCreateIssueSetTool(server);
-registerPrepareWorkItemTool(server);
-registerQualityGateStatusTool(server);
-registerCreatePrSummaryTool(server);
-registerReviewPrTool(server);
-registerSecurityTriageTool(server);
-registerReleaseReadinessTool(server);
-registerAgentHandoffTool(server);
-registerBranchProtectionStatusTool(server);
-registerWorkflowPermissionsAuditTool(server);
-
-// Register all resources
-registerResources(server);
-
-// ---------------------------------------------------------------------------
 // Smoke mode: verify registration succeeded then exit cleanly
 // ---------------------------------------------------------------------------
 
 if (config.isSmokeMode) {
+  createAgenticSdlcServer();
   console.error("[agentic-sdlc-mcp] SMOKE OK — all tools and resources registered successfully.");
   console.error("[agentic-sdlc-mcp] Module load, tool registration, and resource registration: PASSED");
   process.exit(0);
@@ -83,23 +43,8 @@ if (transport === "http") {
    * Windows PowerShell:
    *   $env:TRANSPORT="http"; $env:PORT="3000"; node dist/index.js
    */
-  const { default: express } = await import("express");
-  const { StreamableHTTPServerTransport } = await import(
-    "@modelcontextprotocol/sdk/server/streamableHttp.js"
-  );
-
-  const app = express();
-  app.use(express.json());
-
-  app.post("/mcp", async (req: import("express").Request, res: import("express").Response) => {
-    const httpTransport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: undefined,
-      enableJsonResponse: true,
-    });
-    res.on("close", () => httpTransport.close());
-    await server.connect(httpTransport);
-    await httpTransport.handleRequest(req, res, req.body);
-  });
+  const { createMcpHttpApp } = await import("./http-server.js");
+  const app = createMcpHttpApp();
 
   const port = parseInt(process.env["PORT"] ?? "3000", 10);
   app.listen(port, () => {
@@ -107,6 +52,7 @@ if (transport === "http") {
   });
 } else {
   // Default: stdio
+  const server = createAgenticSdlcServer();
   const stdioTransport = new StdioServerTransport();
   await server.connect(stdioTransport);
   console.error("[agentic-sdlc-mcp] Server running via stdio transport");

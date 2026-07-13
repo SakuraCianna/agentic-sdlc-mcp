@@ -1582,6 +1582,8 @@ interface ToolDependencies {
 - 对 lockfile、install scripts、新依赖、GitHub Actions、容器/二进制下载建立 review gate。
 - 设置分层 coverage threshold，优先提升 config、resources、prepare、handoff、PR summary 等低覆盖模块；不能通过排除文件伪造提升。
 
+> 2026-07-13 基础进展：已建立首轮全局 coverage regression floor（statements 92%、branches 87%、functions/lines 93%）、机器可读 JSON summary、配置生命周期测试和基于 SDK 内存 transport 的真实 MCP 协议测试；对抗矩阵与测试资产维护规则见 `docs/testing-strategy.md`。这只是 v1.12 的测试基础，不代表本版本供应链与可观测性目标已经完成。
+
 #### 2. 可观测性与隐私
 
 - 记录结构化、低基数 metrics：工具调用量、延迟、GitHub API 次数、rate-limit、degraded/unverified 比例、截断和错误类别。

@@ -4,6 +4,7 @@
 
 import { Octokit } from "@octokit/rest";
 import { config } from "../config.js";
+import { safeMarkdownInline } from "../rendering/markdown.js";
 import type { RepoRef } from "../types.js";
 
 let _octokit: Octokit | null = null;
@@ -69,9 +70,15 @@ export async function paginateAll<T>(
  * actionable error messages.
  */
 export function handleGitHubError(error: unknown): string {
+  const safeErrorText = (value: unknown): string =>
+    safeMarkdownInline(typeof value === "string" ? value : String(value), {
+      maxLength: 240,
+      fallback: "unknown",
+    });
   if (isOctokitError(error)) {
     const status = error.status;
-    const message = (error.response?.data as { message?: string })?.message ?? "";
+    const rawMessage = (error.response?.data as { message?: string })?.message ?? "";
+    const message = rawMessage ? safeErrorText(rawMessage) : "";
 
     switch (status) {
       case 401:
@@ -103,9 +110,9 @@ export function handleGitHubError(error: unknown): string {
   }
 
   if (error instanceof Error) {
-    return `Unexpected error: ${error.message}`;
+    return `Unexpected error: ${safeErrorText(error.message)}`;
   }
-  return `Unexpected error: ${String(error)}`;
+  return `Unexpected error: ${safeErrorText(error)}`;
 }
 
 interface OctokitError {

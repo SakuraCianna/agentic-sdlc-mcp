@@ -97,6 +97,21 @@ describe("handleGitHubError", () => {
     expect(result).toMatch(/scope/i);
   });
 
+  it("renders an adversarial upstream message as bounded inline data", () => {
+    const payload = `denied\n## forged [click](javascript:alert(1)) ${"x".repeat(500)}`;
+
+    const result = handleGitHubError({
+      status: 403,
+      response: { data: { message: payload } },
+    });
+
+    expect(result).not.toContain("\n## forged");
+    expect(result).not.toContain("[click](javascript:");
+    expect(result).toContain("\\[click\\]\\(javascript:alert\\(1\\)\\)");
+    expect(result.length).toBeLessThan(500);
+    expect(result).toContain("…");
+  });
+
   it("returns 404 message with verification hint", () => {
     const err = { status: 404, response: { data: { message: "Not Found" } } };
     const result = handleGitHubError(err);

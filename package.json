@@ -23,6 +23,7 @@
     "prebuild": "npm run clean",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:integration": "vitest run src/__tests__/config.integration.test.ts src/__tests__/mcp-protocol.integration.test.ts src/__tests__/mcp-tool-runtime.integration.test.ts src/__tests__/mcp-http-runtime.integration.test.ts",
     "test:coverage": "vitest run --coverage",
     "smoke": "node dist/index.js --smoke",
     "prepublishOnly": "npm run build && npm run typecheck && npm run test && npm run smoke"

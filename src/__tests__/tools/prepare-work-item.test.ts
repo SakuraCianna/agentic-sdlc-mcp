@@ -16,17 +16,47 @@ vi.mock("../../config.js", () => ({
   isSmokeMode: false,
 }));
 
-const { handlePrepareWorkItem } = await import("../../tools/prepare-work-item.js");
+const {
+  fileMatchesHint,
+  handlePrepareWorkItem,
+} = await import("../../tools/prepare-work-item.js");
 
 import type { PrepareWorkItemInput } from "../../tools/prepare-work-item.js";
 import type { RepoRef } from "../../types.js";
 
 const REF: RepoRef = { owner: "test-org", repo: "test-repo" };
 
+interface IssueFixture {
+  number: number;
+  title: string;
+  state: string;
+  html_url: string;
+  body: string | null;
+  labels: Array<string | { name?: string | null }>;
+  assignees: Array<{ login: string }> | null;
+  created_at: string;
+}
+
+interface CommentFixture {
+  body: string | null;
+  created_at: string;
+  user?: { login: string } | null;
+}
+
+interface PullFixture {
+  number: number;
+  title: string;
+  html_url: string;
+  merged_at: string | null;
+}
+
 function makeMockOctokit(
-  issue: any = {},
-  comments: any[] = [],
-  pulls: { list?: any[]; filesByNumber?: Record<number, any[]> } = {}
+  issue: Partial<IssueFixture> = {},
+  comments: CommentFixture[] = [],
+  pulls: {
+    list?: PullFixture[];
+    filesByNumber?: Record<number, Array<{ filename: string }>>;
+  } = {}
 ) {
   return {
     issues: {
@@ -198,5 +228,93 @@ describe("handlePrepareWorkItem", () => {
 
     expect(structured.recentPRs).toEqual([]);
     expect((octokit as any).pulls.list).not.toHaveBeenCalled();
+  });
+
+  it("normalizes string/empty labels and absent assignees without inventing values", async () => {
+    const octokit = makeMockOctokit({
+      body: null,
+      labels: ["bug", { name: null }, {}],
+      assignees: [{ login: "" }],
+    });
+
+    const { structured, text } = await handlePrepareWorkItem(
+      { issueNumber: 1, includeRelatedFiles: true, includeRecentPRs: false },
+      REF,
+      octokit
+    );
+
+    expect(structured.labels).toEqual(["bug"]);
+    expect(structured.assignees).toEqual([]);
+    expect(structured.relatedFileHints).toEqual([]);
+    expect(text).toContain("(no description)");
+  });
+
+  it("renders at most three bounded comment previews with missing authors handled", async () => {
+    const comments: CommentFixture[] = [
+      { body: "x".repeat(301), created_at: "2026-01-02T00:00:00Z", user: null },
+      { body: null, created_at: "2026-01-03T00:00:00Z", user: { login: "alice" } },
+      { body: "third", created_at: "2026-01-04T00:00:00Z", user: { login: "bob" } },
+      {
+        body: "must not render",
+        created_at: "2026-01-05T00:00:00Z",
+        user: { login: "mallory" },
+      },
+    ];
+
+    const { text } = await handlePrepareWorkItem(
+      { issueNumber: 1, includeRelatedFiles: false, includeRecentPRs: false },
+      REF,
+      makeMockOctokit({}, comments)
+    );
+
+    expect(text).toContain("**@unknown**");
+    expect(text).toContain(`${"x".repeat(300)}...`);
+    expect(text).toContain("**@alice**");
+    expect(text).toContain("**@bob**");
+    expect(text).not.toContain("mallory");
+  });
+
+  it("returns at most five related PRs and stops scanning later candidates", async () => {
+    const candidates: PullFixture[] = Array.from({ length: 8 }, (_, index) => ({
+      number: 100 - index,
+      title: `PR ${100 - index}`,
+      html_url: `https://github.com/test-org/test-repo/pull/${100 - index}`,
+      merged_at: "2026-02-01T00:00:00Z",
+    }));
+    const filesByNumber = Object.fromEntries(
+      candidates.map((pull) => [pull.number, [{ filename: "src/auth.ts" }]])
+    );
+    const octokit = makeMockOctokit(
+      { body: "Change src/auth.ts" },
+      [],
+      { list: candidates, filesByNumber }
+    );
+
+    const { structured } = await handlePrepareWorkItem(
+      { issueNumber: 1, includeRelatedFiles: true, includeRecentPRs: true },
+      REF,
+      octokit
+    );
+
+    expect(structured.recentPRs).toHaveLength(5);
+    expect(structured.recentPRs.map((pull) => pull.number)).toEqual([100, 99, 98, 97, 96]);
+    expect((octokit as any).pulls.listFiles).toHaveBeenCalledTimes(5);
+    expect((octokit as any).pulls.listFiles).not.toHaveBeenCalledWith(
+      expect.objectContaining({ pull_number: 95 })
+    );
+  });
+});
+
+describe("fileMatchesHint path boundaries", () => {
+  it("does not match a suffix that is only part of another basename", () => {
+    expect(fileMatchesHint("src/oauth.ts", "auth.ts")).toBe(false);
+    expect(fileMatchesHint("src/authentication.ts", "auth.ts")).toBe(false);
+  });
+
+  it("matches exact repository paths and basename hints at segment boundaries", () => {
+    expect(fileMatchesHint("src/auth.ts", "src/auth.ts")).toBe(true);
+    expect(fileMatchesHint("src/auth.ts", "auth.ts")).toBe(true);
+    expect(fileMatchesHint("packages/api/src/auth.ts", "src/auth.ts")).toBe(true);
+    expect(fileMatchesHint("src\\auth.ts", "./src/auth.ts")).toBe(true);
   });
 });
