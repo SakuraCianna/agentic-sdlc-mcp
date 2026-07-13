@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented here. Release history is also available on the [GitHub Releases page](https://github.com/SakuraCianna/agentic-sdlc-mcp/releases).
 
+## [1.7.1] - 2026-07-13
+
+### Fixed
+
+- Corrected the case-sensitive MCP Registry namespace to `io.github.SakuraCianna/agentic-sdlc-mcp`, matching the GitHub login authorized by Registry OIDC.
+- Advanced npm, server, package metadata, runtime, and tests together because published npm/Registry versions are immutable; v1.7.0 is not overwritten or republished.
+
+### Compatibility
+
+- No tool or policy behavior changes from v1.7.0. The patch only corrects Registry identity and version metadata.
+
 ## [1.7.0] - 2026-07-12
 
 ### Added
@@ -65,3 +76,4 @@ All notable changes to this project are documented here. Release history is also
 
 [1.6.0]: https://github.com/SakuraCianna/agentic-sdlc-mcp/releases/tag/v1.6.0
 [1.7.0]: https://github.com/SakuraCianna/agentic-sdlc-mcp/releases/tag/v1.7.0
+[1.7.1]: https://github.com/SakuraCianna/agentic-sdlc-mcp/releases/tag/v1.7.1

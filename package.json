@@ -1,7 +1,7 @@
 {
   "name": "agentic-sdlc-mcp",
-  "version": "1.7.0",
-  "mcpName": "io.github.sakuracianna/agentic-sdlc-mcp",
+  "version": "1.7.1",
+  "mcpName": "io.github.SakuraCianna/agentic-sdlc-mcp",
   "description": "An MCP Server acting as an Agentic SDLC Control Plane — helps AI coding agents plan, create, test, review, secure, and release software following GitHub Agentic AI best practices.",
   "type": "module",
   "main": "dist/index.js",

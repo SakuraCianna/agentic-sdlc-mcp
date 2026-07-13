@@ -69,7 +69,7 @@ describe("MCP Registry publish workflow", () => {
     );
     expect(steps[installIndex]?.run).toContain("sha256sum --check");
     expect(steps[verifyIndex]?.run).toContain(
-      "io.github.sakuracianna/agentic-sdlc-mcp"
+      "io.github.SakuraCianna/agentic-sdlc-mcp"
     );
     expect(steps[verifyIndex]?.run).toContain('pkg.registryType === "npm"');
     expect(steps[verifyIndex]?.run).toContain('pkg.identifier === "agentic-sdlc-mcp"');
