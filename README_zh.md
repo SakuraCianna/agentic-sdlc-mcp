@@ -93,6 +93,18 @@ agentic-sdlc-mcp
 
 默认传输方式是 stdio。多数 MCP 客户端会自动启动这个包，不需要提前在另一个终端中运行。
 
+## 让编码智能体帮你安装
+
+把下面的提示词复制到 Codex、Claude Code 或其他编码智能体：
+
+```text
+请使用 npm install -g agentic-sdlc-mcp 全局安装并配置这个 MCP。项目地址：https://github.com/SakuraCianna/agentic-sdlc-mcp
+请通过 MCP 客户端的 secret 或环境变量配置 GITHUB_TOKEN 和可选仓库默认值；在可信的单用户设备上，也可以运行 agentic-sdlc-mcp configure，或写入 ~/.agentic-sdlc-mcp.json。不要在对话、日志或仓库文件中暴露 Token；缺少非敏感信息时向我询问。
+完成后调用只读的 repo_context 工具验证连接，并说明主要能力、所需 GitHub 权限和安全边界。
+```
+
+批准前请检查智能体准备执行的命令和配置变更。安装需要 Node.js 24 或更高版本。
+
 ## 连接 MCP 客户端
 
 把服务器添加到 Claude Desktop、Cursor、Windsurf 或其他 MCP 客户端。通过客户端的 secret 或环境变量配置注入 GitHub token。
@@ -325,6 +337,18 @@ npm run test
 | `npm run test:coverage` | 执行覆盖率门槛并生成报告 |
 | `npm run smoke` | 在没有 GitHub 凭据时验证注册与加载 |
 | `npm run check:line-endings` | 拒绝 CRLF 和混合行尾 |
+
+## 通过 Issue 和 Pull Request 参与贡献
+
+欢迎提交 Issue 和 Pull Request。开始前请查看[现有 Issues](https://github.com/SakuraCianna/agentic-sdlc-mcp/issues)与[路线图](docs/ROADMAP.md)。如果变更会影响公开行为、安全边界、工具 schema 或架构，请先创建 Issue 讨论。
+
+1. Fork 仓库，并基于最新 `main` 创建范围明确的分支。
+2. 运行 `npm ci`，然后只修改本次贡献所需内容。
+3. 行为发生变化时，同步补充或更新测试与文档。
+4. 运行与变更相关的检查。完整 CI 会执行 `npm run check:line-endings`、`npm run typecheck`、`npm run build`、`npm run test`、`npm run smoke` 和 `npm run test:coverage`。
+5. 创建目标为 `main` 的 Pull Request，并说明问题、解决方案、风险、验证结果和关联 Issues。
+
+不要把 token、凭据、私有仓库内容或本地生成的配置提交到 commit、Issue、Pull Request 或日志。CI 通过是评审证据，但不能替代维护者批准。
 
 - [路线图](docs/ROADMAP.md)
 - [仓库策略指南](docs/repository-policy.md)

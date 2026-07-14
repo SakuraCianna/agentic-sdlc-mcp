@@ -93,6 +93,18 @@ agentic-sdlc-mcp
 
 The default transport is stdio. Most MCP clients should start the package for you instead of running it in a separate terminal.
 
+## Let a coding agent set it up
+
+Paste this prompt into Codex, Claude Code, or another coding agent:
+
+```text
+Use npm install -g agentic-sdlc-mcp to install and configure this MCP globally. Repository: https://github.com/SakuraCianna/agentic-sdlc-mcp
+Configure GITHUB_TOKEN and optional repository defaults through the MCP client's secret or environment configuration. On a trusted single-user machine, you may instead run agentic-sdlc-mcp configure or write them to ~/.agentic-sdlc-mcp.json. Never expose the token in chat, logs, or repository files; ask me for missing non-secret details.
+Then verify the connection with the read-only repo_context tool and summarize its capabilities, required GitHub permissions, and safety boundaries.
+```
+
+Review every command and configuration change before approving it. Node.js 24 or newer is required.
+
 ## Connect an MCP client
 
 Add the server to Claude Desktop, Cursor, Windsurf, or another MCP client. Inject the GitHub token through the client's secret or environment configuration.
@@ -325,6 +337,18 @@ npm run test
 | `npm run test:coverage` | Enforce coverage floors and write reports |
 | `npm run smoke` | Verify registration without GitHub credentials |
 | `npm run check:line-endings` | Reject CRLF and mixed line endings |
+
+## Contribute through issues and pull requests
+
+Issues and pull requests are welcome. Check the [open issues](https://github.com/SakuraCianna/agentic-sdlc-mcp/issues) and [roadmap](docs/ROADMAP.md) before starting. Open an Issue first when a change affects public behavior, security boundaries, tool schemas, or architecture.
+
+1. Fork the repository and create a focused branch from the latest `main`.
+2. Run `npm ci`, then make only the changes required for the contribution.
+3. Add or update tests and documentation when behavior changes.
+4. Run the checks relevant to your change. The full CI suite runs `npm run check:line-endings`, `npm run typecheck`, `npm run build`, `npm run test`, `npm run smoke`, and `npm run test:coverage`.
+5. Open a pull request against `main`. Describe the problem, solution, risks, validation results, and linked Issues.
+
+Keep tokens, credentials, private repository content, and generated local configuration out of commits, Issues, pull requests, and logs. A passing CI run supports review but does not replace maintainer approval.
 
 - [Roadmap](docs/ROADMAP.md)
 - [Repository policy guide](docs/repository-policy.md)
