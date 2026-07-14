@@ -1,156 +1,102 @@
 <p align="center">
-  <img src="assets/logo.svg" alt="MCP Logo" width="120"/>
+  <img src="assets/logo.svg" alt="agentic-sdlc-mcp 标志" width="120">
 </p>
 
-<h1 align="center">Agentic SDLC Control Plane (agentic-sdlc-mcp)</h1>
+<h1 align="center">agentic-sdlc-mcp</h1>
 
 <p align="center">
-  <b>将专业、结构化的 SDLC 工作流封装为 MCP 工具，引导 AI 编码智能体（如 Claude、Cursor 等）在安全、可追溯且防失控的研生命周期中进行协作。</b>
+  <strong>为在真实 GitHub 仓库中工作的 AI 编码智能体提供治理与证据控制。</strong>
 </p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/agentic-sdlc-mcp"><img src="https://img.shields.io/npm/v/agentic-sdlc-mcp.svg?style=flat-square&color=blue" alt="npm version"></a>
-  <a href="https://github.com/SakuraCianna/agentic-sdlc-mcp/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/SakuraCianna/agentic-sdlc-mcp/ci.yml?branch=main&style=flat-square" alt="CI status"></a>
-  <a href="https://www.npmjs.com/package/agentic-sdlc-mcp"><img src="https://img.shields.io/npm/dm/agentic-sdlc-mcp.svg?style=flat-square&color=green" alt="downloads"></a>
-  <a href="https://github.com/SakuraCianna/agentic-sdlc-mcp/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/agentic-sdlc-mcp.svg?style=flat-square&color=orange" alt="license"></a>
-  <a href="https://modelcontextprotocol.io"><img src="https://img.shields.io/badge/MCP-Compatible-blue?style=flat-square" alt="MCP Compatible"></a>
+  让 Claude Code、Cursor 和其他模型上下文协议（MCP）客户端在仓库上下文、评审门禁、安全证据与人工审批点的约束下工作。
 </p>
 
----
+<p align="center">
+  <a href="README.md">English</a> ·
+  <a href="https://www.npmjs.com/package/agentic-sdlc-mcp">npm</a> ·
+  <a href="https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.SakuraCianna%2Fagentic-sdlc-mcp">MCP Registry</a> ·
+  <a href="docs/ROADMAP.md">路线图</a>
+</p>
 
-## 💡 项目背景与核心理念
+<p align="center">
+  <a href="https://www.npmjs.com/package/agentic-sdlc-mcp"><img src="https://img.shields.io/npm/v/agentic-sdlc-mcp.svg?style=flat-square&color=blue" alt="npm 版本"></a>
+  <a href="https://www.npmjs.com/package/agentic-sdlc-mcp"><img src="https://img.shields.io/npm/dm/agentic-sdlc-mcp.svg?style=flat-square&color=green" alt="npm 下载量"></a>
+  <a href="https://github.com/SakuraCianna/agentic-sdlc-mcp/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/SakuraCianna/agentic-sdlc-mcp/ci.yml?branch=main&style=flat-square" alt="CI 状态"></a>
+  <img src="https://img.shields.io/badge/Node.js-%3E%3D24-339933?style=flat-square&logo=node.js&logoColor=white" alt="Node.js 24 或更高版本">
+  <a href="LICENSE"><img src="https://img.shields.io/npm/l/agentic-sdlc-mcp.svg?style=flat-square&color=orange" alt="MIT 协议"></a>
+</p>
 
-传统的 AI 智能体能够快速生成代码，但常常缺乏软件工程纪律与合规约束。它们可能会在没有测试的情况下直接强推主分支、绕过 PR 评审、无意中泄露密钥，或者未运行 CI 检查就合并代码。
+`agentic-sdlc-mcp` 是面向已经允许 AI 编码智能体修改生产仓库团队的软件开发生命周期（SDLC）治理层。它把 GitHub 上下文、仓库策略、检查、评审、安全告警和发布信号组织成 12 个工作流级 MCP 工具。其中 11 个工具只读，唯一的 GitHub 写入工具默认先预览。
 
-`agentic-sdlc-mcp` 是基于 **Model Context Protocol (MCP)** 构建的 **SDLC 智能编排层与控制平面**。它将 GitHub API 提炼成高层次、富有软件工程纪律的工具，为 AI 编码智能体建立可追溯性、强制性的人类审批关卡、代码质量门禁以及安全性校验。
+## 接入这个 MCP 后有什么变化
 
-### 代理式 SDLC 研发闭环
-```mermaid
-graph TD
-    A[第一阶段：计划 Plan] -->|输出下发上下文与开发简报| B[第二阶段：开发 Create]
-    B -->|规范化的关联提交| C[第三阶段：测试 Test]
-    C -->|收集本地测试报告| D[第四阶段：评审 Review]
-    D -->|人类审批与合并关卡| E[第五阶段：优化 Optimize]
-    E -->|局部重构与精简代码| F[第六阶段：安全 Secure]
-    F -->|密钥与权限审计 | G[发版就绪度检查 & 人类 Release 审批]
-    G -->|发布 Release & Deploy| A
-```
+AI 编码智能体可以生成代码和 Pull Request，但它未必理解仓库的全部规则。这个 MCP 为智能体提供有界上下文，也让评审者看到明确的证据缺口，而不是再收到一份无法验证的自由文本总结。
 
----
-
-## 🛠️ 工具能力分类
-
-本项目并不是对 GitHub API 的简单扁平包装，而是围绕 SDLC 阶段构建的 **12 款专业工具**：
-
-| 分类模块 | 包含工具 | 描述说明 |
+| 关注点 | 未接入这个 MCP | 接入 `agentic-sdlc-mcp` 后 |
 |---|---|---|
-| **💡 规划与上下文** | [`repo_context`](#repo_context)<br>[`plan_from_context`](#plan_from_context)<br>[`prepare_work_item`](#prepare_work_item) | 检索仓库现状、根据上下文自动拟定 SDLC 阶段计划，并生成可读的智能体开发简报。 |
-| **🚀 任务拆解与写入** | [`create_issue_set`](#create_issue_set) | 依据 SDLC 计划在 GitHub 上批量创建对应的 Issues。 |
-| **🔍 质量保障与评审** | [`quality_gate_status`](#quality_gate_status)<br>[`create_pr_summary`](#create_pr_summary)<br>[`review_pr_against_standard`](#review_pr_against_standard) | 读取 CI 质量门禁状态、自动生成 PR 的精炼变更摘要，并依据标准等级检查 PR 改动的代码质量。 |
-| **🛡️ 治理与安全保障** | [`branch_protection_status`](#branch_protection_status)<br>[`workflow_permissions_audit`](#workflow_permissions_audit)<br>[`security_triage`](#security_triage)<br>[`release_readiness_check`](#release_readiness_check) | 审计主分支保护规则与规则集、审计 Action 工作流权限泄露隐患、收集分析安全漏洞警报并进行发布就绪度核验。 |
-| **🤝 智能体交接** | [`agent_handoff_packet`](#agent_handoff_packet) | 汇总当前任务进度和残留事项，打包交接，确保上下文无缝传递。 |
+| 仓库上下文 | 智能体从用户提示词出发，自行猜测项目约定 | `repo_context` 读取有界的元数据、脚本、策略、Issues、Pull Requests 和智能体规则 |
+| 高风险业务 | 认证、支付、迁移和 Workflow 变更使用通用计划 | `prepare_work_item` 补充风险理由、防御性要求、负向场景、回滚和可观测性 |
+| Issue 规划 | 人工把计划重新整理成 GitHub 工作项 | `plan_from_context` 生成结构化草稿，`create_issue_set` 先展示精确写入内容 |
+| Pull Request 门禁 | 智能体可能把持续集成（CI）绿灯当成充分证据 | `quality_gate_status` 分离 checks、reviews、ownership、保护规则、标签和缺失证据 |
+| 密钥风险 | 只根据扫描器名称或关键词判断是否安全 | PR 审查区分可信扫描证据、有界补丁启发式和未验证缺口 |
+| 发布与交接 | 就绪度依赖自由文本状态总结 | 发布和交接工具保留阻塞项、策略义务、证据警告和人工审批点 |
 
----
+这个 MCP 不编写代码、不合并 Pull Request、不强制推送、不创建 Release、不部署软件，也不能替代人工安全评审。
 
-## 🗺️ 系统时序架构
+## 它如何进入生产级智能体工作流
+
+这个 MCP 位于 AI 编码智能体与 GitHub 证据之间。仓库变更仍由智能体通过原有开发环境完成，高影响决策仍由团队负责。
+
 ```mermaid
-sequenceDiagram
-    autonumber
-    actor Developer as 人类 Owner (项目主管)
-    participant Agent as AI 编码智能体 (Cursor/Claude)
-    participant MCP as agentic-sdlc-mcp (控制平面)
-    participant GitHub as GitHub API
-    participant npm as npm 官方源
-
-    Developer->>Agent: "帮我实现仓库 X 的一个新功能"
-    Agent->>MCP: 调用 repo_context / plan_from_context
-    MCP->>GitHub: 获取仓库当前 Issues/文件树/元数据
-    GitHub-->>MCP: 仓库当前状态数据
-    MCP-->>Agent: 结构化的 SDLC 计划与开发简报
-    Note over Agent: 智能体在隔离分支编写代码...
-    Agent->>MCP: 调用 review_pr_against_standard / quality_gate_status
-    MCP->>GitHub: 审计 PR 文件所有权 (CODEOWNERS) 与 CI 工作流状态
-    GitHub-->>MCP: CI 运行结果、CODEOWNERS 评审缺失报告
-    MCP-->>Agent: 自动化评审意见与缺陷修复建议
-    Note over Developer,Agent: 人类评审关卡：审核并手动合并 PR
-    Developer->>MCP: Trigger gh release create v1.3.0
-    MCP->>GitHub: 创建 Release 标签 (Tag)
-    GitHub->>GitHub: 自动执行 publish.yml (OIDC)
-    GitHub->>npm: 发布并签署具有 Provenance 的安全 npm 包
+flowchart LR
+    Policy["工程策略<br>与仓库规则"] --> MCP["agentic-sdlc-mcp"]
+    Agent["AI 编码智能体<br>Claude Code · Cursor · MCP 客户端"] --> MCP
+    MCP --> GitHub["GitHub API 证据"]
+    GitHub --> MCP
+    MCP --> Reports["简报 · 计划 · 门禁<br>评审 · 发布报告"]
+    Reports --> Agent
+    Reports --> Human["人工评审与审批"]
+    Agent -. "代码 · 提交 · Pull Request" .-> GitHub
+    Human -. "合并 · 发布 · 部署" .-> GitHub
 ```
 
----
+## 适用场景
 
-## ⚡ 快速入门
+当自主智能体可能猜测仓库状态或依赖过期文字说明时，使用这些工具生成可审查的决策材料。
 
-## 📋 使用前提
+| 生产场景 | 推荐工具 | 产生的决策材料 |
+|---|---|---|
+| 让智能体接手陌生的生产仓库 | `repo_context` | 包含脚本、Workflows、策略、待办工作和已知缺口的仓库简报 |
+| 把功能、Bug 或安全目标转换为可评审工作项 | `plan_from_context` → `create_issue_set` | 按任务类型生成的计划、Issue 草稿和预览优先的 GitHub Issues |
+| 准备认证、支付、迁移或基础设施工作 | `prepare_work_item` | 包含防御性要求、负向测试、回滚和可观测性的风险简报 |
+| 检测补丁中的动态凭据构造 | `review_pr_against_standard` | 针对拼接、插值、解码、别名和认证头 sink 的补丁内风险发现 |
+| 判断 Pull Request 是否具备人工评审条件 | `create_pr_summary` → `quality_gate_status` → `review_pr_against_standard` | Diff 摘要、合并门禁证据、问题、阻塞项和下一步动作 |
+| 审计仓库治理 | `branch_protection_status` → `workflow_permissions_audit` | 分支/Ruleset 证据和 GitHub Actions 最小权限问题 |
+| 判断版本是否可以进入人工发布审批 | `security_triage` → `release_readiness_check` | 安全告警摘要、CI 证据、发布阻塞项、CHANGELOG 和回滚要求 |
+| 把工作移交给另一个智能体 | `agent_handoff_packet` | 标注调用方断言与证据警告的有界续接包 |
 
-运行此服务器前，请确认你已准备好：
-1. 本地系统已安装 **Node.js >= 24**。
-2. **GitHub 个人访问令牌 (PAT)**：
-   * **Classic PAT scopes**：`repo` 与 `security_events`；需要解析组织/团队元数据时再增加 `read:org`。
-   * **Fine-grained PAT 仓库读取权限**：Contents、Pull requests、Issues、Checks、Commit statuses、Administration（classic branch protection）、Code scanning alerts、Dependabot alerts、Secret scanning alerts。Metadata read 会自动附带，读取仓库 rulesets 已足够。
-   * GraphQL 的 review decision 和关联 Issue 查询复用 Pull requests/Issues 权限；GitHub 不存在单独的“GraphQL read”权限开关。
-   * 只有准备以 `dryRun: false` 调用 `create_issue_set` 时才授予 **Issues: write**；v1.6 门禁/审查工具不需要写权限。
-     * 注意：如果部分安全端点因权限报错，请以 [GitHub REST API 官方文档](https://docs.github.com/en/rest) 为准核实 Token 权限。
+## 从 npm 安装
 
----
+你需要 Node.js 24 或更高版本。优先直接运行 npm 上已经发布的包：
 
-## ⚡ 快速入门
-
-### 1. 使用 npx 免安装运行（推荐）
-你不需要下载或克隆本仓库。直接在 MCP 客户端配置中通过 npx 运行即可，开箱即用：
-```bash
+```powershell
 npx -y agentic-sdlc-mcp
 ```
 
-### 2. 全局安装
-你也可以将本包作为全局 CLI 工具安装到系统：
-```bash
+如果需要全局 CLI：
+
+```powershell
 npm install -g agentic-sdlc-mcp
-# 使用全局命令直接启动
 agentic-sdlc-mcp
 ```
 
-### 3. 本地源码运行（用于开发与扩展）
-如果你想要修改项目源码或在本地进行功能扩展：
-```bash
-git clone https://github.com/SakuraCianna/agentic-sdlc-mcp.git
-cd agentic-sdlc-mcp
-npm install
-npm run build
-node dist/index.js
-```
+默认传输方式是 stdio。多数 MCP 客户端会自动启动这个包，不需要提前在另一个终端中运行。
 
-### 4. 本地 Streamable HTTP（仅 loopback）
+## 连接 MCP 客户端
 
-stdio 仍是默认且推荐的本地传输方式。如果本机 MCP 客户端必须使用 Streamable HTTP，可在构建后显式启用：
+把服务器添加到 Claude Desktop、Cursor、Windsurf 或其他 MCP 客户端。通过客户端的 secret 或环境变量配置注入 GitHub token。
 
-```powershell
-$env:TRANSPORT = "http"
-$env:PORT = "3000"
-node dist/index.js
-```
-
-服务端点为 `http://127.0.0.1:3000/mcp`，`PORT` 只能是 1 到 65535 的整数。该 profile 只监听 `127.0.0.1`，校验 `Host` 与调用方提供的 `Origin`；每个 POST 都使用隔离的无状态 MCP server/transport；不支持的 GET/DELETE 流式或 session 操作返回 `405`；HTTP 错误不会泄露内部细节，并在 `SIGINT`/`SIGTERM` 时执行有序关闭。
-
-这**不是远程部署模式**：当前没有 MCP OAuth、调用方级 GitHub 凭据、多租户隔离、限流，也没有产品级 timeout/cancellation 预算。请勿将该端口暴露到其他机器或直接挂到反向代理；远程 HTTP 安全仍属于 v1.10。
-
----
-
-## ✅ 通用 AI Coding Agent 冒烟测试
-
-如果需要在任意支持 MCP 的 AI coding agent 中验证本服务器是否配置成功，请参考客户端无关的指南 [`docs/ai-coding-agent-smoke-test.md`](docs/ai-coding-agent-smoke-test.md)（英文）。其中涵盖最小配置项、仓库坐标回退逻辑、`repo_context` 只读验证路径，以及 `create_issue_set` dry-run 预览（不会真实创建 issue）。
-
----
-
-## ⚙️ 客户端接入配置
-
-本服务使用 preview MCP Registry 名称 `io.github.SakuraCianna/agentic-sdlc-mcp`；Registry 的 GitHub namespace 大小写敏感，必须与认证账号 login 一致。`npx -y agentic-sdlc-mcp` 仍是兼容性安装入口。
-
-将本服务器注册进你的 MCP 客户端配置文件（例如 `claude_desktop_config.json` 或 Cursor、Windsurf 的配置页面）：
-
-### Claude Desktop / Cursor / Windsurf (使用 npm 官方包运行)
 ```json
 {
   "mcpServers": {
@@ -158,294 +104,238 @@ node dist/index.js
       "command": "npx",
       "args": ["-y", "agentic-sdlc-mcp"],
       "env": {
-        "GITHUB_TOKEN": "ghp_你的_token",
-        "GITHUB_OWNER": "你的_github_用户名或组织名",
-        "GITHUB_REPO": "你的_目标仓库名"
+        "GITHUB_TOKEN": "your_github_token_here",
+        "GITHUB_OWNER": "your_organization",
+        "GITHUB_REPO": "your_repository"
       }
     }
   }
 }
 ```
 
-### 🔑 全局配置与交互式设置 (持久化)
+部分 Windows MCP 客户端需要通过 `cmd` 调用 `npx`：
 
-除了在 MCP 客户端配置中直接指定环境变量之外，您也可以使用交互式命令行来全局设置您的 GitHub 访问凭证。配置会自动持久化在您的用户主目录下（`~/.agentic-sdlc-mcp.json`），后续直接运行工具时将自动读取该全局配置。
-
-#### 1. 命令行交互配置
-在终端中直接运行以下命令：
-```bash
-npx agentic-sdlc-mcp configure
+```json
+{
+  "command": "cmd",
+  "args": ["/c", "npx", "-y", "agentic-sdlc-mcp"]
+}
 ```
-工具将启动引导，提示您输入：
-* `GITHUB_TOKEN`（核心凭证，[点击前往 GitHub 生成](https://github.com/settings/tokens)，并按上方[使用前提](#-使用前提)的最小权限矩阵配置）
-* `GITHUB_OWNER` (默认所有者，可选)
-* `GITHUB_REPO` (默认仓库名，可选)
 
-#### 2. 自动配置引导 (TTY)
-如果您在终端中直接执行 `npx -y agentic-sdlc-mcp` 启动服务，且当前环境中没有检测到任何 `GITHUB_TOKEN`，工具会自动识别交互式环境并触发上述引导流。如果检测到非交互式环境（如 Claude Desktop 后台静默启动），则会优雅报错并提示配置。
+`GITHUB_OWNER` 和 `GITHUB_REPO` 是可选默认值，工具调用也可以显式传入仓库坐标。请根据 [GitHub 权限矩阵](#github-权限) 只授予已启用能力所需的权限。
 
-#### 3. 环境变量全局配置 (备用)
-您也可以随时在 Shell 中指定全局环境变量（Windows PowerShell 或 macOS/Linux bash）：
+<details>
+<summary>本地交互式配置</summary>
+
 ```powershell
-# Windows PowerShell
-$env:GITHUB_TOKEN = "ghp_你的_token"
-$env:GITHUB_OWNER = "你的组织或用户名"
-$env:GITHUB_REPO  = "你的仓库名"
+npx -y agentic-sdlc-mcp configure
 ```
 
----
+这个兼容路径会把配置写入 `~/.agentic-sdlc-mcp.json`，其中包括 GitHub token。它只适合可信的单用户工作站。面向生产的接入应优先使用 MCP 客户端 secret 注入或进程环境变量。
 
-## 🎯 最佳实践与合理使用情景
+</details>
 
-AI 编码智能体不应当在没有任何工程纪律约束下盲目地编写代码和提交。本控制平面旨在帮助 AI 规范研发流程。以下是推荐的智能体协作最佳实践：
+## 验证连接
 
-### 情景 1：启动新功能开发 / 漏洞修复 (Bootstrapping)
-智能体在接受到研发指令时，应依次执行以下工具以获取扎实的背景，避免“盲目写码”反模式：
-1. **收集背景**：调用 [`repo_context`](#repo_context) 全面核查当前 Issues、PR 状态及分支结构。
-2. **制定计划**：调用 [`plan_from_context`](#plan_from_context) 录入研发目标，自动梳理出涵盖 Plan、Create、Test、Review、Optimize、Secure 完整周期的分阶段计划。
-3. **建立 Issues 清单**：调用 [`create_issue_set`](#create_issue_set)（指定 `dryRun: false`）将计划批量创建为 GitHub 上的看板 Issue，供人类和智能体追踪进度。
-4. **获取任务简报**：针对当前正要执行的子 Issue，调用 [`prepare_work_item`](#prepare_work_item) 自动提取出目标、非目标、验收标准与核心技术风险。
+先执行一次只读调用，在授予写权限前确认仓库边界：
 
-### 情景 2：Pull Request 提审前的质量把关
-在将代码提交给人类进行 PR 评审前，智能体需要执行自检，确信代码符合门禁标准：
-1. **生成 PR 变更简要**：调用 [`create_pr_summary`](#create_pr_summary) 自动化输出一份结构化、规范化的 Diff 变更概述与 Release Notes 草案。
-2. **核查 CI 门禁**：调用 [`quality_gate_status`](#quality_gate_status) 确保关联的 GitHub Actions 测试与静态检查全部绿灯通过。
-3. **代码安全扫描**：调用 [`review_pr_against_standard`](#review_pr_against_standard)（指定 `standard: "strict"` 或 `"security-focused"`）审计提交的差异，防止意外引入 `.env` 敏感密钥，并校验 `.github/CODEOWNERS` 指定的归属人是否已审阅。
+```text
+使用 agentic-sdlc-mcp 对当前配置仓库执行 repo_context，包含 package scripts、workflows、governance 和 repository policy。不要创建 Issue，也不要修改 GitHub。
+```
 
-### 情景 3：版本发布前就绪度核验 (Pre-release)
-当人类主导版本合并并准备正式对外发布包时：
-1. **漏洞分级筛选**：调用 [`security_triage`](#security_triage) 检索 Code Scanning (SAST) 静态扫描报告、Dependabot 依赖警告以及 Secret Scanning 泄露警报，排除阻碍发布的致命隐患。
-2. **发版就绪度审计**：调用 [`release_readiness_check`](#release_readiness_check) 确认无残留 Bug Issues、确认 CHANGELOG.md 已更新，并自动化出具发版清单与紧急回滚方案模板。
-3. **无损交接**：若需要把后续的部署或测试移交给另一个 Agent，调用 [`agent_handoff_packet`](#agent_handoff_packet) 整合当前全部的审计状态进行打包交接。
+再通过 dry-run 验证写入边界，不创建任何内容：
 
----
+```text
+生成一个 feature 计划，把 issue drafts 传给 create_issue_set，并设置 dryRun: true。显示目标仓库、标题、标签、body 摘要和警告。不要写入 GitHub。
+```
 
-## 📖 工具使用参考 (Tools Reference)
+完整的五分钟验证路径见[通用 AI 编码智能体冒烟测试](docs/ai-coding-agent-smoke-test.md)。
 
-服务器向 AI 客户端暴露的详细工具 API 规范说明：
+## Tools 工具目录
 
-### `repo_context`
-读取仓库元数据、README、package.json 以及未解决的 Issues 和 PR。也可选择性地作为更完整的"开工简报包"使用——探测包管理器、技术栈、常用验证脚本、workflow 文件名、轻量治理信号，以及 agent 规则文件摘要（如 `AGENTS.md`、`CLAUDE.md`）。用于智能体快速熟悉项目上下文。
-开启对应参数后，有界的 `readmeSummary` 和 `packageJsonSummary` 也会进入 `structuredContent`，智能体不需要再从 Markdown 文本中重新提取。
-* **输入参数**：
-  * `owner` (字符串, 可选)：GitHub 所有者。
-  * `repo` (字符串, 可选)：GitHub 仓库名。
-  * `includeReadme` (布尔值, 默认 `true`)：包含截断后的 README 摘要。
-  * `includePackageJson` (布尔值, 默认 `false`)：包含 package.json 摘要、探测到的包管理器（npm/pnpm/yarn/bun）、技术栈和常用脚本（build/test/typecheck/lint/smoke 等）。
-  * `includeWorkflows` (布尔值, 默认 `false`)：包含 `.github/workflows/*.yml` 文件名（仅文件名，权限详情请用 `workflow_permissions_audit`）。
-  * `includeAgentInstructions` (布尔值, 默认 `false`)：包含仓库根目录下 agent 规则文件（`AGENTS.md`、`CLAUDE.md`）的摘要。
-  * `includeGovernance` (布尔值, 默认 `false`)：包含是否存在 CODEOWNERS 文件（完整分支保护详情请用 `branch_protection_status`）。
-  * `includePolicy` (布尔值, 默认 `false`)：包含已验证的仓库策略、digest、稳定 rule ID 与来源 ref/blob SHA。
-  * `includeOpenIssues` / `includeOpenPRs` (布尔值, 默认 `false`)：包含最近的 open issues/PRs。
-  * `issueLimit` / `prLimit` (数字, 默认 `20`, 最大 `100`)：拉取的最长条目数限制。
-  * `maxReadmeChars` (数字, 默认 `3000`)：README 截断前的最大字符数。
-  * `maxInstructionChars` (数字, 默认 `1000`)：每个 agent 规则文件摘要截断前的最大字符数。
+服务器注册了 12 个工作流级工具。MCP 客户端会在运行时获得完整输入输出 schema；下面的目录说明何时调用工具，以及如何理解结果。
 
-### `plan_from_context`
-根据给定的研发目标生成符合 SDLC 标准阶段的阶段性规划，并按 `workType` 定制内容。不同任务类型对应实质不同的计划——例如 `docs` 不会默认要求代码单元测试，`bugfix` 始终包含复现与回归测试，`security` 始终包含威胁模型与最小权限审查，`release`/`infra` 分别始终包含 changelog/回滚计划与 workflow 权限检查。
-返回结果还包含 3-5 个结构化 `issueDrafts`，其中包括标题、Markdown body、仓库中已确认存在的标签、SDLC 阶段、验收标准、风险等级和来源目标，可直接传给 `create_issue_set`。
-仓库策略可增加默认 work type、required checks、protected path 约束和 review/release 任务；调用方显式 `workType` 始终优先。
-* **输入参数**：
-  * `owner` / `repo` (字符串, 可选)：仓库坐标。
-  * `goal` (字符串, 必填)：要达成的开发目标或修复描述。
-  * `workType` (字符串, 可选)：`docs` / `feature` / `bugfix` / `refactor` / `security` / `release` / `infra` 之一。省略时会根据 `goal` + `acceptanceCriteria` 通过保守的关键词启发式推断——返回结果中的 `confidence`（`high`/`medium`/`low`）与 `needsClarification` 字段说明推断是否可信，不可信时应显式传入 `workType`。
-  * `constraints` (字符串数组, 可选)：技术或业务约束。
-  * `acceptanceCriteria` (字符串数组, 可选)：明确的验收标准（同时也用于 workType 推断）。
+| 工具 | 适用时机 | 主要结果 | 访问模式 |
+|---|---|---|---|
+| `repo_context` | 智能体在规划前需要仓库事实 | 包含元数据、README/package 摘要、脚本、Workflows、治理、策略、Issues 和 PRs 的有界简报 | 只读 |
+| `plan_from_context` | 一个目标需要 SDLC 计划和 Issue 草稿 | 按任务类型生成的计划、置信度、澄清信号和 3 至 5 个结构化 Issue 草稿 | 只读 |
+| `prepare_work_item` | 智能体准备实现某个 GitHub Issue | 风险画像、分来源验收标准、防御性要求、关联证据、回滚和交接提示词 | 只读 |
+| `create_issue_set` | 已评审计划需要转换为 GitHub Issues | 精确 dry-run 预览，或保留部分成功信息的真实创建结果 | 预览优先写入 |
+| `create_pr_summary` | Pull Request 需要可评审概览 | 变更摘要、影响文件、测试信号、风险、清单和 Release Notes 草稿 | 只读 |
+| `quality_gate_status` | 团队需要真实合并门禁证据 | `passing`、`failing`、`pending`、`needs_review`、`policy_gap` 或 `no_evidence`，以及阻塞项和缺口 | 只读 |
+| `review_pr_against_standard` | Pull Request 需要 SDLC 与安全评审 | 结构化 findings、发布风险、测试证据、ownership 缺口和扫描器 provenance | 只读 |
+| `branch_protection_status` | 团队需要分支和 Ruleset 可见性 | 必需评审、状态检查、强推与删除设置和验证缺口 | 只读 |
+| `workflow_permissions_audit` | 需要评审 GitHub Actions token 权限 | 顶层与 job 级权限问题和最小权限建议 | 只读 |
+| `security_triage` | 发布或事故处理需要 GitHub 安全告警 | Code Scanning、Dependabot 和 Secret Scanning 分诊 | 只读 |
+| `release_readiness_check` | 人工正在决定是否发布 | CI 状态、阻塞 Issue/标签、CHANGELOG 与回滚证据、阻塞项和下一步 | 只读 |
+| `agent_handoff_packet` | 另一个智能体需要继续当前工作 | 紧凑的 Issue/PR 上下文、策略义务、调用方断言、警告和有序下一步 | 只读 |
 
-### `create_issue_set`
-根据规划预览或批量创建 GitHub Issues。dry-run 会在不调用 GitHub 写接口的前提下返回目标仓库、最终标题、标签、body 摘要和人工审查 warning；真实批次会保留成功创建的 issue number/URL，并为失败项返回安全化原因，单个失败不会掩盖已有成功结果或阻止后续尝试。
-* **输入参数**：
-  * `owner` / `repo` (字符串, 可选)：仓库坐标。
-  * `issues` (对象数组, 必填)：拟创建的 Issues 结构列表（包含标题、内容、标签和可选 assignees），可直接接收 `plan_from_context.issueDrafts`。
-  * `dryRun` (布尔值, 默认 `true`)：默认开启预览模式，为 `false` 时真实写入 GitHub。
+<details>
+<summary>上下文与规划细节</summary>
 
-### `prepare_work_item`
-为指定 Issue 生成供 AI 智能体直接消费的开发简报，提取目标、非目标、验收标准与核心风险。
-* **输入参数**：
-  * `owner` / `repo` (字符串, 可选)：仓库坐标。
-  * `issueNumber` (数字, 必填)：绑定的 GitHub Issue 编号。
-  * `includeRelatedFiles` (布尔值, 默认 `false`)：启发式搜索 Issue 内容中提及的关联文件。
-  * `includeRecentPRs` (布尔值, 默认 `false`)：检索最近关联的 5 个已合并 PR。
+- **`repo_context`**：默认返回有界 README 摘要。可以选择读取 package scripts、Workflow 文件名、智能体规则、governance、经过验证的 `.agentic-sdlc.yml` 和最近待办工作。所有条目和字符数量都有明确上限，来源缺失时返回降级上下文，不编造事实。
+- **`plan_from_context`**：支持 `docs`、`feature`、`bugfix`、`refactor`、`security`、`release` 和 `infra`。省略类型时，工具会返回推断结果、置信度、理由和 `needsClarification`。仓库策略可以添加 required checks 和 protected-path 义务，调用方显式传入的 work type 优先。
+- **`prepare_work_item`**：读取有界 Issue/评论证据、确认存在的根目录脚本、仓库策略、Milestone 上下文，以及可选的关联文件、GitHub 官方 Issue 关系和近期 PR 历史。它会分离 Issue 原始验收标准与派生要求，深度证据路径会暴露请求预算和不完整来源警告。
 
-### `quality_gate_status`
-聚合 check runs 与 commit statuses；PR 模式还会评估 reviews、CODEOWNERS 路由、draft/mergeability、分支保护/rulesets、阻塞标签和关联 Issues。六种结论为 `passing`、`failing`、`pending`、`needs_review`、`policy_gap`、`no_evidence`。权限失败或有界数据源被截断时，会通过 `degraded`、`unverifiedSignals` 和安全化 `errors` 明确暴露，绝不会把缺失证据伪装成通过。
-* **输入参数**：
-  * `owner` / `repo` (字符串, 可选)：仓库坐标。
-  * `pullNumber` (数字, 可选)：待查询的 PR 编号。
-  * `ref` (字符串, 可选)：待查询的分支或 commit。
-  * `blockingLabels` (字符串数组, 默认 `blocked`、`do-not-merge`、`release-blocker`、`security-blocker`)：精确、大小写不敏感的 PR 阻塞标签；传入 `[]` 可关闭这组内置默认值。
+</details>
 
-PR 策略固定从 base SHA 读取；调用方覆盖或 PR 自身修改策略都不能移除仓库 required checks/labels。
+<details>
+<summary>工作项写入细节</summary>
 
-### `create_pr_summary`
-针对指定的 PR，自动生成结构化的内容变更摘要和更新日志草案。
-* **输入参数**：
-  * `owner` / `repo` (字符串, 可选)：仓库坐标。
-  * `pullNumber` (数字, 必填)：PR 编号。
+- **`create_issue_set`**：可以直接接收 `plan_from_context.issueDrafts`。`dryRun` 默认为 `true`，不会调用 GitHub 写接口。真实批次必须显式设置 `dryRun: false`，会保留成功创建的 Issue URL，并返回安全化的逐项失败信息，不隐藏部分完成状态。
 
-### `review_pr_against_standard`
-依据 SDLC 安全级别规范（`basic` / `strict` / `security-focused`）对 PR 修改的代码行执行自动化评审。
+</details>
 
-调用方可以显式指定 `workType` 为 `docs`、`feature`、`bugfix`、`refactor`、`security`、`release` 或 `infra`；省略时会保守推断并返回置信度和理由。结构化输出为每条 finding 增加 `dimension`、`paths`、`reason`，并返回 `releaseRisk`、`testCoverageSignal`、`ownershipRoutingGaps`。docs-only 要求文档验证而非代码单元测试；bugfix 要求复现/回归证据；workflow/infra 会读取 PR head SHA 的完整 workflow，检查触发条件、最小权限、失败路径和回滚证据。
+<details>
+<summary>Pull Request 证据细节</summary>
 
-`security-focused` 只有在验证具体 Actions job URL、workflow run、PR head SHA、唯一匹配的 base ref workflow job，以及 job 内已知 scanner action 使用完整 commit SHA 固定后，才把 Gitleaks 或 TruffleHog 作为主要通过证据。Secretlint、detect-secrets 与 GitHub Secret Scanning 名称仍会被识别并显示，但 v1.6 无法把它们绑定到等价的不可变 workflow provenance 链，因此只能作为 unverified claim。同名/重名 job 或 status、未知 App 的 check、条件执行/允许失败的 scanner job 或 step 和可变 action tag 都不能证明扫描通过。证据不完整、PR 修改扫描策略、未运行 provenance-supported scanner、仍在 pending 或扫描失败时都会采用 fail-closed 结论。内置的新增赋值行启发式检查只作为补充，绝不会被表述为“仓库不存在密钥泄露”的证明。
+- **`create_pr_summary`**：限制文件证据数量并报告截断。纯文档 PR 会收到文档验证建议，而不是错误的“缺少代码单元测试”警告。
+- **`quality_gate_status`**：PR 模式会组合 checks、commit statuses、reviews、CODEOWNERS 路由、draft/merge 状态、classic branch protection、Rulesets、阻塞标签、关联 Issues 和 base-SHA 仓库策略。权限失败会继续以 degraded 或 unverified evidence 显示。
+- **`review_pr_against_standard`**：支持 `basic`、`strict` 和 `security-focused`。只有当 check、Workflow、PR head SHA、base Workflow job、扫描器 action 和不可变 action SHA 可以关联时，才把 Gitleaks 或 TruffleHog 作为主要通过证据。动态密钥构造扫描器是有界的补丁内分析，不是全程序数据流分析，也不能证明仓库不存在密钥泄漏。
 
-补充 scanner 会在所有 review standard 下运行；credential-like 字段或认证头 API sink 通过字符串拼接/格式化、常见 JavaScript/Java/Go/Rust/Python/Ruby/PHP/Kotlin/Swift 插值或 builder 形式、`.concat()`/`.join()`、常见解码调用、多行 statement，或有界的补丁内动态字段别名组装时返回 `DynamicSecretConstruction`。实现保留 diff hunk 与 statement 边界，限制别名及输入/输出增长，并聚合重复 finding。显式环境变量/secret manager 来源、注释、删除行，以及 `tokenCount` 这类 credential 元数据会被排除以降低噪音。它只做 patch-local 风险识别，不是全程序数据流分析；跨函数/跨文件的间接构造或完全未知的动态键仍需可信 scanner、CodeQL/SAST 与人工审查。
+</details>
 
-* **输入参数**：
-  * `owner` / `repo` (字符串, 可选)：仓库坐标。
-  * `pullNumber` (数字, 必填)：PR 编号。
-  * `standard` (字符串, 默认 `"basic"`)：执行标准的严格度。
-  * `workType` (字符串, 可选)：显式任务类型；省略时根据 PR 元数据和路径推断。
-  * `checkOwnership` (布尔值, 默认 `true`)：检查修改的文件是否通过 `.github/CODEOWNERS` 指定了归属人且已执行审阅。
+<details>
+<summary>治理与发布细节</summary>
 
-### `security_triage`
-收集并分类过滤目标仓库的 Code Scanning 静态扫描、Dependabot 依赖审计和 Secret Scanning 密钥泄露警报。
-* **输入参数**：
-  * `owner` / `repo` (字符串, 可选)：仓库坐标。
+- **`branch_protection_status`**：读取 classic branch protection 和 repository Rulesets。缺少 Administration 权限时会报告验证缺口，不会直接声称分支没有保护。
+- **`workflow_permissions_audit`**：读取 `.github/workflows/*.yml`，评估仓库级和 job 级 `permissions` 声明。它不会修改 Workflow 文件或仓库设置。
+- **`security_triage`**：读取 Code Scanning、Dependabot 和 Secret Scanning 告警。可用结果取决于仓库功能和 token 权限。
+- **`release_readiness_check`**：要求 CI 存在明确的 passing 证据。pending、unknown、失败或零信号都会阻塞就绪结论。仓库策略还可以要求 CHANGELOG 和已测试回滚证据。
 
-### `release_readiness_check`
-发布前准备就绪度核查，聚合 check runs 与 commit statuses，检查未决 Bug 和 CHANGELOG，并生成回滚方案。只有 CI 明确为 `passing` 才会判定可发布；`pending`、`unknown`、零信号或失败都会阻塞。
-* **输入参数**：
-  * `owner` / `repo` (字符串, 可选)：仓库坐标。
-  * `headRef` (字符串, 可选)：准备发布的 tag/分支。
-  * `pullNumber` (数字, 可选)：检查 PR head 与真实阻断标签。
-  * `rollbackPlanEvidence` (对象, 可选)：调用方提供的 `{ reference, tested }`；策略要求已测试回滚方案时必须提供。
+</details>
 
-### 仓库策略
+<details>
+<summary>交接细节</summary>
 
-通过 `.agentic-sdlc.yml` 增强 checks、protected paths、reviewers、阻断标签与发布要求。完整 schema、示例、provenance、base-SHA 自修改防护、限制与迁移见 [仓库策略指南](docs/repository-policy.md)。
+- **`agent_handoff_packet`**：组合有界的调用方状态、Issue/PR 上下文、可用时的不可变 base-SHA 策略、已完成工作、剩余步骤和证据警告。调用方提供的状态始终保留为 assertion，而不是系统验证。这个包不能批准、合并、发布或启动另一个智能体。
 
-### `branch_protection_status`
-读取当前分支的分支保护配置与仓库规则集（Rulesets），分析保护强推、分支删除、合并审核机制是否缺失。
-* **输入参数**：
-  * `owner` / `repo` (字符串, 可选)：仓库坐标。
-  * `branch` (字符串, 可选)：目标分支名称，默认仓库的默认分支。
+</details>
 
-### `workflow_permissions_audit`
-所有的写入类工具都强制集成了 `dryRun` (空跑) 机制：
+服务器还通过 `sdlc://` 暴露五个只读资源，分别提供 SDLC 标准以及 Issue、PR 摘要、发布就绪和交接模板。
 
-| `dryRun` 参数值 | 实际效果 |
+## 常用工作流
+
+这些顺序可以降低工具选择歧义，每条流程最终都保留人工决策。
+
+```text
+开始工作
+repo_context → plan_from_context → create_issue_set (dryRun: true)
+→ 人工确认工作项 → create_issue_set (dryRun: false)
+→ prepare_work_item
+
+评审 Pull Request
+create_pr_summary → quality_gate_status → review_pr_against_standard
+→ 人工评审 findings 并决定是否合并
+
+评审仓库治理
+branch_protection_status → workflow_permissions_audit → security_triage
+→ 仓库负责人决定修改哪些设置或 Workflows
+
+准备发布
+security_triage → release_readiness_check
+→ 人工批准 Tag、Release 和部署
+
+移交工作
+相关证据工具 → agent_handoff_packet
+→ 下一位智能体先验证过期状态和调用方断言，再继续执行
+```
+
+## GitHub 权限
+
+不要默认授予所有权限。请根据团队启用的工具选择所需权限，并先在非生产仓库验证。
+
+| 能力 | Fine-grained 仓库权限 | Classic PAT scope | 使用方 |
+|---|---|---|---|
+| 仓库元数据与文件 | Metadata read、Contents read | `repo` 或 `public_repo` | 上下文、策略、Workflow、评审、CHANGELOG 和 CODEOWNERS 证据 |
+| Issues | Issues read | `repo` 或 `public_repo` | 上下文、规划、工作项简报、门禁、发布和交接 |
+| Pull Requests 与评审 | Pull requests read | `repo` 或 `public_repo` | PR 摘要、门禁、评审和交接 |
+| Checks 与 statuses | Checks read、Commit statuses read | `repo` 或 `public_repo` | 质量门禁、发布就绪和可信扫描证据 |
+| Actions provenance | Actions read | `repo` 或 `public_repo` | 读取可信扫描证据背后的 workflow run、job 和 workflow 身份 |
+| 分支保护 | Administration read | `repo` 或 `public_repo` | Classic branch protection；repository Rulesets 使用 Metadata read |
+| Code scanning alerts | Code scanning alerts read | `security_events` | `security_triage` |
+| Dependabot alerts | Dependabot alerts read | `security_events` | `security_triage` |
+| Secret scanning alerts | Secret scanning alerts read | `security_events` | `security_triage` |
+| 创建 Issues | Issues write | `repo` 或 `public_repo` | 仅 `create_issue_set` 且 `dryRun: false` |
+
+GitHub 权限和端点要求可能变化。出现权限错误时，请核对 [GitHub REST API fine-grained PAT 权限文档](https://docs.github.com/en/rest/authentication/permissions-required-for-fine-grained-personal-access-tokens)。缺少可选权限可能产生 degraded 或 unverified evidence，这并不意味着需要授予无关权限。
+
+## 安全模型与信任边界
+
+这个服务器约束的是自身工具，不能控制外围 AI 智能体或 MCP 客户端拥有的其他能力。
+
+- **一个预览优先的写入工具**：`create_issue_set` 是唯一的 GitHub 写入工具，默认 `dryRun: true`
+- **不提供高权限仓库变更**：没有 merge、approval、force-push、分支删除、分支规则修改、Release 创建或部署工具
+- **人工门禁位于系统之外**：服务器报告 CODEOWNERS、评审、策略、CI、安全和发布证据，最终决定由 GitHub 与团队执行
+- **证据始终保留限定条件**：缺失、过期、截断、格式异常或受权限限制的来源会继续显示为缺口
+- **仓库策略绑定 base SHA**：可用时，PR 策略从 base SHA 读取，Pull Request 不能静默降低自身门禁
+- **外部文本不受信任**：Issue body、评论、PR 元数据、文件名和日志进入 Markdown 或交接提示词前会受到长度限制和转义
+- **密钥检测存在边界**：可信扫描器 provenance 与补丁启发式可以降低风险，但跨文件或运行时数据流仍需 CodeQL 或其他静态应用安全测试（SAST）、密钥扫描器、测试和人工评审
+- **凭据仍由接入方负责**：优先使用客户端 secret 注入或环境变量，不要把 token 提交到仓库，也不要粘贴到 Issue、PR 或日志内容中
+- **本地 HTTP 不能直接远程使用**：当前 HTTP profile 没有 MCP OAuth、租户身份、限流或产品级 timeout/cancellation 预算
+
+`.agentic-sdlc.yml` 的 schema、provenance、限制和 base-SHA 自修改防护见[仓库策略指南](docs/repository-policy.md)。对抗测试矩阵和覆盖率规则见[测试策略](docs/testing-strategy.md)。
+
+## 仓库策略与 Resources
+
+当仓库专属 checks、protected paths、reviewers、阻塞标签、CHANGELOG 和回滚要求需要影响工具结论时，添加 `.agentic-sdlc.yml`。策略输出包含来源 ref、blob SHA、digest、稳定 rule IDs 和警告。
+
+静态资源使用 `sdlc://` scheme：
+
+| Resource | 用途 |
 |---|---|
-| `true` (默认) | 预览模式 —— 不会对 GitHub API 进行任何真实修改 |
-| `false` | 写入模式 —— 真实修改 GitHub 仓库内容 |
+| `sdlc://standards/agentic-sdlc` | Agentic SDLC 参考标准 |
+| `sdlc://templates/issue` | 结构化 GitHub Issue 模板 |
+| `sdlc://templates/pr-summary` | Pull Request 摘要模板 |
+| `sdlc://templates/release-readiness` | 发布前检查清单 |
+| `sdlc://templates/handoff` | 智能体续接模板 |
 
-系统始终默认 `dryRun: true`。Agent 必须明确指定 `dryRun: false` 才能执行写入操作，这能有效防止 AI 的幻觉导致破坏性操作。
-预览结果会明确显示目标仓库和 warning；真实批次会同时保留成功项与安全化失败信息，避免部分完成状态被隐藏。
+## 本地 HTTP profile
 
----
-
-## 典型工作流示例
-
-### 1. 开启一个新功能开发
-
-```
-1. repo_context                  # 了解仓库基线背景
-2. plan_from_context (goal=...)  # 依据目标生成 SDLC 计划
-3. create_issue_set (dryRun:true) # 预览将要创建的 Issues
-4. create_issue_set (dryRun:false) # 正式在 GitHub 创建 Issues
-5. prepare_work_item (issueNumber=N) # 提取某一个 Issue 为当前 Agent 准备任务简报
-```
-
-### 2. 审查 Pull Request
-
-```
-1. create_pr_summary (pullNumber=N)             # 获取全局 Diff 概览
-2. quality_gate_status (pullNumber=N)            # 检查 CI/CD 状态
-3. review_pr_against_standard (standard:strict)  # 按严格标准找出代码质量问题
-```
-
-### 3. 发版前的终极检查
-
-```
-1. security_triage                # 检查各类安全警报
-2. release_readiness_check        # 评估发版就绪度
-3. (解决任何阻塞型 Issues)
-4. 人类审批通过后打 Tag 发版
-```
-
----
-
-## 安全注意事项
-
-- **绝不要**把你的 `GITHUB_TOKEN` 提交到代码库中 —— 始终使用 `.env` 文件或 PowerShell `$env:` 环境变量。
-- 默认的 `dryRun: true` 保护机制可以防止代码库被意外修改。
-- 本工具不支持自动合并 (Auto-merge)、不强制推送 (Force-push)、不支持删除分支操作。
-- v1.7 的策略感知门禁、PR 审查、workflow 审计、安全分诊、发布就绪与 handoff 工具只读取证据，不会批准或合并 PR，也不会修改分支保护、rulesets 或仓库策略；单独的 Issue 创建工具仍默认受 `dryRun: true` 保护。
-- Secret scanning (密钥扫描) 警报始终被评级为最高危 (`critical`)。
-- 服务器除了调用官方 GitHub API 之外，不发起任何额外的出站外网请求。
-
----
-
-## 本地开发指南
+stdio 是默认且推荐的本地传输方式。需要 Streamable HTTP 的本机客户端可以在源码构建后显式启用：
 
 ```powershell
-# 类型检查
-npm run typecheck
-
-# 监听模式 (热重载)
-npm run dev
-
-# 构建项目
-npm run build
-
-# 运行测试
-npm run test
-
-# 冒烟测试 (不需要提供真实的 GitHub Token)
-npm run smoke
+$env:TRANSPORT = "http"
+$env:PORT = "3000"
+node dist/index.js
 ```
 
----
+服务端点为 `http://127.0.0.1:3000/mcp`。它只监听 loopback，校验 `Host` 和调用方提供的 `Origin`；每个 POST 使用隔离的无状态 server/transport；不支持的 GET/DELETE session 操作会被拒绝；错误细节受到限制，并支持关闭信号。
 
-## 发布指南 (维护者专用)
+不要把该端点暴露到其他机器，也不要直接通过反向代理对外提供。远程 OAuth、调用方级凭据、租户隔离、限流和明确请求预算计划在 v1.10 实现。
 
-本包通过 **Trusted Publishing (OIDC 可信发布)** 方式发布到 npm —— 仓库中不存储任何长期有效的 `NPM_TOKEN` 密钥。发布流程由 `.github/workflows/publish.yml` 负责执行。
+## 本地开发与项目链接
 
-### npm 官网一次性配置步骤
-
-1. 登录 [npmjs.com](https://www.npmjs.com)，进入该包的 **Settings -> Publishing access** 页面。
-2. 添加一个 **Trusted Publisher (可信发布者)**，填写：
-   - Provider (提供方): `GitHub Actions`
-   - Repository (仓库): `SakuraCianna/agentic-sdlc-mcp`
-   - Workflow filename (工作流文件名): `publish.yml`
-3. 保存。此后 `publish.yml` 即可在不使用任何 npm token 的情况下完成发布 —— GitHub 会签发一个短期有效的 OIDC token，npm 用它换取发布凭证，并自动生成 provenance (来源证明)。
-
-> **首次发布例外**：如果该包名在 npm 上尚不存在，则无法预先绑定 Trusted Publisher (必须先有包才能配置)。此时需要先在本地用经典 token 手动执行一次 `npm publish`，之后的所有发布再切换为 Trusted Publishing。`publish.yml` 工作流本身始终使用 OIDC 方式，不会退回到 token 方式。
-
-### 如何触发一次发布
-
-- **推荐方式**：在 GitHub 上创建一个 Release (打 Tag 后点击 "Publish release")，这会触发 `release: published` 事件，自动运行 `publish.yml`。
-- **手动方式**：进入 **Actions -> Publish to npm -> Run workflow** 手动触发 (`workflow_dispatch`)。
-
-### 发布前本地检查清单
+只有需要贡献代码或检查实现时才需要克隆仓库：
 
 ```powershell
-npm run typecheck
+git clone https://github.com/SakuraCianna/agentic-sdlc-mcp.git
+Set-Location agentic-sdlc-mcp
+npm install
 npm run build
 npm run test
-npm run smoke
-npm run test:coverage
-npm run check:line-endings
-npm pack --dry-run
 ```
 
-`npm pack --dry-run` 会列出即将打包进发布压缩包的所有文件，但不会真正生成压缩包。请确认其中只包含 `dist/`、`README.md`、`server.json`、`.env.example`，以及 npm 自动包含的 `package.json` 与 `LICENSE` —— 测试文件、TypeScript 源码和 `package-lock.json` 不应出现在其中 (这由 package files 清单与 `tsconfig.build.json` 共同保证，发布用 `dist/` 构建会排除 `src/__tests__/**`)。
+| 命令 | 用途 |
+|---|---|
+| `npm run typecheck` | 检查 TypeScript 类型 |
+| `npm run build` | 构建 `dist/` |
+| `npm run test` | 运行完整 Vitest 测试套件 |
+| `npm run test:integration` | 运行配置与 MCP runtime 集成测试 |
+| `npm run test:coverage` | 执行覆盖率门槛并生成报告 |
+| `npm run smoke` | 在没有 GitHub 凭据时验证注册与加载 |
+| `npm run check:line-endings` | 拒绝 CRLF 和混合行尾 |
 
-同一个已发布 GitHub Release 还会触发独立的 MCP Registry 工作流。它先校验 tag、npm package、runtime 与 `server.json` 版本完全一致，再等待精确 npm 版本可见；随后使用 GitHub OIDC 发布不可变的 stdio metadata，并通过 Registry API 验证可发现性。该流程没有长期 Registry secret，也不会抢在 npm 发布成功之前执行。
+- [路线图](docs/ROADMAP.md)
+- [仓库策略指南](docs/repository-policy.md)
+- [测试策略](docs/testing-strategy.md)
+- [AI 编码智能体冒烟测试](docs/ai-coding-agent-smoke-test.md)
+- [更新日志](CHANGELOG.md)
+- [Releases](https://github.com/SakuraCianna/agentic-sdlc-mcp/releases)
+- [开放 Issues](https://github.com/SakuraCianna/agentic-sdlc-mcp/issues)
 
-### GitHub Actions 工作流说明
-
-| 工作流 | 触发条件 | 作用 |
-|---|---|---|
-| `.github/workflows/ci.yml` | `pull_request`、推送到 `main` | 在 Node 24 上运行类型检查、构建、测试、冒烟测试和覆盖率检查 |
-| `.github/workflows/secret-scan.yml` | `pull_request`、推送到 `main`、手动触发 | 使用只读权限运行固定提交版本的 Gitleaks，作为主要成熟密钥扫描证据 |
-| `.github/workflows/publish.yml` | GitHub Release 发布、或手动触发 | 通过 OIDC Trusted Publishing 方式发布到 npm |
-| `.github/workflows/publish-registry.yml` | GitHub Release 发布 | 等待精确 npm 版本后，通过 GitHub OIDC 发布并验证 MCP Registry metadata |
-| `.github/dependabot.yml` | 每周定时 | 自动提交 npm 依赖与 GitHub Actions 依赖的更新 PR (打上 `dependencies` 标签) |
-
----
+npm 与 MCP Registry 工作流使用 GitHub OpenID Connect（OIDC）可信发布。发布 GitHub Release 会同时触发两个工作流；Registry 工作流会等待该精确 npm 版本可用，再发布版本一致、不可变的 stdio metadata。
 
 ## 开源协议
 
-MIT License
+[MIT](LICENSE)
