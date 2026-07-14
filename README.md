@@ -1,154 +1,102 @@
 <p align="center">
-  <img src="assets/logo.svg" alt="MCP Logo" width="120"/>
+  <img src="assets/logo.svg" alt="agentic-sdlc-mcp logo" width="120">
 </p>
 
-<h1 align="center">Agentic SDLC Control Plane (agentic-sdlc-mcp)</h1>
+<h1 align="center">agentic-sdlc-mcp</h1>
 
 <p align="center">
-  <b>Expose professional, structured SDLC workflows as MCP tools to guide AI coding agents (Claude, Cursor, etc.) through safe, auditable development lifecycles.</b>
+  <strong>Governance and evidence controls for AI coding agents working in real GitHub repositories.</strong>
+</p>
+
+<p align="center">
+  Let Claude Code, Cursor, and other Model Context Protocol (MCP) clients work with repository context, review gates, security evidence, and human approval points.
+</p>
+
+<p align="center">
+  <a href="README_zh.md">中文</a> ·
+  <a href="https://www.npmjs.com/package/agentic-sdlc-mcp">npm</a> ·
+  <a href="https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.SakuraCianna%2Fagentic-sdlc-mcp">MCP Registry</a> ·
+  <a href="docs/ROADMAP.md">Roadmap</a>
 </p>
 
 <p align="center">
   <a href="https://www.npmjs.com/package/agentic-sdlc-mcp"><img src="https://img.shields.io/npm/v/agentic-sdlc-mcp.svg?style=flat-square&color=blue" alt="npm version"></a>
+  <a href="https://www.npmjs.com/package/agentic-sdlc-mcp"><img src="https://img.shields.io/npm/dm/agentic-sdlc-mcp.svg?style=flat-square&color=green" alt="npm downloads"></a>
   <a href="https://github.com/SakuraCianna/agentic-sdlc-mcp/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/SakuraCianna/agentic-sdlc-mcp/ci.yml?branch=main&style=flat-square" alt="CI status"></a>
-  <a href="https://www.npmjs.com/package/agentic-sdlc-mcp"><img src="https://img.shields.io/npm/dm/agentic-sdlc-mcp.svg?style=flat-square&color=green" alt="downloads"></a>
-  <a href="https://github.com/SakuraCianna/agentic-sdlc-mcp/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/agentic-sdlc-mcp.svg?style=flat-square&color=orange" alt="license"></a>
-  <a href="https://modelcontextprotocol.io"><img src="https://img.shields.io/badge/MCP-Compatible-blue?style=flat-square" alt="MCP Compatible"></a>
+  <img src="https://img.shields.io/badge/Node.js-%3E%3D24-339933?style=flat-square&logo=node.js&logoColor=white" alt="Node.js 24 or newer">
+  <a href="LICENSE"><img src="https://img.shields.io/npm/l/agentic-sdlc-mcp.svg?style=flat-square&color=orange" alt="MIT license"></a>
 </p>
 
----
+`agentic-sdlc-mcp` is a software development lifecycle (SDLC) governance layer for teams that already let AI coding agents change production repositories. It turns GitHub context, policy, checks, reviews, security alerts, and release signals into 12 workflow-level MCP tools. Eleven tools are read-only. The only GitHub write tool previews changes by default.
 
-## 💡 What Is This?
+## What changes with this MCP
 
-Traditional AI agents write code but often lack the context of software engineering discipline. They might force-push, bypass reviews, fail to run CI, leak secrets, or skip writing test cases.
+AI coding agents can create code and pull requests without understanding every repository rule. This server gives the agent bounded context and gives reviewers explicit evidence gaps instead of another free-form summary.
 
-`agentic-sdlc-mcp` is an **SDLC orchestration layer and control plane** built on the **Model Context Protocol (MCP)**. It wraps GitHub APIs into high-level, opinionated tools that enforce traceability, human-in-the-loop gates, quality thresholds, and security checks for AI coding agents.
-
-### The Agentic SDLC Loop
-```mermaid
-graph TD
-    A[Phase 1: Plan] -->|Exposed context & briefs| B[Phase 2: Create]
-    B -->|Incremental commits| C[Phase 3: Test]
-    C -->|Local test reports| D[Phase 4: Review]
-    D -->|Human review gate| E[Phase 5: Optimize]
-    E -->|Refinement| F[Phase 6: Secure]
-    F -->|Security check | G[Human Release Approval]
-    G -->|Release Tag & deploy| A
-```
-
----
-
-## 🛠️ Tools Categorization
-
-Instead of exposing raw API endpoints, this server provides **12 specialized tools** structured around the SDLC pipeline:
-
-| Category | Tools | Description |
+| Concern | Without this MCP | With `agentic-sdlc-mcp` |
 |---|---|---|
-| **💡 Planning & Context** | [`repo_context`](#repo_context)<br>[`plan_from_context`](#plan_from_context)<br>[`prepare_work_item`](#prepare_work_item) | Understand the codebase, structure phase-by-phase plans, and generate agent briefs. |
-| **🚀 Execution** | [`create_issue_set`](#create_issue_set) | Batch-create GitHub issues mapping directly to the SDLC plan. |
-| **🔍 Review & Verification** | [`quality_gate_status`](#quality_gate_status)<br>[`create_pr_summary`](#create_pr_summary)<br>[`review_pr_against_standard`](#review_pr_against_standard) | Audit CI checks, generate structured PR summaries, and review code against SDLC standard levels. |
-| **🛡️ Governance & Security** | [`branch_protection_status`](#branch_protection_status)<br>[`workflow_permissions_audit`](#workflow_permissions_audit)<br>[`security_triage`](#security_triage)<br>[`release_readiness_check`](#release_readiness_check) | Query branch rule enforcement, audit Actions workflow permissions, triage vulnerabilities, and perform pre-release checks. |
-| **🤝 Handoff & Continuity** | [`agent_handoff_packet`](#agent_handoff_packet) | Compile a packet so other agents can seamlessly take over the work. |
+| Repository context | The agent starts from the prompt and guesses project conventions | `repo_context` reads bounded metadata, scripts, policy, issues, pull requests, and agent instructions |
+| High-risk work | Authentication, payment, migration, and workflow changes receive a generic plan | `prepare_work_item` adds risk reasons, defensive requirements, negative scenarios, rollback, and observability |
+| Issue planning | A human reformats the plan into GitHub work items | `plan_from_context` creates structured drafts and `create_issue_set` previews the exact write |
+| Pull request gates | A green continuous integration (CI) badge may be treated as sufficient evidence | `quality_gate_status` separates checks, reviews, ownership, protection, labels, and missing evidence |
+| Secret risk | Scanner names or keyword matches may be accepted without provenance | PR review separates trusted scanner evidence, bounded patch heuristics, and unverified gaps |
+| Release and handoff | Readiness depends on free-form status summaries | Release and handoff tools preserve blockers, policy obligations, evidence warnings, and human approval points |
 
----
+This server does not write code, merge pull requests, force-push, create releases, deploy software, or replace human security review.
 
-## 🗺️ System Architecture
+## How it fits into a production agent workflow
+
+The MCP sits between an AI coding agent and GitHub evidence. Repository changes still happen through the agent's normal development environment, and high-impact decisions remain with your team.
+
 ```mermaid
-sequenceDiagram
-    autonumber
-    actor Developer as Human Owner
-    participant Agent as AI Coding Agent (Cursor/Claude)
-    participant MCP as agentic-sdlc-mcp (Control Plane)
-    participant GitHub as GitHub API
-    participant npm as npm Registry
-
-    Developer->>Agent: "Create a feature for repo X"
-    Agent->>MCP: Call repo_context / plan_from_context
-    MCP->>GitHub: Fetch repository states & file tree
-    GitHub-->>MCP: Repo Metadata & Files
-    MCP-->>Agent: SDLC Plan & context brief
-    Note over Agent: Agent develops code...
-    Agent->>MCP: Call review_pr_against_standard / quality_gate_status
-    MCP->>GitHub: Audit pull request, CODEOWNERS, & checks status
-    GitHub-->>MCP: PR approvals, CI check status
-    MCP-->>Agent: Verification report & findings
-    Note over Developer,Agent: Human Review Gate: Merge PR
-    Developer->>MCP: Trigger gh release create v1.3.0
-    MCP->>GitHub: Create Release Tag
-    GitHub->>GitHub: Trigger publish.yml Workflow (OIDC)
-    GitHub->>npm: Publish package (Signed with provenance)
+flowchart LR
+    Policy["Engineering policy<br>and repository rules"] --> MCP["agentic-sdlc-mcp"]
+    Agent["AI coding agent<br>Claude Code · Cursor · MCP client"] --> MCP
+    MCP --> GitHub["GitHub API evidence"]
+    GitHub --> MCP
+    MCP --> Reports["Briefs · plans · gates<br>reviews · release reports"]
+    Reports --> Agent
+    Reports --> Human["Human review and approval"]
+    Agent -. "Code · commits · pull requests" .-> GitHub
+    Human -. "Merge · release · deploy" .-> GitHub
 ```
 
----
+## Where it helps
 
-## 📋 Prerequisites
+Use the tools as decision support at the points where an autonomous agent would otherwise guess or rely on stale prose.
 
-Before running the server, ensure you have:
-1. **Node.js >= 24** installed on your system.
-2. **GitHub Personal Access Token (PAT)**:
-   * **Classic PAT scopes**: `repo` plus `security_events`; add `read:org` when organization/team metadata must be resolved.
-   * **Fine-grained PAT repository permissions (read)**: Contents, Pull requests, Issues, Checks, Commit statuses, Administration (classic branch protection), Code scanning alerts, Dependabot alerts, and Secret scanning alerts. Metadata read is automatically included and is sufficient for repository rulesets.
-   * GraphQL review decisions and linked-issue queries reuse the underlying Pull requests and Issues permissions; GitHub has no separate "GraphQL read" permission switch.
-   * Grant **Issues: write** only when you intend to call `create_issue_set` with `dryRun: false`; the v1.6 gate/review tools do not need write access.
-     * Note: Make sure to verify token permissions against [GitHub REST API Documentation](https://docs.github.com/en/rest) if security endpoints fail.
+| Production scenario | Recommended tools | Decision artifact |
+|---|---|---|
+| Onboard an agent into an unfamiliar repository | `repo_context` | Repository briefing with scripts, workflows, policy, open work, and known gaps |
+| Turn a feature, bug, or security goal into reviewable work | `plan_from_context` → `create_issue_set` | Work-type-aware plan, issue drafts, and preview-first GitHub issues |
+| Prepare auth, payment, migration, or infrastructure work | `prepare_work_item` | Risk-aware brief with defensive requirements, negative tests, rollback, and observability |
+| Detect dynamic credential construction in a patch | `review_pr_against_standard` | Patch-local findings for concatenation, interpolation, decoding, aliases, and auth-header sinks |
+| Decide whether a pull request is ready for human review | `create_pr_summary` → `quality_gate_status` → `review_pr_against_standard` | Diff summary, merge-gate evidence, findings, blockers, and next actions |
+| Audit repository governance | `branch_protection_status` → `workflow_permissions_audit` | Branch/ruleset evidence and GitHub Actions least-privilege findings |
+| Assess release readiness | `security_triage` → `release_readiness_check` | Security-alert summary, CI evidence, release blockers, changelog status, and rollback requirements |
+| Transfer work to another agent | `agent_handoff_packet` | Bounded continuation packet that labels caller assertions and evidence warnings |
 
----
+## Install from npm
 
-## ⚡ Quick Start
+You need Node.js 24 or newer. Run the published package directly from npm:
 
-### 1. Instant Run via npx (Recommended)
-You do not need to download or clone the repository. Run the server directly inside your MCP client environment:
-```bash
+```powershell
 npx -y agentic-sdlc-mcp
 ```
 
-### 2. Global Installation
-Or install the package globally on your system:
-```bash
+For a global CLI installation:
+
+```powershell
 npm install -g agentic-sdlc-mcp
-# Start using the global command
 agentic-sdlc-mcp
 ```
 
-### 3. Local Development (From Source)
-If you want to run or extend the server locally from the source code:
-```bash
-git clone https://github.com/SakuraCianna/agentic-sdlc-mcp.git
-cd agentic-sdlc-mcp
-npm install
-npm run build
-node dist/index.js
-```
+The default transport is stdio. Most MCP clients should start the package for you instead of running it in a separate terminal.
 
-### 4. Local Streamable HTTP (Loopback Profile)
+## Connect an MCP client
 
-Stdio remains the default and recommended local transport. For a local client that requires Streamable HTTP, opt in explicitly after building:
+Add the server to Claude Desktop, Cursor, Windsurf, or another MCP client. Inject the GitHub token through the client's secret or environment configuration.
 
-```powershell
-$env:TRANSPORT = "http"
-$env:PORT = "3000"
-node dist/index.js
-```
-
-The endpoint is `http://127.0.0.1:3000/mcp`. `PORT` must be an integer from 1 through 65535. This profile binds only to `127.0.0.1`, validates `Host` and any supplied `Origin`, creates an isolated stateless MCP server/transport for each POST, returns `405` for unsupported GET/DELETE streaming or session operations, bounds HTTP error details, and closes cleanly on `SIGINT`/`SIGTERM`.
-
-This is **not a remote deployment profile**. It has no MCP OAuth, caller-specific GitHub credentials, tenant isolation, rate limiting, or product-level timeout/cancellation budgets. Do not expose or reverse-proxy this port to another machine; remote HTTP security remains planned for v1.10.
-
----
-
-## ✅ Generic AI Coding Agent Smoke Test
-
-If you need to verify this MCP server in any MCP-capable AI coding agent, follow the client-neutral guide in [`docs/ai-coding-agent-smoke-test.md`](docs/ai-coding-agent-smoke-test.md). It covers the minimum configuration, repository fallback behavior, `repo_context` read-only validation, and `create_issue_set` dry-run preview without creating GitHub issues.
-
----
-
-## ⚙️ MCP Client Configuration
-
-The server uses the preview MCP Registry identity `io.github.SakuraCianna/agentic-sdlc-mcp`. Registry GitHub namespaces are case-sensitive and follow the authenticated account login. `npx -y agentic-sdlc-mcp` remains the compatibility installation path.
-
-Add this server configuration to your MCP client setting files (e.g., `claude_desktop_config.json`, Cursor, or Windsurf settings):
-
-### Claude Desktop / Cursor / Windsurf (Using npm package)
 ```json
 {
   "mcpServers": {
@@ -156,249 +104,238 @@ Add this server configuration to your MCP client setting files (e.g., `claude_de
       "command": "npx",
       "args": ["-y", "agentic-sdlc-mcp"],
       "env": {
-        "GITHUB_TOKEN": "REPLACE_WITH_GITHUB_TOKEN",
-        "GITHUB_OWNER": "your-github-username-or-org",
-        "GITHUB_REPO": "your-target-repository"
+        "GITHUB_TOKEN": "your_github_token_here",
+        "GITHUB_OWNER": "your_organization",
+        "GITHUB_REPO": "your_repository"
       }
     }
   }
 }
 ```
 
-### 🔑 Global Configuration & Interactive Setup (Persistent)
+Some Windows MCP clients require `npx` through `cmd`:
 
-In addition to specifying environment variables in your MCP client configurations, you can configure your GitHub credentials globally using an interactive terminal questionnaire. The settings will be saved to `~/.agentic-sdlc-mcp.json` under your home directory and automatically loaded in subsequent runs.
-
-#### 1. Configure via CLI
-Run the configuration command:
-```bash
-npx agentic-sdlc-mcp configure
+```json
+{
+  "command": "cmd",
+  "args": ["/c", "npx", "-y", "agentic-sdlc-mcp"]
+}
 ```
-This guides you through configuring:
-* `GITHUB_TOKEN` (Primary token; [generate one here](https://github.com/settings/tokens) and follow the least-privilege matrix in [Prerequisites](#-prerequisites))
-* `GITHUB_OWNER` (Default repository owner name, optional)
-* `GITHUB_REPO` (Default repository name, optional)
 
-#### 2. Automatic Setup Prompts (TTY)
-If you run `npx -y agentic-sdlc-mcp` directly without a configured `GITHUB_TOKEN`, the tool detects if it is in an interactive environment (TTY) and automatically launches the prompt flow. If it runs non-interactively (e.g. launched by Claude Desktop in the background), it exits gracefully with clear setup instructions.
+`GITHUB_OWNER` and `GITHUB_REPO` are optional defaults. Tool calls can provide repository coordinates explicitly. Use the [GitHub permission matrix](#github-permissions) to grant only the capabilities you enable.
 
-#### 3. Global Environment Variables (Fallback)
-You can still define environment variables directly in your terminal shell (`PowerShell` for Windows or `bash` for macOS/Linux):
+<details>
+<summary>Local interactive configuration</summary>
+
 ```powershell
-# Windows PowerShell
-$env:GITHUB_TOKEN = "REPLACE_WITH_GITHUB_TOKEN"
-$env:GITHUB_OWNER = "your-org"
-$env:GITHUB_REPO  = "your-repo"
+npx -y agentic-sdlc-mcp configure
 ```
 
----
+This compatibility path stores configuration in `~/.agentic-sdlc-mcp.json`, including the GitHub token. Use it only on a trusted, single-user workstation. For production-focused setups, prefer MCP client secret injection or process environment variables.
 
-## 🎯 Typical Scenarios & Best Practices
+</details>
 
-AI agents should not run commands blindly or write code without structure. This control plane enforces software engineering discipline. Below are the recommended agent-collaboration patterns:
+## Verify the connection
 
-### Scenario 1: Bootstrapping a Feature / Fix
-When an agent starts a task, it must follow this checklist to prevent "blind coding":
-1. **Gather Context**: Call [`repo_context`](#repo_context) to check current issues, PRs, and branch states.
-2. **Design a Plan**: Call [`plan_from_context`](#plan_from_context) with the task goal. This will outline structured issues corresponding to SDLC phases (Plan, Create, Test, Review, Optimize, Secure).
-3. **Write Issues**: Call [`create_issue_set`](#create_issue_set) with `dryRun: false` to publish the checklist directly to GitHub.
-4. **Acquire Work Brief**: Call [`prepare_work_item`](#prepare_work_item) on the active issue to retrieve precise guidelines, scope definitions, and related files.
+Start with a read-only call so you can inspect the repository boundary before granting write access:
 
-### Scenario 2: Guarding the Pull Request Gate
-Before submitting a PR for human review, the agent must verify its own quality:
-1. **Generate PR Summary**: Call [`create_pr_summary`](#create_pr_summary) to auto-generate structured, professional release notes and file diff changes.
-2. **Audit CI Status**: Call [`quality_gate_status`](#quality_gate_status) to ensure all GitHub Actions tests and linting check runs are passing green.
-3. **Execute Static Audit**: Call [`review_pr_against_standard`](#review_pr_against_standard) with `standard: "strict"` or `"security-focused"` to scan diffs for key leaks, verify `.env` safety, and ensure `.github/CODEOWNERS` reviewers are correctly assigned.
+```text
+Use agentic-sdlc-mcp to run repo_context for the configured repository. Include package scripts, workflows, governance, and repository policy. Do not create issues or modify GitHub.
+```
 
-### Scenario 3: Release Readiness Check
-When preparation is complete and a release is requested:
-1. **Vulnerability Check**: Call [`security_triage`](#security_triage) to audit Code Scanning (SAST), Dependabot, and Secret Scanning. Ensure no critical alerts block the release.
-2. **Release Readiness**: Call [`release_readiness_check`](#release_readiness_check) to generate a rollback plan template, verify there are no open release-blocking issues, and ensure CHANGELOG.md is up to date.
-3. **Handoff**: If transferring deployment duties to another agent, call [`agent_handoff_packet`](#agent_handoff_packet) to pass along the complete audit log.
+Then validate the write boundary without creating anything:
 
----
+```text
+Generate a feature plan and pass its issue drafts to create_issue_set with dryRun: true. Show the target repository, titles, labels, body summaries, and warnings. Do not write to GitHub.
+```
 
-## 📖 Tools Reference
+See the [client-neutral smoke test](docs/ai-coding-agent-smoke-test.md) for a five-minute verification path.
 
-Detailed specifications of the exposed MCP tools.
+## Tools
 
-### `repo_context`
-Reads repository metadata, README, package.json, open issues, and open PRs. Optionally acts as a fuller "repository briefing packet" -- detected package manager, tech stack, common verification scripts, workflow file names, lightweight governance signals, and agent instruction file summaries (e.g. `AGENTS.md`, `CLAUDE.md`). Use this at the start of any workflow to orient the agent.
-When requested, the bounded `readmeSummary` and `packageJsonSummary` values are also returned in `structuredContent`, so agents do not need to recover them from the Markdown response.
-* **Arguments:**
-  * `owner` (string, optional): GitHub owner.
-  * `repo` (string, optional): GitHub repo.
-  * `includeReadme` (boolean, default: `true`): Include a truncated README summary.
-  * `includePackageJson` (boolean, default: `false`): Include package.json summary, detected package manager (npm/pnpm/yarn/bun), tech stack, and common scripts (build/test/typecheck/lint/smoke/...).
-  * `includeWorkflows` (boolean, default: `false`): Include `.github/workflows/*.yml` file names (names only -- use `workflow_permissions_audit` for permission contents).
-  * `includeAgentInstructions` (boolean, default: `false`): Include summaries of agent instruction files found at the repo root (`AGENTS.md`, `CLAUDE.md`).
-  * `includeGovernance` (boolean, default: `false`): Include whether a CODEOWNERS file exists (for full branch protection details, use `branch_protection_status`).
-  * `includePolicy` (boolean, default: `false`): Include validated repository policy, digest, stable rule IDs, and source ref/blob SHA.
-  * `includeOpenIssues` / `includeOpenPRs` (boolean, default: `false`): Include recent open issues/PRs.
-  * `issueLimit` / `prLimit` (number, default: `20`, max: `100`): Cap how many issues/PRs are fetched.
-  * `maxReadmeChars` (number, default: `3000`): Max README characters before truncation.
-  * `maxInstructionChars` (number, default: `1000`): Max characters per agent instruction file summary before truncation.
+The server registers 12 workflow-level tools. MCP clients receive the full input and output schemas at runtime; this catalog explains when to use each tool and how to interpret its result.
 
-### `plan_from_context`
-Generates a structured, phase-by-phase SDLC plan matching the standard milestones, tailored to a `workType`. Each work type gets a materially different plan -- e.g. `docs` never defaults to requiring code unit tests, `bugfix` always includes repro + regression tests, `security` always includes a threat model and least-privilege review, and `release`/`infra` always include changelog/rollback and workflow-permission checks respectively.
-The response includes 3-5 structured `issueDrafts` whose titles, Markdown bodies, confirmed repository labels, SDLC phases, acceptance criteria, risk levels, and source goal can be passed directly to `create_issue_set`.
-Repository policy can add a default work type, required checks, protected-path constraints, and review/release tasks. An explicit caller `workType` always wins.
-* **Arguments:**
-  * `owner` / `repo` (string, optional): Repo coordinates.
-  * `goal` (string, required): The target feature or fix description.
-  * `workType` (string, optional): One of `docs` / `feature` / `bugfix` / `refactor` / `security` / `release` / `infra`. If omitted, it is inferred from `goal` + `acceptanceCriteria` via a conservative keyword heuristic -- the response's `confidence` (`high`/`medium`/`low`) and `needsClarification` fields tell you whether to trust the guess or pass `workType` explicitly.
-  * `constraints` (string[], optional): Technical or business constraints.
-  * `acceptanceCriteria` (string[], optional): Explicit acceptance criteria (also used for workType inference).
+| Tool | Use it when | Main result | Access |
+|---|---|---|---|
+| `repo_context` | An agent needs repository facts before planning | Bounded briefing with metadata, README/package summaries, scripts, workflows, governance, policy, issues, and PRs | Read-only |
+| `plan_from_context` | A goal needs an SDLC plan and issue drafts | Work-type-aware plan, confidence, clarification signal, and three to five structured issue drafts | Read-only |
+| `prepare_work_item` | An agent is about to implement a GitHub Issue | Risk profile, sourced acceptance criteria, defensive requirements, related evidence, rollback, and handoff prompt | Read-only |
+| `create_issue_set` | A reviewed plan should become GitHub Issues | Exact dry-run preview or partial-success-aware live creation result | Preview-first write |
+| `create_pr_summary` | A pull request needs a reviewable overview | Change summary, affected files, test signals, risks, checklist, and release-note draft | Read-only |
+| `quality_gate_status` | A team needs real merge-gate evidence | `passing`, `failing`, `pending`, `needs_review`, `policy_gap`, or `no_evidence` with blockers and gaps | Read-only |
+| `review_pr_against_standard` | A pull request needs SDLC and security review | Structured findings, release risk, test evidence, ownership gaps, and scanner provenance | Read-only |
+| `branch_protection_status` | A team needs branch and ruleset visibility | Required reviews, status checks, force-push and deletion settings, and verification gaps | Read-only |
+| `workflow_permissions_audit` | GitHub Actions token permissions need review | Top-level and job-level permission findings with least-privilege guidance | Read-only |
+| `security_triage` | Release or incident work needs GitHub security alerts | Code scanning, Dependabot, and secret scanning triage | Read-only |
+| `release_readiness_check` | A human is deciding whether to publish | CI status, blocking issues/labels, changelog and rollback evidence, blockers, and next actions | Read-only |
+| `agent_handoff_packet` | Another agent must continue the work | Compact issue/PR context, policy obligations, caller assertions, warnings, and ordered next steps | Read-only |
 
-### `create_issue_set`
-Previews or batch-creates GitHub issues mapping to the generated plan. Dry-run responses include the target repository, final titles, labels, body summaries, and human-review warnings without calling a GitHub write API. Live batches retain successful issue numbers and URLs while reporting safe per-item failure reasons, so one rejected issue does not hide earlier successes or stop later attempts.
-* **Arguments:**
-  * `owner` / `repo` (string, optional): Repo coordinates.
-  * `issues` (array of objects, required): Structured list of issues to create (title, body, labels, and optional assignees). Accepts `plan_from_context.issueDrafts` directly.
-  * `dryRun` (boolean, default: `true`): If `true`, previews the list without writing to GitHub.
+<details>
+<summary>Context and planning details</summary>
 
-### `prepare_work_item`
-Generates a risk-aware implementation brief. It combines bounded Issue/comment evidence, `.agentic-sdlc.yml` at the default branch, confirmed root package scripts, verified related-file evidence, official GitHub issue relationships, milestone context, and bounded recent-PR history. Structured output separates Issue-authored and derived acceptance criteria and includes work type/confidence, risk level/domains/blast radius/reasons, source provenance, defensive requirements, negative scenarios, clarification questions, rollback, observability, and verified commands.
+- **`repo_context`**: Defaults to a bounded README summary. Opt in to package scripts, workflow names, agent instructions, governance, validated `.agentic-sdlc.yml`, and recent open work. Item and character limits are explicit, and missing sources produce degraded context rather than invented facts.
+- **`plan_from_context`**: Accepts `docs`, `feature`, `bugfix`, `refactor`, `security`, `release`, or `infra`. If omitted, the tool returns its inferred work type, confidence, reasoning, and `needsClarification`. Repository policy can add required checks and protected-path obligations, but an explicit caller work type wins.
+- **`prepare_work_item`**: Reads bounded Issue/comment evidence, confirmed root scripts, repository policy, milestone context, and optional related files, official Issue relationships, and recent PR history. It separates Issue-authored criteria from derived requirements. Deep evidence paths expose request budgets and incomplete-source warnings.
 
-Issue titles, bodies, comments, PR metadata, and file names are treated as untrusted external evidence. Markdown and the handoff prompt are bounded and escaped; requests to bypass policy, reveal secrets, or expand tool authority become prompt-injection risk signals rather than instructions. Explicit `riskLevel: low` cannot downgrade protected-path or repository-policy risk. Monorepo package paths do not inherit root commands without package-level evidence.
-* **Arguments:**
-  * `owner` / `repo` (string, optional): Repo coordinates.
-  * `issueNumber` (number, required): The target issue ID.
-  * `includeRelatedFiles` (boolean, default: `false`): Verify explicit path hints at the repository default branch and discover existing adjacent tests and common root entry files. Each result reports `reason`, `confidence`, `verified`, and matching CODEOWNERS; permission/API failures set `relatedFilesIncomplete` instead of claiming the candidate does not exist. This opt-in path can make up to 40 additional GitHub requests (3 CODEOWNERS locations, 20 explicit hints, 12 adjacent candidates, and 5 entry candidates).
-  * `includeDependencies` (boolean, default: `false`): Read GitHub's official blocked-by, blocking, sub-issue, and timeline cross-reference sources using four parallel requests, capped at 20 records per source. Results expose `dependencies`, open `blockers`, and relationship-derived `parallelizableWork` candidates; a cross-reference is evidence of linkage, not a blocker. Per-source failures, malformed responses, or overflow set `dependencyEvidenceIncomplete` and preserve successful sources.
-  * `includeRecentPRs` (boolean, default: `false`): Scan up to 20 PR candidates and return up to 5 merged matches. This opt-in deep history path can make up to 61 additional sequential GitHub requests; limits and API failures are reported through `recentPRsIncomplete`/`evidenceWarnings`.
-  * `workType` (string, optional): Explicit `docs`, `feature`, `bugfix`, `refactor`, `security`, `release`, or `infra`; otherwise inferred with confidence.
-  * `riskLevel` (string, optional): Explicit minimum `low`, `medium`, `high`, or `critical`; policy evidence may raise it.
+</details>
 
-### `quality_gate_status`
-Aggregates check runs and commit statuses. In PR mode it also evaluates reviews, CODEOWNERS routing, draft/mergeability, branch protection/rulesets, blocking labels, and linked issues. Its six conclusions are `passing`, `failing`, `pending`, `needs_review`, `policy_gap`, and `no_evidence`. Permission failures and bounded/truncated sources are exposed through `degraded`, `unverifiedSignals`, and safe `errors`; missing evidence is never invented as a pass.
-* **Arguments:**
-  * `owner` / `repo` (string, optional): Repo coordinates.
-  * `pullNumber` (number, optional): Query checks by PR number.
-  * `ref` (string, optional): Query checks by branch, tag, or SHA.
-  * `blockingLabels` (string[], default: `blocked`, `do-not-merge`, `release-blocker`, `security-blocker`): Exact, case-insensitive PR labels that block the gate; pass `[]` to disable this built-in list.
+<details>
+<summary>Work tracking details</summary>
 
-PR policy is evaluated from the base SHA. Repository-required checks and labels cannot be disabled by caller overrides or by editing policy in the PR itself.
+- **`create_issue_set`**: Accepts `plan_from_context.issueDrafts` directly. `dryRun` defaults to `true` and does not call a GitHub write API. A live batch requires `dryRun: false`, preserves successful Issue URLs, and returns safe per-item failures instead of hiding partial completion.
 
-### `create_pr_summary`
-Generates a structured pull request description and changelog draft. Documentation-only PRs receive document validation guidance instead of a false missing-code-tests warning. File evidence is capped at 300 and exposes `filesTruncated` rather than silently claiming completeness; external PR metadata is escaped and bounded in Markdown.
-* **Arguments:**
-  * `owner` / `repo` (string, optional): Repo coordinates.
-  * `pullNumber` (number, required): The pull request ID.
+</details>
 
-### `review_pr_against_standard`
-Reviews pull request code changes against SDLC governance levels (`basic` / `strict` / `security-focused`).
+<details>
+<summary>Pull request evidence details</summary>
 
-The caller may explicitly set `workType` to `docs`, `feature`, `bugfix`, `refactor`, `security`, `release`, or `infra`; otherwise the tool returns a conservative inference with confidence and reasoning. Structured output includes `dimension`, `paths`, and `reason` per finding plus `releaseRisk`, `testCoverageSignal`, and `ownershipRoutingGaps`. Docs-only work requires document verification rather than code unit tests; bug fixes require reproduction/regression evidence; workflow/infra work audits complete workflow content, triggers, least-privilege permissions, failure paths, and rollback evidence.
+- **`create_pr_summary`**: Caps file evidence and reports truncation. Documentation-only changes receive document validation guidance instead of a false missing-code-tests warning.
+- **`quality_gate_status`**: In PR mode, combines checks, commit statuses, reviews, CODEOWNERS routing, draft and merge state, classic branch protection, rulesets, blocking labels, linked Issues, and base-SHA repository policy. Permission failures remain visible as degraded or unverified evidence.
+- **`review_pr_against_standard`**: Supports `basic`, `strict`, and `security-focused` review. It trusts Gitleaks or TruffleHog as primary passing evidence only when the check, workflow, PR head SHA, base workflow job, scanner action, and immutable action SHA can be linked. Its dynamic secret construction scanner is bounded, patch-local analysis, not whole-program data flow or proof that a repository is secret-free.
 
-`security-focused` can treat Gitleaks or TruffleHog as primary passing evidence only after its concrete Actions job URL, workflow run, PR head SHA, unique matching base-ref workflow job, and known scanner action pinned to a full commit SHA are verified. Secretlint, detect-secrets, and GitHub Secret Scanning names are recognized and surfaced, but remain unverified claims in v1.6 because this release cannot bind them to an equivalent immutable workflow provenance chain. Same-name/duplicate-name jobs or statuses, checks from unknown Apps, conditional/error-tolerant scanner jobs or steps, and mutable action tags are not trusted as clean-scan proof. If evidence is incomplete, scanner policy changes in the PR, no provenance-supported scanner ran, or the scan is pending/failed, the review fails closed. The built-in added-line assignment heuristic is supplemental and is never reported as proof that a repository is secret-free.
+</details>
 
-The supplemental scanner runs under every review standard and reports `DynamicSecretConstruction` when a credential-like field or authentication-header API sink is assembled through string concatenation/formatting, common JavaScript/Java/Go/Rust/Python/Ruby/PHP/Kotlin/Swift interpolation or builder forms, `.concat()`/`.join()`, common decoding calls, multiline statements, or bounded patch-local computed-field aliases. It preserves diff-hunk and statement boundaries, caps tracked aliases and input/output growth, and aggregates repeated findings. Explicit environment-variable/secret-manager sources, comments, removed lines, and credential metadata such as `tokenCount` are excluded to reduce noise. This is patch-local risk detection, not whole-program data-flow analysis: indirect construction across functions/files or fully unknown computed keys still requires trusted scanners, CodeQL/SAST, and human review.
+<details>
+<summary>Governance and release details</summary>
 
-* **Arguments:**
-  * `owner` / `repo` (string, optional): Repo coordinates.
-  * `pullNumber` (number, required): The pull request ID.
-  * `standard` (string, default: `"basic"`): Standard level.
-  * `workType` (string, optional): Explicit work type; omit to infer it from PR metadata and paths.
-  * `checkOwnership` (boolean, default: `true`): Validates file ownership changes against `.github/CODEOWNERS` and flags unassigned reviewers.
+- **`branch_protection_status`**: Reads classic protection and repository rulesets. Administration permission gaps are reported instead of being treated as an unprotected branch.
+- **`workflow_permissions_audit`**: Reads `.github/workflows/*.yml` and evaluates repository and job-level `permissions` declarations. It does not edit workflow files or repository settings.
+- **`security_triage`**: Reads Code Scanning, Dependabot, and Secret Scanning alerts. Availability depends on repository features and token permissions.
+- **`release_readiness_check`**: Requires explicit passing CI evidence. Pending, unknown, failing, or zero-signal CI blocks readiness. Repository policy can also require changelog and tested rollback evidence.
 
-### `security_triage`
-Retrieves and triages Code Scanning, Dependabot, and Secret Scanning alerts.
-* **Arguments:**
-  * `owner` / `repo` (string, optional): Repo coordinates.
+</details>
 
-### `release_readiness_check`
-Assesses pre-release health (combined check runs and commit statuses, open bugs, and changelog presence) and generates rollback instructions. A release is ready only when CI is explicitly `passing`; `pending`, `unknown`, zero-signal, or failing CI blocks readiness.
-* **Arguments:**
-  * `owner` / `repo` (string, optional): Repo coordinates.
-  * `headRef` (string, optional): Target release branch/tag.
-  * `pullNumber` (number, optional): Evaluate the PR head and its real blocking labels.
-  * `rollbackPlanEvidence` (object, optional): Caller-sourced `{ reference, tested }`, required when repository policy requires a tested rollback plan.
+<details>
+<summary>Handoff details</summary>
 
-### Repository policy
+- **`agent_handoff_packet`**: Combines bounded caller status, Issue/PR context, immutable base-SHA policy when available, completed work, remaining steps, and evidence warnings. Caller-provided status remains an assertion rather than system verification. The packet cannot approve, merge, release, or start another agent.
 
-Add `.agentic-sdlc.yml` to strengthen checks, protected paths, reviewers, blocking labels, and release requirements. See [Repository policy](docs/repository-policy.md) for schema, examples, provenance, base-SHA self-modification behavior, limits, and migration.
+</details>
 
-### `branch_protection_status`
-Queries classic branch protection and repository rulesets for required reviews, status checks, and push limits.
-* **Arguments:**
-  * `owner` / `repo` (string, optional): Repo coordinates.
-  * `branch` (string, optional): Target branch. Defaults to default branch.
+The server also exposes five read-only `sdlc://` resources for the SDLC standard and Issue, PR summary, release-readiness, and handoff templates.
 
-### `workflow_permissions_audit`
-Scans `.github/workflows/*.yml` files for `permissions` blocks and flags over-permissioned tokens.
-* **Arguments:**
-  * `owner` / `repo` (string, optional): Repo coordinates.
-  * `ref` (string, optional): Git ref. Defaults to default branch.
+## Common workflows
 
-### `agent_handoff_packet`
-Compiles current issue context, completed work, repository-policy obligations, and remaining tasks into a compact prompt packet for the next agent. Requested Issue/PR lookup failures are surfaced as evidence warnings, PR policy is read at the immutable base SHA when available, and caller/external text is labeled as untrusted handoff evidence.
-* **Arguments:**
-  * `owner` / `repo` (string, optional): Repo coordinates.
-  * `issueNumber` (number, optional): Active issue ID.
-  * `pullNumber` (number, optional): Active pull request ID.
-  * `currentStatus` (string, required): Caller-reported status; preserved as an assertion, not system verification.
-  * `nextSteps` (string[], optional): Ordered caller-provided next steps.
+These sequences reduce tool-selection ambiguity. Each sequence ends with a human decision.
 
----
+```text
+Start work
+repo_context → plan_from_context → create_issue_set (dryRun: true)
+→ human confirms the work items → create_issue_set (dryRun: false)
+→ prepare_work_item
 
-## 📚 Resources Reference
+Review a pull request
+create_pr_summary → quality_gate_status → review_pr_against_standard
+→ human reviews findings and decides whether to merge
 
-The server exposes read-only static resources under the `sdlc://` schema for quick agent guidance:
+Review governance
+branch_protection_status → workflow_permissions_audit → security_triage
+→ repository owners decide which settings or workflows to change
 
-| Resource URI | Description |
+Prepare a release
+security_triage → release_readiness_check
+→ human approves the tag, release, and deployment
+
+Transfer work
+relevant evidence tools → agent_handoff_packet
+→ the next agent validates stale or caller-asserted state before continuing
+```
+
+## GitHub permissions
+
+Do not grant every permission by default. Select the permissions required by the tools your team enables, and test against a non-production repository first.
+
+| Capability | Fine-grained repository permission | Classic PAT scope | Used by |
+|---|---|---|---|
+| Repository metadata and files | Metadata read, Contents read | `repo` or `public_repo` | Context, policy, workflow, review, changelog, and CODEOWNERS evidence |
+| Issues | Issues read | `repo` or `public_repo` | Context, planning, work-item briefs, gates, releases, and handoffs |
+| Pull requests and reviews | Pull requests read | `repo` or `public_repo` | PR summaries, gates, reviews, and handoffs |
+| Checks and statuses | Checks read, Commit statuses read | `repo` or `public_repo` | Quality gates, release readiness, and trusted scanner evidence |
+| Actions provenance | Actions read | `repo` or `public_repo` | Workflow run, job, and workflow identity behind trusted scanner evidence |
+| Branch protection | Administration read | `repo` or `public_repo` | Classic branch protection; repository rulesets use Metadata read |
+| Code scanning alerts | Code scanning alerts read | `security_events` | `security_triage` |
+| Dependabot alerts | Dependabot alerts read | `security_events` | `security_triage` |
+| Secret scanning alerts | Secret scanning alerts read | `security_events` | `security_triage` |
+| Create Issues | Issues write | `repo` or `public_repo` | Only `create_issue_set` with `dryRun: false` |
+
+GitHub permissions and endpoint requirements can change. Confirm failures against the [GitHub REST API permission documentation](https://docs.github.com/en/rest/authentication/permissions-required-for-fine-grained-personal-access-tokens). Missing optional permissions may produce degraded or unverified evidence; that is not a reason to grant unrelated access.
+
+## Safety and trust boundaries
+
+The server constrains its own tools. It cannot control every action available to the surrounding AI agent or MCP client.
+
+- **One preview-first write tool**: `create_issue_set` is the only GitHub write tool and defaults to `dryRun: true`
+- **No privileged repository mutations**: no merge, approval, force-push, branch deletion, branch-rule mutation, release creation, or deployment tools
+- **Human gates remain external**: the server reports CODEOWNERS, review, policy, CI, security, and release evidence; GitHub and your team enforce the final decision
+- **Evidence stays qualified**: missing, stale, truncated, malformed, or permission-limited sources remain visible as gaps
+- **Repository policy is base-bound**: PR policy is read from the base SHA when available so a pull request cannot silently weaken its own gate
+- **External text is untrusted**: Issue bodies, comments, PR metadata, file names, and logs are bounded and escaped before they enter Markdown or handoff prompts
+- **Secret detection has limits**: trusted scanner provenance and patch heuristics reduce risk, but cross-file or runtime data flow still needs CodeQL or other static application security testing (SAST), secret scanners, tests, and human review
+- **Credentials remain your responsibility**: prefer client secret injection or environment variables; never commit tokens or paste them into Issue, PR, or log content
+- **Local HTTP is not remote-ready**: the current HTTP profile has no MCP OAuth, tenant identity, rate limiting, or product-level timeout/cancellation budgets
+
+See [Repository policy](docs/repository-policy.md) for `.agentic-sdlc.yml` schema, provenance, limits, and base-SHA self-modification behavior. See [Testing strategy](docs/testing-strategy.md) for the adversarial matrix and coverage rules.
+
+## Repository policy and resources
+
+Add `.agentic-sdlc.yml` when repository-specific checks should affect plans, protected paths, PR gates, reviewers, blocking labels, changelog requirements, and rollback requirements. Policy output includes its source ref, blob SHA, digest, stable rule IDs, and warnings.
+
+Static resources are available under the `sdlc://` scheme:
+
+| Resource | Purpose |
 |---|---|
-| `sdlc://standards/agentic-sdlc` | Full Markdown specification of the Agentic SDLC Standard. |
-| `sdlc://templates/issue` | Markdown template for creating structured GitHub issues. |
-| `sdlc://templates/pr-summary` | Markdown template for PR descriptions and changelogs. |
-| `sdlc://templates/release-readiness` | Checklist for pre-release audits. |
-| `sdlc://templates/handoff` | Prompt packet template for agent handoffs. |
+| `sdlc://standards/agentic-sdlc` | Agentic SDLC reference standard |
+| `sdlc://templates/issue` | Structured GitHub Issue template |
+| `sdlc://templates/pr-summary` | Pull request summary template |
+| `sdlc://templates/release-readiness` | Pre-release checklist |
+| `sdlc://templates/handoff` | Agent continuation template |
 
----
+## Local HTTP profile
 
-## 🔒 Safety Defaults & `dryRun` Model
+Stdio is the default and recommended local transport. A local client that requires Streamable HTTP can opt in after building from source:
 
-To prevent AI coding agents from performing destructive or unintended actions on production repositories, this control plane enforces:
+```powershell
+$env:TRANSPORT = "http"
+$env:PORT = "3000"
+node dist/index.js
+```
 
-* **Preview by Default (`dryRun: true`)**: All tools that write data (like `create_issue_set`) run in preview mode by default. Writing requires explicitly passing `dryRun: false`.
-* **Reviewable Batch Results**: Issue previews expose the exact target repository and warnings before a write. Live batches preserve both successful results and safe failure details instead of concealing partial completion.
-* **Zero Self-Merge Policy**: No tools exist to auto-merge pull requests. Human approval is required on all merge gates.
-* **Access Restraints**: The server does not support force-pushing or deleting branch rules.
-* **CODEOWNERS Enforced Review**: Special paths (such as workflows under `.github/` and core files under `src/`) require owner approvals.
-* **Read-only Decision Tools**: v1.7 policy-aware gate, PR review, workflow audit, security triage, release-readiness, and handoff tools only read evidence. They never approve or merge PRs and never modify branch protection, rulesets, or repository policy. The separate issue-creation tool remains protected by `dryRun: true` by default.
+The endpoint is `http://127.0.0.1:3000/mcp`. It binds only to loopback, validates `Host` and supplied `Origin`, creates an isolated stateless server and transport for each POST, rejects unsupported GET/DELETE session operations, bounds error details, and handles shutdown signals.
 
----
+Do not expose or reverse-proxy this endpoint to another machine. Remote OAuth, caller-specific credentials, tenant isolation, rate limits, and explicit request budgets are planned for v1.10.
 
-## 📦 Developer Guide & Release Publishing
+## Development and project links
 
-### Development Scripts
-* `npm run typecheck`: Runs TypeScript compiler type checking.
-* `npm run build`: Compiles TS files to the `dist/` directory.
-* `npm run test`: Executes the full unit test suite.
-* `npm run test:integration`: Exercises configuration lifecycle and the production MCP server factory through the SDK's in-memory transport.
-* `npm run test:coverage`: Enforces the coverage regression floor and writes text, LCOV, and JSON summary reports.
-* `npm run smoke`: Verifies registration and loading without external credentials.
-* `npm run check:line-endings`: Rejects tracked CRLF or mixed-EOL text before CI.
+Clone the repository only when you want to contribute or inspect the implementation:
 
-See [`docs/testing-strategy.md`](docs/testing-strategy.md) for the adversarial test matrix, fixture rules, dynamic-runtime boundary, and coverage maintenance policy.
+```powershell
+git clone https://github.com/SakuraCianna/agentic-sdlc-mcp.git
+Set-Location agentic-sdlc-mcp
+npm install
+npm run build
+npm run test
+```
 
-### OIDC Trusted Publishing (For Maintainers)
-This package is securely published to npm via GitHub Actions using **Trusted Publishing (OIDC)**, eliminating the need to store static `NPM_TOKEN` secrets in the repository. Publishing is triggered by creating a GitHub Release or manually running the Action.
+| Command | Purpose |
+|---|---|
+| `npm run typecheck` | Check TypeScript types |
+| `npm run build` | Build `dist/` |
+| `npm run test` | Run the full Vitest suite |
+| `npm run test:integration` | Run configuration and MCP runtime integration tests |
+| `npm run test:coverage` | Enforce coverage floors and write reports |
+| `npm run smoke` | Verify registration without GitHub credentials |
+| `npm run check:line-endings` | Reject CRLF and mixed line endings |
 
-The same published GitHub Release also starts the separate MCP Registry workflow. It verifies that the tag, npm package, runtime, and `server.json` versions agree; waits for that exact npm version to become visible; then authenticates to the Registry with GitHub OIDC, publishes immutable stdio metadata, and verifies discovery through the Registry API. Registry publication has no long-lived secret and cannot run ahead of npm.
+- [Roadmap](docs/ROADMAP.md)
+- [Repository policy guide](docs/repository-policy.md)
+- [Testing strategy](docs/testing-strategy.md)
+- [AI coding agent smoke test](docs/ai-coding-agent-smoke-test.md)
+- [Changelog](CHANGELOG.md)
+- [Releases](https://github.com/SakuraCianna/agentic-sdlc-mcp/releases)
+- [Open issues](https://github.com/SakuraCianna/agentic-sdlc-mcp/issues)
 
-### GitHub Actions Workflows
+The npm and MCP Registry workflows use GitHub OpenID Connect (OIDC) trusted publishing. Publishing a GitHub Release triggers both workflows. The Registry workflow waits for that exact npm package version before it publishes matching immutable stdio metadata.
 
-| Workflow | Trigger | Purpose |
-|---|---|---|
-| `.github/workflows/ci.yml` | Pull requests and pushes to `main` | Runs typecheck, build, tests, smoke, and coverage on Node 24 |
-| `.github/workflows/secret-scan.yml` | Pull requests, pushes to `main`, and manual dispatch | Runs pinned Gitleaks with read-only permissions; this is the primary mature secret-scanner evidence |
-| `.github/workflows/publish.yml` | Published GitHub Release or manual dispatch | Publishes to npm through OIDC Trusted Publishing |
-| `.github/workflows/publish-registry.yml` | Published GitHub Release | Waits for the exact npm version, then publishes and verifies MCP Registry metadata through GitHub OIDC |
-| `.github/dependabot.yml` | Weekly | Opens npm and GitHub Actions dependency update PRs |
+## License
 
----
-
-## 📄 License
-
-Exposed under the [MIT License](LICENSE).
+[MIT](LICENSE)
