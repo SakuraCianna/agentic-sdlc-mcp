@@ -7,11 +7,21 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import {
+  STRUCTURED_CONTENT_TRUST_META,
+  StructuredContentTrustBoundarySchema,
+  withStructuredContentTrustBoundary,
+} from "../security/trust-boundary.js";
 import { resolveRepo, handleGitHubError } from "../github/client.js";
 import {
   fetchRepoContext,
   summarizePackageJson,
 } from "../github/context.js";
+import {
+  protectUntrustedText,
+  type PromptInjectionAssessment,
+} from "../security/prompt-injection.js";
+import { safeMarkdownInline } from "../rendering/markdown.js";
 
 const RepoContextInputSchema = z.object({
   owner: z
@@ -125,6 +135,21 @@ const AppliedPolicyRuleShape = z.object({
   source: z.literal("repository"),
 });
 
+const PromptInjectionWarningShape = z.object({
+  source: z.string(),
+  severity: z.enum(["medium", "high"]),
+  categories: z.array(
+    z.enum([
+      "instruction_override",
+      "role_impersonation",
+      "tool_coercion",
+      "secret_exfiltration",
+      "data_exfiltration",
+      "encoded_instruction",
+    ])
+  ),
+});
+
 const RepositoryPolicySummaryShape = z.object({
   found: z.boolean(),
   degraded: z.boolean(),
@@ -144,6 +169,7 @@ const RepositoryPolicySummaryShape = z.object({
 });
 
 export const RepoContextOutputSchema = {
+  trustBoundary: StructuredContentTrustBoundarySchema.optional(),
   fullName: z.string(),
   description: z.string().nullable(),
   defaultBranch: z.string(),
@@ -169,6 +195,7 @@ export const RepoContextOutputSchema = {
   policyWarnings: z.array(z.string()).optional(),
   openIssues: z.array(OpenIssueShape).optional(),
   openPRs: z.array(OpenPrShape).optional(),
+  promptInjectionWarnings: z.array(PromptInjectionWarningShape).optional(),
 };
 
 export function registerRepoContextTool(server: McpServer): void {
@@ -224,35 +251,65 @@ Returns: Markdown summary of the repository context, plus structured content. Mi
           maxReadmeChars: params.maxReadmeChars,
           maxInstructionChars: params.maxInstructionChars,
         });
+        const promptInjectionWarnings: Array<{
+          source: string;
+          severity: Exclude<PromptInjectionAssessment["severity"], "none">;
+          categories: PromptInjectionAssessment["categories"];
+        }> = [];
+        const renderRepositoryText = (
+          source: string,
+          value: string,
+          maxLength: number
+        ): string => {
+          const protectedText = protectUntrustedText(value, { maxLength });
+          if (protectedText.assessment.detected && protectedText.assessment.severity !== "none") {
+            promptInjectionWarnings.push({
+              source,
+              severity: protectedText.assessment.severity,
+              categories: protectedText.assessment.categories,
+            });
+          }
+          return protectedText.rendered;
+        };
 
         const lines: string[] = [
-          `# Repository Context: ${ctx.fullName}`,
+          `# Repository Context: ${renderRepositoryText("repository.fullName", ctx.fullName, 200)}`,
           "",
-          `**Description:** ${ctx.description ?? "(none)"}`,
-          `**Default branch:** \`${ctx.defaultBranch}\``,
-          `**Visibility:** ${ctx.visibility}`,
-          `**Language:** ${ctx.language ?? "unknown"}`,
+          `**Description:** ${ctx.description ? renderRepositoryText("repository.description", ctx.description, 500) : "(none)"}`,
+          `**Default branch:** \`${renderRepositoryText("repository.defaultBranch", ctx.defaultBranch, 200)}\``,
+          `**Visibility:** ${renderRepositoryText("repository.visibility", ctx.visibility, 100)}`,
+          `**Language:** ${ctx.language ? renderRepositoryText("repository.language", ctx.language, 100) : "unknown"}`,
           `**Stars:** ${ctx.stargazersCount}`,
           `**Open issues (total):** ${ctx.openIssuesCount}`,
-          `**Topics:** ${ctx.topics.length > 0 ? ctx.topics.join(", ") : "(none)"}`,
-          `**Last pushed:** ${ctx.pushedAt ?? "unknown"}`,
+          `**Topics:** ${ctx.topics.length > 0 ? ctx.topics.map((topic, index) => renderRepositoryText(`repository.topics[${index}]`, topic, 100)).join(", ") : "(none)"}`,
+          `**Last pushed:** ${ctx.pushedAt ? renderRepositoryText("repository.pushedAt", ctx.pushedAt, 100) : "unknown"}`,
         ];
 
         if (params.includePackageJson) {
           const packageJsonSummary = ctx.packageJson
             ? summarizePackageJson(ctx.packageJson)
             : "(package.json not found or inaccessible)";
-          lines.push("", "## package.json Summary", "```", packageJsonSummary, "```");
+          lines.push(
+            "",
+            "## package.json Summary",
+            "```",
+            renderRepositoryText("package.json summary", packageJsonSummary, 2_000),
+            "```"
+          );
           lines.push(
             "",
             "## Build & Runtime",
-            `**Package manager:** ${ctx.packageManager ?? "unknown"}`,
-            `**Tech stack:** ${ctx.techStack && ctx.techStack.length > 0 ? ctx.techStack.join(", ") : "(none detected)"}`
+            `**Package manager:** ${ctx.packageManager ? renderRepositoryText("package.manager", ctx.packageManager, 100) : "unknown"}`,
+            `**Tech stack:** ${ctx.techStack && ctx.techStack.length > 0 ? ctx.techStack.map((technology, index) => renderRepositoryText(`package.techStack[${index}]`, technology, 100)).join(", ") : "(none detected)"}`
           );
           const scriptEntries = ctx.scripts ? Object.entries(ctx.scripts) : [];
           if (scriptEntries.length > 0) {
             lines.push("", "**Common scripts:**");
-            scriptEntries.forEach(([name, cmd]) => lines.push(`- \`npm run ${name}\`: \`${cmd}\``));
+            scriptEntries.forEach(([name, cmd]) =>
+              lines.push(
+                `- \`npm run ${renderRepositoryText(`package.scripts.${name}.name`, name, 100)}\`: \`${renderRepositoryText(`package.scripts.${name}`, cmd, 500)}\``
+              )
+            );
           } else {
             lines.push("", "**Common scripts:** (none of the recognised script names were found)");
           }
@@ -264,20 +321,29 @@ Returns: Markdown summary of the repository context, plus structured content. Mi
             "",
             "## Repository Policy",
             `**Status:** ${policy?.degraded ? "degraded (safe defaults applied)" : policy?.found ? "loaded" : "not found (built-in defaults)"}`,
-            `**Digest:** ${ctx.policyDigest ? `\`${ctx.policyDigest}\`` : "unknown"}`,
-            `**Default work type:** ${policy?.defaultWorkType ?? "(none)"}`,
-            `**Required checks:** ${policy?.requiredChecks.length ? policy.requiredChecks.map((check) => `${check.name} (App ${check.appId})`).join(", ") : "(none)"}`,
-            `**Protected paths:** ${policy?.protectedPaths.length ? policy.protectedPaths.join(", ") : "(none)"}`,
-            `**Applied rule IDs:** ${ctx.appliedPolicyRules?.length ? ctx.appliedPolicyRules.map((rule) => rule.id).join(", ") : "(none)"}`
+            `**Digest:** ${ctx.policyDigest ? `\`${renderRepositoryText("policy.digest", ctx.policyDigest, 100)}\`` : "unknown"}`,
+            `**Default work type:** ${policy?.defaultWorkType ? renderRepositoryText("policy.defaultWorkType", policy.defaultWorkType, 100) : "(none)"}`,
+            `**Required checks:** ${policy?.requiredChecks.length ? policy.requiredChecks.map((check, index) => `${renderRepositoryText(`policy.requiredChecks[${index}].name`, check.name, 200)} (App ${check.appId})`).join(", ") : "(none)"}`,
+            `**Protected paths:** ${policy?.protectedPaths.length ? policy.protectedPaths.map((path, index) => renderRepositoryText(`policy.protectedPaths[${index}]`, path, 300)).join(", ") : "(none)"}`,
+            `**Applied rule IDs:** ${ctx.appliedPolicyRules?.length ? ctx.appliedPolicyRules.map((rule, index) => renderRepositoryText(`policy.appliedRules[${index}]`, rule.id, 200)).join(", ") : "(none)"}`
           );
           if (ctx.policySources?.length) {
             lines.push("", "**Policy sources:**");
-            ctx.policySources.forEach((source) =>
-              lines.push(`- ${source.kind}: ${source.path ?? "built-in"} @ ${source.ref ?? "default"} (blob: ${source.blobSha ?? "n/a"})`)
+            ctx.policySources.forEach((source, index) =>
+              lines.push(
+                `- ${renderRepositoryText(`policy.sources[${index}].kind`, source.kind, 100)}: ${source.path ? renderRepositoryText(`policy.sources[${index}].path`, source.path, 300) : "built-in"} @ ${source.ref ? renderRepositoryText(`policy.sources[${index}].ref`, source.ref, 200) : "default"} (blob: ${source.blobSha ? renderRepositoryText(`policy.sources[${index}].blobSha`, source.blobSha, 100) : "n/a"})`
+              )
             );
           }
           if (ctx.policyErrors?.length) {
-            lines.push("", "**Policy errors:**", ...ctx.policyErrors.map((error) => `- ${error}`));
+            lines.push(
+              "",
+              "**Policy errors:**",
+              ...ctx.policyErrors.map(
+                (error, index) =>
+                  `- ${renderRepositoryText(`policy.errors[${index}]`, error, 500)}`
+              )
+            );
           }
         }
 
@@ -286,7 +352,9 @@ Returns: Markdown summary of the repository context, plus structured content. Mi
             "",
             "## Workflows",
             ctx.workflows && ctx.workflows.length > 0
-              ? ctx.workflows.map((w) => `- \`.github/workflows/${w}\``).join("\n")
+              ? ctx.workflows.map((workflow, index) =>
+                  `- \`.github/workflows/${renderRepositoryText(`workflow[${index}]`, workflow, 300)}\``
+                ).join("\n")
               : "(no .github/workflows/*.yml files found)"
           );
         }
@@ -304,7 +372,12 @@ Returns: Markdown summary of the repository context, plus structured content. Mi
           lines.push("", "## Agent Instructions");
           if (ctx.agentInstructions && ctx.agentInstructions.length > 0) {
             for (const instr of ctx.agentInstructions) {
-              lines.push("", `### ${instr.path}`, "", instr.summary);
+              lines.push(
+                "",
+                `### ${renderRepositoryText("agent instruction path", instr.path, 300)}`,
+                "",
+                renderRepositoryText(instr.path, instr.summary, params.maxInstructionChars)
+              );
             }
           } else {
             lines.push("", "(no AGENTS.md or CLAUDE.md found at the repo root)");
@@ -312,14 +385,25 @@ Returns: Markdown summary of the repository context, plus structured content. Mi
         }
 
         if (ctx.readme) {
-          lines.push("", "## README (truncated)", "", ctx.readme);
+          lines.push(
+            "",
+            "## README (truncated)",
+            "",
+            renderRepositoryText("README", ctx.readme, params.maxReadmeChars)
+          );
         }
 
         if (ctx.openIssues && ctx.openIssues.length > 0) {
           lines.push("", "## Open Issues (recent)");
           for (const issue of ctx.openIssues) {
-            const labels = issue.labels.length > 0 ? ` [${issue.labels.join(", ")}]` : "";
-            lines.push(`- #${issue.number} ${issue.title}${labels} -> ${issue.url}`);
+            const labels = issue.labels.length > 0
+              ? ` [${issue.labels.map((label, index) =>
+                  renderRepositoryText(`issue[${issue.number}].labels[${index}]`, label, 100)
+                ).join(", ")}]`
+              : "";
+            lines.push(
+              `- #${issue.number} ${renderRepositoryText(`issue[${issue.number}].title`, issue.title, 300)}${labels} -> ${renderRepositoryText(`issue[${issue.number}].url`, issue.url, 500)}`
+            );
           }
         } else if (params.includeOpenIssues) {
           lines.push("", "## Open Issues", "(none)");
@@ -329,7 +413,9 @@ Returns: Markdown summary of the repository context, plus structured content. Mi
           lines.push("", "## Open Pull Requests");
           for (const pr of ctx.openPRs) {
             const draftTag = pr.draft ? " [DRAFT]" : "";
-            lines.push(`- #${pr.number}${draftTag} ${pr.title} by @${pr.author} -> ${pr.url}`);
+            lines.push(
+              `- #${pr.number}${draftTag} ${renderRepositoryText(`pullRequest[${pr.number}].title`, pr.title, 300)} by @${renderRepositoryText(`pullRequest[${pr.number}].author`, pr.author, 100)} -> ${renderRepositoryText(`pullRequest[${pr.number}].url`, pr.url, 500)}`
+            );
           }
         } else if (params.includeOpenPRs) {
           lines.push("", "## Open Pull Requests", "(none)");
@@ -369,11 +455,24 @@ Returns: Markdown summary of the repository context, plus structured content. Mi
           ...(ctx.policyWarnings ? { policyWarnings: ctx.policyWarnings } : {}),
           ...(ctx.openIssues ? { openIssues: ctx.openIssues } : {}),
           ...(ctx.openPRs ? { openPRs: ctx.openPRs } : {}),
+          ...(promptInjectionWarnings.length > 0 ? { promptInjectionWarnings } : {}),
         };
+
+        if (promptInjectionWarnings.length > 0) {
+          lines.push(
+            "",
+            "## Prompt-Injection Warnings",
+            ...promptInjectionWarnings.map(
+              (warning) =>
+                `- ${safeMarkdownInline(warning.source, { maxLength: 300 })}: ${warning.severity} (${warning.categories.join(", ")})`
+            )
+          );
+        }
 
         return {
           content: [{ type: "text", text: lines.join("\n") }],
-          structuredContent: structured as unknown as Record<string, unknown>,
+          structuredContent: withStructuredContentTrustBoundary(structured),
+          _meta: STRUCTURED_CONTENT_TRUST_META,
         };
       } catch (error) {
         return {

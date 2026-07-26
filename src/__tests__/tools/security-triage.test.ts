@@ -16,11 +16,22 @@ vi.mock("../../config.js", () => ({
   isSmokeMode: false,
 }));
 
+vi.mock("../../github/client.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../github/client.js")>();
+  return {
+    ...actual,
+    getOctokit: () => {
+      throw new Error("client initialization failed");
+    },
+  };
+});
+
 const {
   normalizeSeverity,
   computeSeverityCounts,
   severityIcon,
   handleSecurityTriage,
+  registerSecurityTriageTool,
 } = await import("../../tools/security-triage.js");
 
 import type { SecurityTriageInput } from "../../tools/security-triage.js";
@@ -195,7 +206,52 @@ describe("handleSecurityTriage — permission errors", () => {
 
     expect(structured.alerts).toHaveLength(0);
     expect(structured.errors).toHaveLength(0);
+    expect(structured.truncatedSources).toEqual([]);
     expect(mockOctokit.codeScanning.listAlertsForRepo).not.toHaveBeenCalled();
+  });
+
+  it("marks alert evidence as truncated when a source exceeds its collection budget", async () => {
+    const listAlertsForRepo = vi.fn().mockImplementation(
+      ({ page }: { page: number }) => Promise.resolve({
+        data:
+          page <= 2
+            ? Array.from({ length: 100 }, (_, index) => ({
+                number: (page - 1) * 100 + index + 1,
+                state: "open",
+                html_url: null,
+                rule: { severity: "low", description: "bounded alert" },
+              }))
+            : [{
+                number: 201,
+                state: "open",
+                html_url: null,
+                rule: { severity: "critical", description: "beyond budget" },
+              }],
+      })
+    );
+    const mockOctokit = {
+      codeScanning: { listAlertsForRepo },
+      dependabot: { listAlertsForRepo: vi.fn() },
+      secretScanning: { listAlertsForRepo: vi.fn() },
+    } as unknown as Parameters<typeof handleSecurityTriage>[2];
+
+    const { structured, text } = await handleSecurityTriage(
+      {
+        includeCodeScanning: true,
+        includeDependabot: false,
+        includeSecretScanning: false,
+      },
+      REF,
+      mockOctokit
+    );
+
+    expect(structured.alerts).toHaveLength(200);
+    expect(structured.truncatedSources).toEqual(["code_scanning"]);
+    expect(structured.markdownOmittedAlertCount).toBe(150);
+    expect(text).toContain("Collection Limits");
+    expect(text).toContain("not verified");
+    expect(text).toContain("150 additional alert(s) omitted");
+    expect(text.length).toBeLessThan(30_000);
   });
 
   it("keeps successful sources when one source fails and uses stable missing-field fallbacks", async () => {
@@ -290,5 +346,37 @@ describe("handleSecurityTriage — permission errors", () => {
     expect(text).not.toContain("](" + maliciousUrl);
     expect(text).toContain("\\#\\# forged \\[click\\]\\(javascript:alert\\(1\\)\\)");
     expect(text.length).toBeLessThan(2_000);
+  });
+});
+
+describe("registerSecurityTriageTool", () => {
+  it("returns a safe MCP error when tool initialization fails", async () => {
+    let handler: ((params: SecurityTriageInput) => Promise<unknown>) | undefined;
+    const server = {
+      registerTool: (
+        _name: string,
+        _definition: unknown,
+        registeredHandler: (params: SecurityTriageInput) => Promise<unknown>
+      ) => {
+        handler = registeredHandler;
+      },
+    };
+
+    registerSecurityTriageTool(
+      server as unknown as Parameters<typeof registerSecurityTriageTool>[0]
+    );
+    const result = await handler?.({
+      owner: "test-org",
+      repo: "test-repo",
+      includeCodeScanning: true,
+      includeDependabot: true,
+      includeSecretScanning: true,
+    });
+
+    expect(result).toMatchObject({
+      isError: true,
+      content: [{ type: "text" }],
+    });
+    expect(JSON.stringify(result)).not.toContain("client initialization failed");
   });
 });

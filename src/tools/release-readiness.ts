@@ -6,8 +6,14 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import {
+  STRUCTURED_CONTENT_TRUST_META,
+  StructuredContentTrustBoundarySchema,
+  withStructuredContentTrustBoundary,
+} from "../security/trust-boundary.js";
 import { resolveRepo, getOctokit, handleGitHubError } from "../github/client.js";
 import { collectBounded, collectCiEvidence } from "../github/pull-request-evidence.js";
+import { githubRequestOptions } from "../github/request-options.js";
 import { config } from "../config.js";
 import { safeMarkdownInline } from "../rendering/markdown.js";
 import type { RepoRef } from "../types.js";
@@ -66,12 +72,16 @@ const PolicySourceShape = z.object({
 const AppliedPolicyRuleShape = z.object({ id: z.string(), source: z.literal("repository") });
 
 export const ReleaseReadinessOutputSchema = {
+  trustBoundary: StructuredContentTrustBoundarySchema.optional(),
   repo: z.string(),
   headRef: z.string(),
   isReady: z.boolean(),
   ciStatus: z.enum(["passing", "failing", "pending", "unknown"]),
+  ciEvidenceIncomplete: z.boolean().optional(),
+  headShaResolved: z.boolean().optional(),
   ciSummary: z.string(),
   openBugCount: z.number().int(),
+  bugEvidenceIncomplete: z.boolean().optional(),
   blockingIssues: z.array(z.string()),
   hasChangelog: z.boolean(),
   rollbackPlanEvidence: z.object({
@@ -93,8 +103,11 @@ export interface ReleaseReadinessResult {
   headRef: string;
   isReady: boolean;
   ciStatus: "passing" | "failing" | "pending" | "unknown";
+  ciEvidenceIncomplete?: boolean;
+  headShaResolved?: boolean;
   ciSummary: string;
   openBugCount: number;
+  bugEvidenceIncomplete?: boolean;
   blockingIssues: string[];
   hasChangelog: boolean;
   rollbackPlanEvidence: { reference: string; tested: boolean; source: "caller" } | null;
@@ -112,11 +125,13 @@ export interface ReleaseReadinessResult {
 export async function handleReleaseReadiness(
   params: ReleaseReadinessInput,
   ref: RepoRef,
-  octokit: Octokit
+  octokit: Octokit,
+  signal?: AbortSignal
 ): Promise<{ text: string; structured: ReleaseReadinessResult }> {
   const { data: repoData } = await octokit.repos.get({
     owner: ref.owner,
     repo: ref.repo,
+    ...githubRequestOptions(signal),
   });
 
   const defaultBranch = repoData.default_branch ?? config.defaultBranch;
@@ -125,6 +140,7 @@ export async function handleReleaseReadiness(
   // --- CI status for head ---
   let ciStatus: ReleaseReadinessResult["ciStatus"] = "unknown";
   let ciSummary = "";
+  let ciEvidenceIncomplete = false;
   let headSha = headRef;
   let headShaResolved = false;
   let pullLabels: string[] | null = null;
@@ -136,6 +152,7 @@ export async function handleReleaseReadiness(
         owner: ref.owner,
         repo: ref.repo,
         pull_number: params.pullNumber,
+        ...githubRequestOptions(signal),
       });
       headSha = pr.head.sha;
       headShaResolved = true;
@@ -147,17 +164,19 @@ export async function handleReleaseReadiness(
         owner: ref.owner,
         repo: ref.repo,
         ref: headRef,
+        ...githubRequestOptions(signal),
       });
       headSha = commit.sha;
       headShaResolved = true;
     }
 
-    const ci = await collectCiEvidence(ref, headSha, octokit);
+    const ci = await collectCiEvidence(ref, headSha, octokit, signal);
     passingPolicyChecks = ci.checkRuns.passing.map((signal) => ({
       name: signal.name,
       appId: signal.appId,
     }));
     const anySourceUnverified = ci.unverifiedSignals.length > 0;
+    ciEvidenceIncomplete = anySourceUnverified;
     const unavailableSources = [
       ci.unverifiedSignals.includes("check_runs") ? "check runs unavailable or incomplete" : null,
       ci.unverifiedSignals.includes("commit_statuses")
@@ -192,6 +211,7 @@ export async function handleReleaseReadiness(
       ciSummary = `[PASS] All ${ci.totalSignals} CI signal(s) passing or intentionally skipped.${notes}`;
     }
   } catch {
+    ciEvidenceIncomplete = true;
     ciSummary =
       "[WARN] Could not resolve the release head or collect CI evidence. " +
       "Ensure your token has the `repo` scope (or `public_repo` for public-only repos) " +
@@ -212,6 +232,7 @@ export async function handleReleaseReadiness(
             labels: "bug",
             per_page: perPage,
             page,
+            ...githubRequestOptions(signal),
           })
           .then((response) => response.data),
       MAX_BUG_RESULTS
@@ -233,6 +254,7 @@ export async function handleReleaseReadiness(
         repo: ref.repo,
         path: "CHANGELOG.md",
         ref: headSha,
+        ...githubRequestOptions(signal),
       });
       hasChangelog = true;
     } catch {
@@ -249,7 +271,7 @@ export async function handleReleaseReadiness(
     blockingIssues.push(`${bugIssues.length} open bug issue(s) - review before release`);
 
   const loadedPolicy = headShaResolved
-    ? await loadRepositoryPolicy(ref, headSha, octokit)
+    ? await loadRepositoryPolicy(ref, headSha, octokit, undefined, signal)
     : unavailableRepositoryPolicyResult(
         "Repository policy could not be bound to an immutable release target SHA."
       );
@@ -296,8 +318,11 @@ export async function handleReleaseReadiness(
     headRef,
     isReady,
     ciStatus,
+    ciEvidenceIncomplete,
+    headShaResolved,
     ciSummary,
     openBugCount: bugIssues.length,
+    bugEvidenceIncomplete,
     blockingIssues,
     hasChangelog,
     rollbackPlanEvidence: params.rollbackPlanEvidence
@@ -312,6 +337,8 @@ export async function handleReleaseReadiness(
 
   const renderedRepo = safeMarkdownInline(`${ref.owner}/${ref.repo}`, { maxLength: 200 });
   const renderedHeadRef = safeMarkdownInline(headRef, { maxLength: 200 });
+  const inline = (value: string, maxLength = 500): string =>
+    safeMarkdownInline(value, { maxLength });
 
   const lines: string[] = [
     `# Release Readiness Check: ${renderedRepo}`,
@@ -320,7 +347,7 @@ export async function handleReleaseReadiness(
     `**Ready to release:** ${isReady ? "[YES]" : "[NO] - see blocking issues below"}`,
     "",
     "## CI Status",
-    ciSummary,
+    inline(ciSummary, 1_000),
     "",
     "## Open Bugs",
   ];
@@ -328,12 +355,12 @@ export async function handleReleaseReadiness(
   lines.push(
     "",
     "## Policy Provenance",
-    `- Digest: \`${loadedPolicy.digest}\``,
+    `- Digest: \`${inline(loadedPolicy.digest, 100)}\``,
     `- Status: ${loadedPolicy.degraded ? "degraded" : loadedPolicy.found ? "repository policy loaded" : "built-in defaults"}`,
-    `- Applied rules: ${loadedPolicy.appliedRules.map((rule) => rule.id).join(", ") || "none"}`
+    `- Applied rules: ${loadedPolicy.appliedRules.map((rule) => inline(rule.id, 100)).join(", ") || "none"}`
   );
   loadedPolicy.policySources.forEach((source) =>
-    lines.push(`- Source: ${source.path ?? "built-in"} @ ${source.ref ?? "default"} (blob: ${source.blobSha ?? "n/a"})`)
+    lines.push(`- Source: ${inline(source.path ?? "built-in", 200)} @ ${inline(source.ref ?? "default", 200)} (blob: ${inline(source.blobSha ?? "n/a", 100)})`)
   );
 
   if (bugEvidenceIncomplete) {
@@ -368,7 +395,7 @@ export async function handleReleaseReadiness(
 
   if (blockingIssues.length > 0) {
     lines.push("", "## [BLOCKING] Issues");
-    blockingIssues.forEach((b) => lines.push(`- ${b}`));
+    blockingIssues.forEach((blockingIssue) => lines.push(`- ${inline(blockingIssue)}`));
   }
 
   lines.push(
@@ -442,7 +469,8 @@ Returns: isReady flag, blocking issues, CI status, docs check, release checklist
         const { text, structured } = await handleReleaseReadiness(params, ref, octokit);
         return {
           content: [{ type: "text", text }],
-          structuredContent: structured as unknown as Record<string, unknown>,
+          structuredContent: withStructuredContentTrustBoundary(structured),
+          _meta: STRUCTURED_CONTENT_TRUST_META,
         };
       } catch (error) {
         return {

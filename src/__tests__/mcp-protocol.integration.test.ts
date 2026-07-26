@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import { connectInMemoryMcp } from "./fixtures/mcp-client.js";
+import { TOOL_NAMES } from "../catalog.js";
 import { createAgenticSdlcServer } from "../server.js";
 
 describe("real MCP protocol contract", () => {
@@ -21,7 +22,7 @@ describe("real MCP protocol contract", () => {
 
     expect(client.getServerVersion()).toEqual({
       name: "agentic-sdlc-mcp",
-      version: "1.8.0",
+      version: "1.9.0",
     });
     const { tools } = await client.listTools();
     expect(tools.map((tool) => tool.name).sort()).toEqual([
@@ -35,10 +36,50 @@ describe("real MCP protocol contract", () => {
       "release_readiness_check",
       "repo_context",
       "review_pr_against_standard",
+      "sdlc_evidence_packet",
       "security_triage",
       "workflow_permissions_audit",
     ]);
+    expect(tools.map((tool) => tool.name).sort()).toEqual([...TOOL_NAMES].sort());
     expect(tools.every((tool) => tool.inputSchema.type === "object")).toBe(true);
+    expect(
+      tools.every(
+        (tool) =>
+          (tool.outputSchema as { type?: string } | undefined)?.type === "object"
+      )
+    ).toBe(true);
+
+    const evidenceTool = tools.find(
+      (tool) => tool.name === "sdlc_evidence_packet"
+    );
+    const evidenceProperties = (
+      evidenceTool?.outputSchema as
+        | { properties?: Record<string, unknown> }
+        | undefined
+    )?.properties;
+    expect(evidenceProperties).toEqual(
+      expect.objectContaining({
+        schemaVersion: expect.any(Object),
+        subject: expect.any(Object),
+        evidence: expect.any(Object),
+        contentDigest: expect.any(Object),
+      })
+    );
+
+    const handoffTool = tools.find(
+      (tool) => tool.name === "agent_handoff_packet"
+    );
+    const handoffProperties = (
+      handoffTool?.outputSchema as
+        | { properties?: Record<string, unknown> }
+        | undefined
+    )?.properties;
+    expect(handoffProperties).toEqual(
+      expect.objectContaining({
+        evidencePacket: expect.any(Object),
+        promptInjectionWarnings: expect.any(Object),
+      })
+    );
   });
 
   it("lists and reads every static resource through real MCP requests", async () => {
@@ -62,6 +103,35 @@ describe("real MCP protocol contract", () => {
       });
       expect("text" in result.contents[0] ? result.contents[0].text.length : 0).toBeGreaterThan(100);
     }
+
+    const handoff = await client.readResource({ uri: "sdlc://templates/handoff" });
+    const handoffText =
+      "text" in handoff.contents[0] ? handoff.contents[0].text : "";
+    for (const toolName of TOOL_NAMES) {
+      expect(handoffText).toContain(toolName);
+    }
+    for (const contractField of [
+      "Trust boundary",
+      "Goal",
+      "Non-goals",
+      "Completed Actions",
+      "Decisions and Rationale",
+      "Release ref",
+      "Evidence Packet",
+      "Failed/pending/stale/partial/unverified evidence",
+      "Omitted evidence",
+      "Content digest",
+    ]) {
+      expect(handoffText).toContain(contractField);
+    }
+
+    const standard = await client.readResource({
+      uri: "sdlc://standards/agentic-sdlc",
+    });
+    const standardText =
+      "text" in standard.contents[0] ? standard.contents[0].text : "";
+    expect(standardText).toContain("repository policy");
+    expect(standardText).not.toContain("Every commit must reference an issue number");
   });
 
   it("returns a protocol error for an unknown resource without destabilizing the session", async () => {

@@ -1,5 +1,6 @@
 import type { Octokit } from "@octokit/rest";
 
+import { githubRequestOptions } from "../github/request-options.js";
 import type { RepoRef } from "../types.js";
 import {
   DEFAULT_REPOSITORY_POLICY,
@@ -120,7 +121,8 @@ function cacheKey(ref: RepoRef, gitRef: string): string {
 async function fetchRepositoryPolicy(
   ref: RepoRef,
   gitRef: string,
-  octokit: Octokit
+  octokit: Octokit,
+  signal?: AbortSignal
 ): Promise<RepositoryPolicyLoadResult> {
   let response: Awaited<ReturnType<Octokit["repos"]["getContent"]>>;
   try {
@@ -129,6 +131,7 @@ async function fetchRepositoryPolicy(
       repo: ref.repo,
       path: POLICY_PATH,
       ref: gitRef,
+      ...githubRequestOptions(signal),
     });
   } catch (error) {
     const status = errorStatus(error);
@@ -203,12 +206,13 @@ export async function loadRepositoryPolicy(
   ref: RepoRef,
   gitRef: string,
   octokit: Octokit,
-  cache: RepositoryPolicyCache = createRepositoryPolicyCache()
+  cache: RepositoryPolicyCache = createRepositoryPolicyCache(),
+  signal?: AbortSignal
 ): Promise<RepositoryPolicyLoadResult> {
   const key = cacheKey(ref, gitRef);
   let result = cache.results.get(key);
   if (!result) {
-    result = fetchRepositoryPolicy(ref, gitRef, octokit);
+    result = fetchRepositoryPolicy(ref, gitRef, octokit, signal);
     cache.results.set(key, result);
   }
   return result;

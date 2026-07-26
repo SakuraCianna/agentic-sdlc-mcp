@@ -33,6 +33,14 @@ describe("computeConclusion", () => {
     expect(computeConclusion(false, [], [])).toBe("unprotected");
   });
 
+  it("returns 'unknown' when absence cannot be verified", () => {
+    expect(computeConclusion(false, [], [], false)).toBe("unknown");
+  });
+
+  it("returns 'unknown' instead of claiming protection when a source is unverified", () => {
+    expect(computeConclusion(true, [], [], false)).toBe("unknown");
+  });
+
   it("returns 'protected' when classic protection is enabled and no critical/high findings", () => {
     const findings: Finding[] = [{ severity: "low", category: "Branch Protection", description: "x" }];
     expect(computeConclusion(true, [], findings)).toBe("protected");
@@ -194,7 +202,7 @@ describe("handleBranchProtectionStatus", () => {
     expect(structured.classicProtectionEnabled).toBe(true);
     expect(structured.rulesetRuleTypes).toEqual([]);
     expect(structured.errors.some((e) => e.startsWith("Rulesets:"))).toBe(true);
-    expect(structured.conclusion).toBe("protected");
+    expect(structured.conclusion).toBe("unknown");
   });
 
   it("does not flag force-push/deletion when a ruleset blocks them without classic protection", async () => {
@@ -229,5 +237,30 @@ describe("handleBranchProtectionStatus", () => {
     expect(descriptions.some((d) => d.includes("Force pushes"))).toBe(true);
     expect(descriptions.some((d) => d.includes("deletion is allowed"))).toBe(true);
     expect(structured.conclusion).toBe("partially_protected");
+  });
+
+  it("reports unknown instead of unprotected when both protection sources are inaccessible", async () => {
+    const octokit = makeMockOctokit({
+      protectionError: Object.assign(new Error("Forbidden"), { status: 403 }),
+      rulesError: Object.assign(new Error("Forbidden"), { status: 403 }),
+    });
+
+    const { structured, text } = await handleBranchProtectionStatus(
+      { branch: "main" },
+      REF,
+      octokit
+    );
+
+    expect(structured.conclusion).toBe("unknown");
+    expect(structured.verificationGaps).toHaveLength(2);
+    expect(structured.findings).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          description: expect.stringContaining("has no classic protection"),
+        }),
+      ])
+    );
+    expect(text).toContain("UNKNOWN");
+    expect(text).not.toContain("UNPROTECTED");
   });
 });

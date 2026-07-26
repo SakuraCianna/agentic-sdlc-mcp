@@ -13,7 +13,7 @@ describe("SERVER_INFO", () => {
     };
 
     expect(SERVER_INFO.name).toBe(packageJson.name);
-    expect(SERVER_INFO.version).toBe("1.8.0");
+    expect(SERVER_INFO.version).toBe("1.9.0");
     expect(SERVER_INFO.version).toBe(packageJson.version);
     expect(packageJson.dependencies["@modelcontextprotocol/sdk"]).toBe("^1.29.0");
   });

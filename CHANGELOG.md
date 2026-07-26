@@ -2,6 +2,42 @@
 
 All notable changes to this project are documented here. Release history is also available on the [GitHub Releases page](https://github.com/SakuraCianna/agentic-sdlc-mcp/releases).
 
+## [1.9.0] - Unreleased
+
+### Added
+
+- Added the read-only `sdlc_evidence_packet` tool for versioned Issue, pull request, and release-ref evidence with state, freshness, completeness, provenance, limitations, recommended actions, and a stable content digest.
+- Added PR head pinning and stale detection, plus independently degraded release-target, release-readiness, and security-triage collection.
+- Added item-level evidence subjects, source-content digests, explicit GitHub-request/source-text/file/item/Markdown/timeout budgets, AbortSignal propagation, omitted-evidence records, and bounded security-alert rendering.
+- Made prompt-injection evidence fail closed when Issue/PR text or PR changed-file names exceed collection budgets, and applied one abortable 30-second collection budget across each handoff.
+- Expanded handoffs with system-derived status, release subjects, goals, non-goals, completed actions, decisions, and deep PR/release evidence.
+- Added a shared public tool catalog and real MCP contract checks that keep all 13 tools and handoff resources aligned.
+- Added complete [v1.9.0 release notes](docs/releases/v1.9.0.md) and future-only [remote deployment re-entry criteria](docs/remote-deployment-considerations.md).
+
+### Changed
+
+- Expanded the declared runtime floor from Node.js 24-only to Node.js 22+, with GitHub Actions coverage on Node 22 and 24. Node 20 is not supported.
+- Made branch-protection permission gaps return `unknown` rather than incorrectly reporting an unprotected branch.
+- Added an explicit structured-content trust boundary to every tool response and output schema.
+- Updated static standards to follow repository-specific traceability and review policies, including sole-maintainer repositories.
+- Kept stdio and loopback HTTP as the supported local profiles; remote OAuth and multi-tenant hosting are no longer scheduled roadmap work.
+
+### Security
+
+- Added shared high-confidence prompt-injection detection for instruction overrides, role impersonation, tool coercion, secret/data exfiltration, encoded instructions, and Unicode zero-width/bidirectional obfuscation.
+- Omitted high-confidence injected text from agent-facing Markdown and handoff prompts while preserving raw structured evidence for untrusted-data inspection.
+- Applied repository-text protection to metadata, README and agent instructions, package scripts, workflows, policy fields, Issue/PR fields, plans, issue previews, release evidence, and branch findings.
+- Added a safe initialization error boundary to `security_triage`.
+- Prevented skipped-only or incomplete CI and unavailable review decisions from being promoted to verified evidence.
+- Refreshed the lockfile to patched `fast-uri`, `brace-expansion`, and `postcss` releases without force-upgrading or downgrading direct dependencies.
+
+### Compatibility
+
+- Tool and output changes are additive; stdio startup and the preview-first `create_issue_set` write boundary remain unchanged.
+- Node 22 validation runs only in GitHub Actions because the maintainer workstation does not have Node 22 installed.
+- `contentDigest` detects stable packet-content changes but is not a signature or compliance attestation.
+- The MCP SDK still brings `@hono/node-server` 1.x and its Windows `serve-static` advisory. This server does not use Hono `serve-static`; the available audit force fix would downgrade the MCP SDK and is intentionally not applied.
+
 ## [1.8.0] - 2026-07-13
 
 ### Added
@@ -22,7 +58,7 @@ All notable changes to this project are documented here. Release history is also
 
 - Repository policy and explicit higher risk remain floors; protected paths cannot be downgraded by caller-provided low risk or sparse Issue text.
 - Issue, comment, PR, dependency, path, and caller text is bounded and safely rendered; prompt-injection content is evidence rather than authority to reveal secrets, bypass policy, or expand permissions.
-- Local HTTP rejects untrusted Host/Origin values and avoids leaking internal errors. It is intentionally not a remote deployment profile; OAuth, request-scoped credentials, tenant isolation, rate limiting, and timeout/cancellation budgets remain planned for v1.10.
+- Local HTTP rejects untrusted Host/Origin values and avoids leaking internal errors. It is intentionally not a remote deployment profile; OAuth, request-scoped credentials, tenant isolation, and remote timeout/cancellation budgets require a separate condition-triggered re-entry decision.
 
 ### Compatibility
 
@@ -106,3 +142,4 @@ All notable changes to this project are documented here. Release history is also
 [1.7.0]: https://github.com/SakuraCianna/agentic-sdlc-mcp/releases/tag/v1.7.0
 [1.7.1]: https://github.com/SakuraCianna/agentic-sdlc-mcp/releases/tag/v1.7.1
 [1.8.0]: https://github.com/SakuraCianna/agentic-sdlc-mcp/releases/tag/v1.8.0
+[1.9.0]: https://github.com/SakuraCianna/agentic-sdlc-mcp/releases/tag/v1.9.0

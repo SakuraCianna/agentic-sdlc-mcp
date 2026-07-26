@@ -8,6 +8,11 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Octokit } from "@octokit/rest";
 import { z } from "zod";
+import {
+  STRUCTURED_CONTENT_TRUST_META,
+  StructuredContentTrustBoundarySchema,
+  withStructuredContentTrustBoundary,
+} from "../security/trust-boundary.js";
 import { resolveRepo, getOctokit, handleGitHubError } from "../github/client.js";
 import {
   collectCiEvidence,
@@ -158,6 +163,7 @@ const QualityGateEvidenceShape = z.object({
 });
 
 export const QualityGateOutputSchema = {
+  trustBoundary: StructuredContentTrustBoundarySchema.optional(),
   contextLabel: z.string(),
   headSha: z.string(),
   conclusion: z.enum([
@@ -1108,7 +1114,8 @@ Returns: A structured evidence packet, blockers, warnings, next actions, and a c
         const { text, structured } = await handleQualityGateStatus(params, ref, octokit);
         return {
           content: [{ type: "text", text }],
-          structuredContent: structured as unknown as Record<string, unknown>,
+          structuredContent: withStructuredContentTrustBoundary(structured),
+          _meta: STRUCTURED_CONTENT_TRUST_META,
         };
       } catch (error) {
         return {

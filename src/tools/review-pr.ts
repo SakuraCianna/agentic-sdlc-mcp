@@ -7,6 +7,11 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import {
+  STRUCTURED_CONTENT_TRUST_META,
+  StructuredContentTrustBoundarySchema,
+  withStructuredContentTrustBoundary,
+} from "../security/trust-boundary.js";
 import { resolveRepo, getOctokit, handleGitHubError } from "../github/client.js";
 import { collectPullRequestEvidence } from "../github/pull-request-evidence.js";
 import {
@@ -79,6 +84,7 @@ export type ReviewPrInput = z.infer<typeof ReviewPrInputSchema>;
 // ---------------------------------------------------------------------------
 
 export const ReviewPrOutputSchema = {
+  trustBoundary: StructuredContentTrustBoundarySchema.optional(),
   pullNumber: z.number().int(),
   title: z.string(),
   standard: z.string(),
@@ -893,7 +899,8 @@ Returns: Sorted findings by severity, test coverage signal, ownership routing ga
         const { text, structured } = await handleReviewPr(params, ref, octokit);
         return {
           content: [{ type: "text", text }],
-          structuredContent: structured as unknown as Record<string, unknown>,
+          structuredContent: withStructuredContentTrustBoundary(structured),
+          _meta: STRUCTURED_CONTENT_TRUST_META,
         };
       } catch (error) {
         return {

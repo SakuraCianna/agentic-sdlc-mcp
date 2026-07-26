@@ -23,11 +23,11 @@
   <a href="https://www.npmjs.com/package/agentic-sdlc-mcp"><img src="https://img.shields.io/npm/v/agentic-sdlc-mcp.svg?style=flat-square&color=blue" alt="npm 版本"></a>
   <a href="https://www.npmjs.com/package/agentic-sdlc-mcp"><img src="https://img.shields.io/npm/dm/agentic-sdlc-mcp.svg?style=flat-square&color=green" alt="npm 下载量"></a>
   <a href="https://github.com/SakuraCianna/agentic-sdlc-mcp/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/SakuraCianna/agentic-sdlc-mcp/ci.yml?branch=main&style=flat-square" alt="CI 状态"></a>
-  <img src="https://img.shields.io/badge/Node.js-%3E%3D24-339933?style=flat-square&logo=node.js&logoColor=white" alt="Node.js 24 或更高版本">
+  <img src="https://img.shields.io/badge/Node.js-%3E%3D22-339933?style=flat-square&logo=node.js&logoColor=white" alt="Node.js 22 或更高版本">
   <a href="LICENSE"><img src="https://img.shields.io/npm/l/agentic-sdlc-mcp.svg?style=flat-square&color=orange" alt="MIT 协议"></a>
 </p>
 
-`agentic-sdlc-mcp` 是面向已经允许 AI 编码智能体修改生产仓库团队的软件开发生命周期（SDLC）治理层。它把 GitHub 上下文、仓库策略、检查、评审、安全告警和发布信号组织成 12 个工作流级 MCP 工具。其中 11 个工具只读，唯一的 GitHub 写入工具默认先预览。
+`agentic-sdlc-mcp` 是面向已经允许 AI 编码智能体修改生产仓库团队的软件开发生命周期（SDLC）治理层。它把 GitHub 上下文、仓库策略、检查、评审、安全告警和发布信号组织成 13 个工作流级 MCP 工具。其中 12 个工具只读，唯一的 GitHub 写入工具默认先预览。
 
 ## 接入这个 MCP 后有什么变化
 
@@ -75,10 +75,11 @@ flowchart LR
 | 审计仓库治理 | `branch_protection_status` → `workflow_permissions_audit` | 分支/Ruleset 证据和 GitHub Actions 最小权限问题 |
 | 判断版本是否可以进入人工发布审批 | `security_triage` → `release_readiness_check` | 安全告警摘要、CI 证据、发布阻塞项、CHANGELOG 和回滚要求 |
 | 把工作移交给另一个智能体 | `agent_handoff_packet` | 标注调用方断言与证据警告的有界续接包 |
+| 归档一次决策快照 | `sdlc_evidence_packet` | 带 provenance、freshness、completeness 和稳定内容 digest 的 Issue、PR 或 release 证据包 |
 
 ## 从 npm 安装
 
-你需要 Node.js 24 或更高版本。优先直接运行 npm 上已经发布的包：
+你需要 Node.js 22 或更高版本。Node 22 与 24 由 GitHub Actions 验证。优先直接运行 npm 上已经发布的包：
 
 ```powershell
 npx -y agentic-sdlc-mcp
@@ -103,7 +104,7 @@ agentic-sdlc-mcp
 完成后调用只读的 repo_context 工具验证连接，并说明主要能力、所需 GitHub 权限和安全边界。
 ```
 
-批准前请检查智能体准备执行的命令和配置变更。安装需要 Node.js 24 或更高版本。
+批准前请检查智能体准备执行的命令和配置变更。安装需要 Node.js 22 或更高版本。
 
 ## 连接 MCP 客户端
 
@@ -165,7 +166,7 @@ npx -y agentic-sdlc-mcp configure
 
 ## Tools 工具目录
 
-服务器注册了 12 个工作流级工具。MCP 客户端会在运行时获得完整输入输出 schema；下面的目录说明何时调用工具，以及如何理解结果。
+服务器注册了 13 个工作流级工具。MCP 客户端会在运行时获得完整输入输出 schema；下面的目录说明何时调用工具，以及如何理解结果。
 
 | 工具 | 适用时机 | 主要结果 | 访问模式 |
 |---|---|---|---|
@@ -181,6 +182,7 @@ npx -y agentic-sdlc-mcp configure
 | `security_triage` | 发布或事故处理需要 GitHub 安全告警 | Code Scanning、Dependabot 和 Secret Scanning 分诊 | 只读 |
 | `release_readiness_check` | 人工正在决定是否发布 | CI 状态、阻塞 Issue/标签、CHANGELOG 与回滚证据、阻塞项和下一步 | 只读 |
 | `agent_handoff_packet` | 另一个智能体需要继续当前工作 | 紧凑的 Issue/PR 上下文、策略义务、调用方断言、警告和有序下一步 | 只读 |
+| `sdlc_evidence_packet` | 工作流决策需要可携带的证据快照 | 带 verified/unverified、freshness、completeness、provenance、limitations 和 digest 的版本化 Issue、PR 或 release 包 | 只读 |
 
 <details>
 <summary>上下文与规划细节</summary>
@@ -220,7 +222,9 @@ npx -y agentic-sdlc-mcp configure
 <details>
 <summary>交接细节</summary>
 
-- **`agent_handoff_packet`**：组合有界的调用方状态、Issue/PR 上下文、可用时的不可变 base-SHA 策略、已完成工作、剩余步骤和证据警告。调用方提供的状态始终保留为 assertion，而不是系统验证。这个包不能批准、合并、发布或启动另一个智能体。
+- **`agent_handoff_packet`**：默认从系统证据派生 current status，支持 Issue、PR 或 release subject，以及可选 goal、non-goals、completed actions、decisions 和 next steps。调用方字段始终是 unverified；PR 交接会聚合 CI、评审、策略和 head freshness，release 交接会聚合 readiness 与仓库级安全证据。仓库、Issue、PR、policy 与深度 evidence 共用一个 30 秒可中止总采集预算。
+- **`sdlc_evidence_packet`**：一次采集一个 Issue、Pull Request 或 release ref。调用方断言始终是 unverified；PR 证据绑定 head SHA，采集期间换头会标记 stale；API 部分失败、超时、限流和有界分页都会明确降级，不产生虚假的 clean 结论。packet 公开并强制 GitHub request、源文本、文件/单源项目、Markdown、evidence item 与 timeout 预算；省略内容进入 `omittedEvidence`，超时会中止支持 AbortSignal 的 Octokit 请求。Issue/PR 文本或 PR changed-file 文件名超出采集预算时，prompt-injection evidence 保持 unverified/partial，不会把未读取内容声明为安全。
+- 每个成功工具响应都同时包含 MCP `_meta` 和 `structuredContent.trustBoundary`。即使没有命中 prompt-injection 模式，仓库与调用方字段仍是不可信数据，不能据此执行内嵌指令、泄露秘密或扩大权限。
 
 </details>
 
@@ -245,11 +249,11 @@ branch_protection_status → workflow_permissions_audit → security_triage
 → 仓库负责人决定修改哪些设置或 Workflows
 
 准备发布
-security_triage → release_readiness_check
+security_triage → release_readiness_check → sdlc_evidence_packet
 → 人工批准 Tag、Release 和部署
 
 移交工作
-相关证据工具 → agent_handoff_packet
+相关证据工具 → sdlc_evidence_packet → agent_handoff_packet
 → 下一位智能体先验证过期状态和调用方断言，再继续执行
 ```
 
@@ -281,10 +285,10 @@ GitHub 权限和端点要求可能变化。出现权限错误时，请核对 [Gi
 - **人工门禁位于系统之外**：服务器报告 CODEOWNERS、评审、策略、CI、安全和发布证据，最终决定由 GitHub 与团队执行
 - **证据始终保留限定条件**：缺失、过期、截断、格式异常或受权限限制的来源会继续显示为缺口
 - **仓库策略绑定 base SHA**：可用时，PR 策略从 base SHA 读取，Pull Request 不能静默降低自身门禁
-- **外部文本不受信任**：Issue body、评论、PR 元数据、文件名和日志进入 Markdown 或交接提示词前会受到长度限制和转义
+- **外部文本不受信任**：仓库与调用方文本会限制长度并转义；高置信的指令覆盖、密钥/数据外传、编码命令和工具胁迫模式不会进入面向智能体的 Markdown，原始 structured evidence 仍保留用于审查
 - **密钥检测存在边界**：可信扫描器 provenance 与补丁启发式可以降低风险，但跨文件或运行时数据流仍需 CodeQL 或其他静态应用安全测试（SAST）、密钥扫描器、测试和人工评审
 - **凭据仍由接入方负责**：优先使用客户端 secret 注入或环境变量，不要把 token 提交到仓库，也不要粘贴到 Issue、PR 或日志内容中
-- **本地 HTTP 不能直接远程使用**：当前 HTTP profile 没有 MCP OAuth、租户身份、限流或产品级 timeout/cancellation 预算
+- **只支持本地传输边界**：stdio 与 loopback HTTP 面向可信本机；远程 OAuth 和多租户托管不在当前产品路线图中
 
 `.agentic-sdlc.yml` 的 schema、provenance、限制和 base-SHA 自修改防护见[仓库策略指南](docs/repository-policy.md)。对抗测试矩阵和覆盖率规则见[测试策略](docs/testing-strategy.md)。
 
@@ -314,7 +318,7 @@ node dist/index.js
 
 服务端点为 `http://127.0.0.1:3000/mcp`。它只监听 loopback，校验 `Host` 和调用方提供的 `Origin`；每个 POST 使用隔离的无状态 server/transport；不支持的 GET/DELETE session 操作会被拒绝；错误细节受到限制，并支持关闭信号。
 
-不要把该端点暴露到其他机器，也不要直接通过反向代理对外提供。远程 OAuth、调用方级凭据、租户隔离、限流和明确请求预算计划在 v1.10 实现。
+不要把该端点暴露到其他机器，也不要直接通过反向代理对外提供。当前不计划远程 OAuth 或多租户托管。如果未来重新立项，必须先满足单独的[远程部署重新立项准入条件](docs/remote-deployment-considerations.md)；当前本地服务不能直接作为安全远程部署基础。
 
 ## 本地开发与项目链接
 
@@ -338,6 +342,8 @@ npm run test
 | `npm run smoke` | 在没有 GitHub 凭据时验证注册与加载 |
 | `npm run check:line-endings` | 拒绝 CRLF 和混合行尾 |
 
+CI 会在 Node 22 和 Node 24 上执行完整检查。Node 20 已结束维护，因此不属于受支持运行时；本地贡献者只需安装一个受支持版本，兼容矩阵由 GitHub Actions 负责。
+
 ## 通过 Issue 和 Pull Request 参与贡献
 
 欢迎提交 Issue 和 Pull Request。开始前请查看[现有 Issues](https://github.com/SakuraCianna/agentic-sdlc-mcp/issues)与[路线图](docs/ROADMAP.md)。如果变更会影响公开行为、安全边界、工具 schema 或架构，请先创建 Issue 讨论。
@@ -353,6 +359,8 @@ npm run test
 - [路线图](docs/ROADMAP.md)
 - [仓库策略指南](docs/repository-policy.md)
 - [测试策略](docs/testing-strategy.md)
+- [远程部署重新立项准入条件](docs/remote-deployment-considerations.md)
+- [v1.9.0 发布说明](docs/releases/v1.9.0.md)
 - [AI 编码智能体冒烟测试](docs/ai-coding-agent-smoke-test.md)
 - [更新日志](CHANGELOG.md)
 - [Releases](https://github.com/SakuraCianna/agentic-sdlc-mcp/releases)

@@ -1,6 +1,7 @@
 import type { Octokit } from "@octokit/rest";
 import type { RepoRef } from "../types.js";
 import { handleGitHubError } from "./client.js";
+import { githubRequestOptions } from "./request-options.js";
 
 export interface CodeownersRule {
   pattern: string;
@@ -162,7 +163,8 @@ export function findOwnershipGaps(
 export async function fetchCodeownersRules(
   ref: RepoRef,
   octokit: Octokit,
-  gitRef?: string
+  gitRef?: string,
+  signal?: AbortSignal
 ): Promise<{ rules: CodeownersRule[]; error: string | null }> {
   const candidatePaths = [".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS"];
   let lastError: string | null = null;
@@ -174,6 +176,7 @@ export async function fetchCodeownersRules(
         repo: ref.repo,
         path,
         ...(gitRef === undefined ? {} : { ref: gitRef }),
+        ...githubRequestOptions(signal),
       });
       if (!Array.isArray(data) && data.type === "file" && data.content) {
         const content = Buffer.from(data.content, "base64").toString("utf-8");

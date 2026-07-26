@@ -2,6 +2,7 @@ import type { Octokit } from "@octokit/rest";
 import type { RepoRef } from "../types.js";
 import { handleGitHubError } from "./client.js";
 import { fetchCodeownersRules, findOwnershipGaps, type OwnershipGap } from "./codeowners.js";
+import { githubRequestOptions } from "./request-options.js";
 
 export type GateSignalSource = "check_run" | "commit_status";
 export type GateSignalState = "passing" | "failing" | "pending" | "skipped";
@@ -221,7 +222,8 @@ function statusState(status: CommitStatus): GateSignalState {
 async function collectCheckRuns(
   ref: RepoRef,
   sha: string,
-  octokit: Octokit
+  octokit: Octokit,
+  signal?: AbortSignal
 ): Promise<SourceResult<SignalBuckets>> {
   try {
     const runs = await collectBounded(
@@ -233,6 +235,7 @@ async function collectCheckRuns(
             ref: sha,
             page,
             per_page: perPage,
+            ...githubRequestOptions(signal),
           })
           .then((response) => response.data.check_runs),
       300
@@ -265,7 +268,8 @@ async function collectCheckRuns(
 async function collectCommitStatuses(
   ref: RepoRef,
   sha: string,
-  octokit: Octokit
+  octokit: Octokit,
+  signal?: AbortSignal
 ): Promise<SourceResult<SignalBuckets>> {
   try {
     const statuses = await collectBounded(
@@ -277,6 +281,7 @@ async function collectCommitStatuses(
             ref: sha,
             page,
             per_page: perPage,
+            ...githubRequestOptions(signal),
           })
           .then((response) => response.data.statuses),
       300
@@ -311,11 +316,12 @@ async function collectCommitStatuses(
 export async function collectCiEvidence(
   ref: RepoRef,
   sha: string,
-  octokit: Octokit
+  octokit: Octokit,
+  signal?: AbortSignal
 ): Promise<CiEvidence> {
   const [checkRuns, commitStatuses] = await Promise.all([
-    collectCheckRuns(ref, sha, octokit),
-    collectCommitStatuses(ref, sha, octokit),
+    collectCheckRuns(ref, sha, octokit, signal),
+    collectCommitStatuses(ref, sha, octokit, signal),
   ]);
   const totalSignals = checkRuns.value.total + commitStatuses.value.total;
   return {
@@ -346,13 +352,15 @@ function hasHttpStatus(error: unknown, status: number): boolean {
 async function collectRequestedReviewers(
   params: CollectPullRequestEvidenceParams,
   ref: RepoRef,
-  octokit: Octokit
+  octokit: Octokit,
+  signal?: AbortSignal
 ): Promise<SourceResult<{ users: string[]; teams: string[] }>> {
   try {
     const { data } = await octokit.pulls.listRequestedReviewers({
       owner: ref.owner,
       repo: ref.repo,
       pull_number: params.pullNumber,
+      ...githubRequestOptions(signal),
     });
     return {
       value: {
@@ -411,7 +419,8 @@ function latestActionableReviews(reviews: PullReview[]): {
 async function collectReviews(
   params: CollectPullRequestEvidenceParams,
   ref: RepoRef,
-  octokit: Octokit
+  octokit: Octokit,
+  signal?: AbortSignal
 ): Promise<SourceResult<ReturnType<typeof latestActionableReviews>>> {
   try {
     const reviews = await collectBounded(
@@ -423,6 +432,7 @@ async function collectReviews(
             pull_number: params.pullNumber,
             page,
             per_page: perPage,
+            ...githubRequestOptions(signal),
           })
           .then((response) => response.data),
       300
@@ -444,7 +454,8 @@ async function collectReviews(
 async function collectChangedFiles(
   params: CollectPullRequestEvidenceParams,
   ref: RepoRef,
-  octokit: Octokit
+  octokit: Octokit,
+  signal?: AbortSignal
 ): Promise<SourceResult<PullRequestChangedFile[]>> {
   try {
     const files = await collectBounded(
@@ -456,6 +467,7 @@ async function collectChangedFiles(
             pull_number: params.pullNumber,
             page,
             per_page: perPage,
+            ...githubRequestOptions(signal),
           })
           .then((response) => response.data),
       300
@@ -577,13 +589,15 @@ function classicProtectionValue(protection: BranchProtection): ClassicProtection
 async function collectClassicProtection(
   branch: string,
   ref: RepoRef,
-  octokit: Octokit
+  octokit: Octokit,
+  signal?: AbortSignal
 ): Promise<SourceResult<ClassicProtectionValue>> {
   try {
     const { data } = await octokit.repos.getBranchProtection({
       owner: ref.owner,
       repo: ref.repo,
       branch,
+      ...githubRequestOptions(signal),
     });
     return { value: classicProtectionValue(data), errors: [], unverifiedSignals: [] };
   } catch (error) {
@@ -685,7 +699,8 @@ function rulesValue(rules: AppliedBranchRule[]): RulesValue {
 async function collectAppliedRules(
   branch: string,
   ref: RepoRef,
-  octokit: Octokit
+  octokit: Octokit,
+  signal?: AbortSignal
 ): Promise<SourceResult<RulesValue>> {
   try {
     const rules = await collectBounded(
@@ -697,6 +712,7 @@ async function collectAppliedRules(
             branch,
             page,
             per_page: perPage,
+            ...githubRequestOptions(signal),
           })
           .then((response) => response.data),
       300
@@ -725,7 +741,8 @@ async function collectAppliedRules(
 async function collectGraphQlEvidence(
   params: CollectPullRequestEvidenceParams,
   ref: RepoRef,
-  octokit: Octokit
+  octokit: Octokit,
+  signal?: AbortSignal
 ): Promise<
   SourceResult<{
     reviewDecision: ReviewDecision;
@@ -735,7 +752,12 @@ async function collectGraphQlEvidence(
   try {
     const data = await octokit.graphql<GraphQlPullRequestEvidence>(
       PULL_REQUEST_EVIDENCE_QUERY,
-      { owner: ref.owner, repo: ref.repo, pullNumber: params.pullNumber }
+      {
+        owner: ref.owner,
+        repo: ref.repo,
+        pullNumber: params.pullNumber,
+        ...githubRequestOptions(signal),
+      }
     );
     const pullRequest = data.repository?.pullRequest;
     if (!pullRequest) {
@@ -777,12 +799,14 @@ function combineNullableBooleans(values: Array<boolean | null>): boolean | null 
 export async function collectPullRequestEvidence(
   params: CollectPullRequestEvidenceParams,
   ref: RepoRef,
-  octokit: Octokit
+  octokit: Octokit,
+  signal?: AbortSignal
 ): Promise<PullRequestEvidence> {
   const { data: pullRequest } = await octokit.pulls.get({
     owner: ref.owner,
     repo: ref.repo,
     pull_number: params.pullNumber,
+    ...githubRequestOptions(signal),
   });
 
   const [
@@ -795,14 +819,14 @@ export async function collectPullRequestEvidence(
     changedFiles,
     graphQl,
   ] = await Promise.all([
-    collectCiEvidence(ref, pullRequest.head.sha, octokit),
-    collectRequestedReviewers(params, ref, octokit),
-    collectReviews(params, ref, octokit),
-    collectClassicProtection(pullRequest.base.ref, ref, octokit),
-    collectAppliedRules(pullRequest.base.ref, ref, octokit),
-    fetchCodeownersRules(ref, octokit, pullRequest.base.sha),
-    collectChangedFiles(params, ref, octokit),
-    collectGraphQlEvidence(params, ref, octokit),
+    collectCiEvidence(ref, pullRequest.head.sha, octokit, signal),
+    collectRequestedReviewers(params, ref, octokit, signal),
+    collectReviews(params, ref, octokit, signal),
+    collectClassicProtection(pullRequest.base.ref, ref, octokit, signal),
+    collectAppliedRules(pullRequest.base.ref, ref, octokit, signal),
+    fetchCodeownersRules(ref, octokit, pullRequest.base.sha, signal),
+    collectChangedFiles(params, ref, octokit, signal),
+    collectGraphQlEvidence(params, ref, octokit, signal),
   ]);
 
   const codeownersErrors = codeowners.error

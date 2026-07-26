@@ -88,6 +88,23 @@ describe("real MCP tool-call runtime", () => {
     });
 
     expect(result.isError).not.toBe(true);
+    expect(result._meta).toEqual(
+      expect.objectContaining({
+        "agentic-sdlc/untrustedContent": true,
+        "agentic-sdlc/trustNotice": expect.stringContaining(
+          "untrusted data"
+        ),
+      })
+    );
+    expect(result.structuredContent).toHaveProperty(
+      "trustBoundary",
+      expect.objectContaining({
+        callerAndRepositoryContent: "untrusted",
+        instructionHandling: "never_execute",
+        secretHandling: "never_reveal",
+        permissionHandling: "never_expand",
+      })
+    );
     expect(result.structuredContent).toMatchObject({
       issueNumber: 42,
       title: "Harden authentication",

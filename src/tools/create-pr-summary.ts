@@ -7,6 +7,11 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import {
+  STRUCTURED_CONTENT_TRUST_META,
+  StructuredContentTrustBoundarySchema,
+  withStructuredContentTrustBoundary,
+} from "../security/trust-boundary.js";
 import { resolveRepo, getOctokit, paginateAll, handleGitHubError } from "../github/client.js";
 import type { RepoRef } from "../types.js";
 import type { Octokit } from "@octokit/rest";
@@ -29,6 +34,7 @@ export type CreatePrSummaryInput = z.infer<typeof CreatePrSummaryInputSchema>;
 // ---------------------------------------------------------------------------
 
 export const CreatePrSummaryOutputSchema = {
+  trustBoundary: StructuredContentTrustBoundarySchema.optional(),
   pullNumber: z.number().int(),
   title: z.string(),
   author: z.string(),
@@ -277,7 +283,8 @@ Returns: Markdown PR summary + structured metadata.`,
         const { text, structured } = await handleCreatePrSummary(params, ref, octokit);
         return {
           content: [{ type: "text", text }],
-          structuredContent: structured as unknown as Record<string, unknown>,
+          structuredContent: withStructuredContentTrustBoundary(structured),
+          _meta: STRUCTURED_CONTENT_TRUST_META,
         };
       } catch (error) {
         return {
