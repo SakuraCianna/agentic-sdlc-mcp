@@ -338,8 +338,8 @@ describe("handlePlanFromContext", () => {
     const { text } = await handlePlanFromContext(params, mockFetch, mockFetchLabels);
 
     expect(text).toContain("create_issue_set");
-    expect(text).toContain("[Plan]");
-    expect(text).toContain("[Create]");
+    expect(text).toContain("\\[Plan\\]");
+    expect(text).toContain("\\[Create\\]");
   });
 
   it("respects an explicit workType even when goal keywords suggest otherwise", async () => {
@@ -438,7 +438,9 @@ describe("handlePlanFromContext", () => {
     expect(structured.policyDigest).toBe("c".repeat(64));
     expect(structured.appliedPolicyRules.map((rule) => rule.id)).toContain("ci.required_checks");
     expect(structured.constraints).toContain("Confirm whether the change touches protected paths: src/auth/** [paths.protected]");
-    expect(text).toContain("Confirm whether the change touches protected paths: src/auth/** [paths.protected]");
+    expect(text).toContain(
+      "Confirm whether the change touches protected paths: src/auth/\\*\\* \\[paths.protected\\]"
+    );
     expect(text).toContain("Policy provenance");
     expect(structured.phases.find((phase) => phase.phase === "secure")!.tasks.length).toBeGreaterThan(0);
   });

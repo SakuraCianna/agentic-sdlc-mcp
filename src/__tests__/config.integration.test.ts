@@ -159,7 +159,29 @@ describe("configuration lifecycle with isolated filesystem", () => {
       GITHUB_OWNER: "example-owner",
       GITHUB_REPO: "example-repo",
     });
+    if (process.platform !== "win32") {
+      const savedMode = (await fs.stat(
+        path.join(home, ".agentic-sdlc-mcp.json")
+      )).mode & 0o777;
+      expect(savedMode).toBe(0o600);
+    }
     expect(configMocks.question).toHaveBeenCalledTimes(4);
     expect(configMocks.close).toHaveBeenCalledOnce();
+  });
+
+  it("tightens an existing persisted credential file before loading it", async () => {
+    const configPath = path.join(home, ".agentic-sdlc-mcp.json");
+    await fs.writeFile(
+      configPath,
+      JSON.stringify({ GITHUB_TOKEN: "file-token" }),
+      { mode: 0o644 }
+    );
+
+    const { initializeConfig } = await import("../config.js");
+    await initializeConfig();
+
+    if (process.platform !== "win32") {
+      expect((await fs.stat(configPath)).mode & 0o777).toBe(0o600);
+    }
   });
 });

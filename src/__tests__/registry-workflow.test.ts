@@ -36,7 +36,12 @@ describe("MCP Registry publish workflow", () => {
       contents: "read",
       "id-token": "write",
     });
-    expect(steps.some((step) => step.uses === "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0")).toBe(true);
+    const checkout = steps.find(
+      (step) =>
+        step.uses ===
+        "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0"
+    );
+    expect(checkout?.with?.["fetch-depth"]).toBe(0);
     expect(steps.some((step) => step.uses === "actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e")).toBe(true);
     expect(source).not.toContain("MCP_GITHUB_TOKEN");
     expect(source).not.toContain("releases/latest");
@@ -51,7 +56,9 @@ describe("MCP Registry publish workflow", () => {
     const workflow = parse(source) as RegistryWorkflow;
     const steps = workflow.jobs?.publish?.steps ?? [];
 
-    const versionIndex = steps.findIndex((step) => step.name === "Verify release metadata");
+    const versionIndex = steps.findIndex(
+      (step) => step.name === "Verify release target and metadata"
+    );
     const npmIndex = steps.findIndex((step) => step.name === "Wait for exact npm package version");
     const installIndex = steps.findIndex((step) => step.name === "Install verified mcp-publisher v1.7.9");
     const loginIndex = steps.findIndex((step) => step.run === "./mcp-publisher login github-oidc");
@@ -59,6 +66,12 @@ describe("MCP Registry publish workflow", () => {
     const verifyIndex = steps.findIndex((step) => step.name === "Verify Registry publication");
 
     expect(versionIndex).toBeGreaterThan(-1);
+    expect(steps[versionIndex]?.run).toContain(
+      "git merge-base --is-ancestor HEAD origin/main"
+    );
+    expect(steps[versionIndex]?.run).toContain(
+      "package-lock root version != npm version"
+    );
     expect(npmIndex).toBeGreaterThan(versionIndex);
     expect(installIndex).toBeGreaterThan(npmIndex);
     expect(loginIndex).toBeGreaterThan(installIndex);

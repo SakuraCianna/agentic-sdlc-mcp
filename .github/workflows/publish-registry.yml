@@ -18,6 +18,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
@@ -25,18 +27,22 @@ jobs:
           node-version: "24"
           registry-url: https://registry.npmjs.org
 
-      - name: Verify release metadata
+      - name: Verify release target and metadata
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor HEAD origin/main
           node --input-type=module <<'NODE'
           import { readFileSync } from "node:fs";
           const pkg = JSON.parse(readFileSync("package.json", "utf8"));
+          const lock = JSON.parse(readFileSync("package-lock.json", "utf8"));
           const server = JSON.parse(readFileSync("server.json", "utf8"));
           const expectedTag = `v${pkg.version}`;
           const packageMetadata = server.packages?.[0];
           const errors = [];
           if (process.env.RELEASE_TAG !== expectedTag) errors.push(`release tag ${process.env.RELEASE_TAG} != ${expectedTag}`);
+          if (lock.packages?.[""]?.version !== pkg.version) errors.push("package-lock root version != npm version");
           if (pkg.mcpName !== server.name) errors.push("package.json mcpName != server.json name");
           if (server.version !== pkg.version) errors.push("server version != npm version");
           if (packageMetadata?.version !== pkg.version) errors.push("Registry package version != npm version");

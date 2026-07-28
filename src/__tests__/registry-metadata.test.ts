@@ -53,7 +53,7 @@ describe("MCP Registry metadata", () => {
       "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json"
     );
     expect(server.name).toBe(pkg.mcpName);
-    expect(server.version).toBe("1.8.0");
+    expect(server.version).toBe("1.9.0");
     expect(server.version).toBe(pkg.version);
     expect(registryPackage).toMatchObject({
       registryType: "npm",

@@ -200,7 +200,7 @@
   },
   "runtime": {
     "packageManager": "npm",
-    "nodeVersion": ">=24"
+    "nodeVersion": ">=22"
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
@@ -1153,7 +1153,7 @@ v1.7 的 policy consumer 固定为以上 6 个工具。`prepare_work_item` 在 v
 - 将 `prepare_work_item` 的 GitHub 评论、仓库策略、相关文件、PR 历史与依赖证据收敛到 `src/briefing/work-item-evidence.ts`。工具文件保留 schema、风险编排和渲染，证据模块统一管理请求预算、partial-failure 与 incomplete 语义；原有 helper 导出保持兼容。
 - 本地 HTTP profile 改用 SDK 的 Express factory，只监听 `127.0.0.1`，校验 Host 与已提供的 Origin；每个 POST 使用独立无状态 server/transport，不支持的 GET/DELETE 返回 `405`，解析/内部错误使用有界 JSON-RPC 响应，并覆盖并发隔离、断连清理、端口边界和幂等关闭。
 - 全仓按职责、导出面和依赖方向复核大文件。`src/review/pull-request-review.ts` 虽大但仍是内聚的纯评估器，本版本不按行数机械拆分；`quality_gate_status`、PR evidence/rendering 等候选只在出现稳定的 collection/evaluation/rendering 边界并有回归测试时再拆。
-- v1.8 不引入 SDK draft/v2 transport API，也不把 local HTTP 宣称为 remote-ready。OAuth、request-scoped identity/credential、显式 body/header/concurrency/timeout/cancellation 预算及多租户隔离仍由 v1.10 完整解决。
+- v1.8 不引入 SDK draft/v2 transport API，也不把 local HTTP 宣称为 remote-ready。项目当前只支持本地 stdio/loopback HTTP，远程 OAuth 与多租户已移出路线图；未来若重新立项，必须先满足 `docs/remote-deployment-considerations.md`。
 
 本版本非目标：
 
@@ -1163,14 +1163,19 @@ v1.7 的 policy consumer 固定为以上 6 个工具。`prepare_work_item` 在 v
 
 ### v1.9: Evidence Packet 与可信交接闭环
 
+> **状态：发布内容完成（2026-07-28）。** 已建立统一 evidence schema/digest、Issue/PR/release packet、PR head stale 检测、release partial collection、公共工具 catalog、resources contract、branch-protection unknown 语义和仓库文本 prompt-injection 防护。Node 22/24 兼容矩阵、发布工作流目标校验与文档同步已完成；正式制品只在 PR 合并且 `main` CI 通过后由 release workflow 生成。
+
 目标：形成项目的核心差异化能力：把 AI agent 的工作过程整理成可审查、可归档、可交接的证据包。
 
-当前代码缺口：
+实现结果：
 
-- `agent_handoff_packet` 的 current status、decisions、next steps 主要由调用方自由文本提供，系统只补 issue/PR 基本信息，无法区分已验证事实和自报状态。
-- PR summary、quality gate、review、security triage、release readiness 已有各自 structuredContent，但缺少统一 evidence ID、来源 SHA、采集时间、freshness 与完整性语义。
-- 当前静态 resources 中的 handoff/release 模板可能与工具真实输出逐渐漂移，且 resources 代码覆盖为 0%。
-- evidence 目前只存在于单次响应，没有稳定 schema、digest、版本或兼容策略。
+- `agent_handoff_packet` 默认从系统 evidence 派生 current status，并支持 Issue/PR/release、goal/non-goals、completed actions、decisions 与 next steps；调用方文本永远不会被提升为 verified。
+- PR、quality/review 共用现有 PR collector，release/security 通过显式 adapter 映射为统一 evidence item；旧 structuredContent 保持兼容，不做破坏性替换。
+- `sdlc_evidence_packet` 为 Issue、PR 与 release ref 提供统一 evidence ID、subject SHA、采集时间、freshness、completeness、provenance 与 partial semantics。
+- 静态 resources 与公共工具 catalog 由真实 MCP 协议 contract test 约束，handoff 模板必须包含全部公开工具。
+- evidence schema 固定为 `1.0`，packet 带 generator version 与排除易变 envelope 字段的稳定 `contentDigest`。
+- 仓库与调用方文本在共享 Markdown 边界执行有界转义；任何检测到的 prompt-injection 信号都从 agent-facing Markdown 隔离，原始 structured evidence 保留为不可信数据，所有工具在 `_meta` 与 `structuredContent.trustBoundary` 同时声明信任边界。
+- packet 公开并强制 GitHub request、源文本、文件/单源项目、Markdown、evidence item 与单源 timeout 预算；handoff 额外使用覆盖仓库、Issue、PR、policy 与深度 evidence 的 30 秒总预算。timeout 触发 AbortSignal，security alerts 使用 max+1 截断探测和 50 条 Markdown 展示上限，省略与截断均显式返回；Issue/PR 文本或 changed-file 列表不完整时，prompt-injection evidence 必须 fail closed 为 `unverified`/`partial`。
 
 本版本先实现只读、即时聚合的 evidence packet，不引入数据库或后台任务。证据持久化、签名与组织级策略留到 v2.0。
 
@@ -1443,9 +1448,11 @@ AI coding agent 的关键风险不是不会写代码，而是人类很难快速�
 - 不签名、不声称满足法务/合规审计认证。
 - 不允许 handoff 自动批准、合并或发布。
 
-### v1.10: HTTP 运行安全与凭据迁移
+### 条件触发备忘：远程 HTTP/OAuth 与多租户（不在当前路线图）
 
-目标：在保持 stdio 兼容的前提下，先解决远程 HTTP 和凭据生命周期的基础安全问题。本版本不同时承担 evaluation、供应链和 telemetry，避免安全架构迁移与质量平台建设互相阻塞。
+> **产品决定：** 当前 MCP 只面向可信本机运行，不计划 remote OAuth、多租户或托管 SaaS。本节只保留未来重新立项所需的安全架构备忘，不对应版本号、排期或发布承诺；完整准入条件见 `docs/remote-deployment-considerations.md`。
+
+若未来需求发生变化，目标是在保持 stdio 兼容的前提下，先解决远程 HTTP 和凭据生命周期的基础安全问题。重新立项不得同时承担 evaluation、供应链和 telemetry，避免安全架构迁移与质量平台建设互相阻塞。
 
 当前代码缺口：
 
@@ -1511,7 +1518,7 @@ interface ToolDependencies {
 - 校验配置文件 owner/ACL/permission，宽权限时发出高风险提示。
 - 日志、错误、telemetry 和 crash report 统一经过 secret redaction。
 
-#### 3. v1.10 完成定义与非目标
+#### 3. 未来重新立项的完成定义与非目标
 
 完成定义：
 
@@ -1524,10 +1531,10 @@ interface ToolDependencies {
 本版本非目标：
 
 - 不提供托管 SaaS、多租户计费或用户管理后台。
-- 不实现 MCP evaluation 平台、SBOM 或 telemetry；分别放到 v1.11/v1.12。
+- 不实现 MCP evaluation 平台、SBOM 或 telemetry；这些属于当前路线图的 v1.10/v1.11。
 - 不实现组织级策略中心或 evidence 数据库。
 
-### v1.11: MCP 契约、Inspector 与 Agent Evaluation
+### v1.10: MCP 契约、Inspector 与 Agent Evaluation
 
 目标：验证“agent 是否能正确发现、选择和组合工具”，而不只验证 TypeScript handler。将协议契约、客户端兼容、响应预算和稳定 evaluation 建成独立质量阶段。
 
@@ -1556,7 +1563,7 @@ interface ToolDependencies {
 - output schema 与真实 structuredContent 零漂移。
 - 旧版客户端至少能继续调用 v1.x 已公开工具；新增字段保持 additive。
 
-#### 2. v1.11 必测特殊场景
+#### 2. v1.10 必测特殊场景
 
 - 客户端忽略 structuredContent、只读取 Markdown，或反过来只消费 schema 字段。
 - 工具描述相似导致 agent 误选，例如 gate 与 review、repo context 与 prepare brief、release readiness 与 evidence packet。
@@ -1565,7 +1572,7 @@ interface ToolDependencies {
 - MCP client 取消、重复调用、乱序响应、未知 tool/resource、schema invalid 和版本不匹配。
 - evaluation fixture 发生变化或答案不再稳定时必须 fail 明确，不能更新 golden answer 掩盖回归。
 
-#### 3. v1.11 完成定义与非目标
+#### 3. v1.10 完成定义与非目标
 
 完成定义：
 
@@ -1580,7 +1587,7 @@ interface ToolDependencies {
 - 不依赖持续变化的公开仓库作为唯一 fixture。
 - 不在本版本同时做 Actions/SBOM/telemetry 改造。
 
-### v1.12: 软件供应链、Coverage 门槛与可观测性
+### v1.11: 软件供应链、Coverage 门槛与可观测性
 
 目标：加固项目自身的构建/发布链，并让 degraded、timeout、rate limit、stale evidence 等运行状态可观测，同时坚持最小化和隐私默认值。
 
@@ -1600,7 +1607,7 @@ interface ToolDependencies {
 - 对 lockfile、install scripts、新依赖、GitHub Actions、容器/二进制下载建立 review gate。
 - 设置分层 coverage threshold，优先提升 config、resources、prepare、handoff、PR summary 等低覆盖模块；不能通过排除文件伪造提升。
 
-> 2026-07-13 基础进展：已建立首轮全局 coverage regression floor（statements 92%、branches 87%、functions/lines 93%）、机器可读 JSON summary、配置生命周期测试和基于 SDK 内存 transport 的真实 MCP 协议测试；对抗矩阵与测试资产维护规则见 `docs/testing-strategy.md`。这只是 v1.12 的测试基础，不代表本版本供应链与可观测性目标已经完成。
+> 2026-07-13 基础进展：已建立首轮全局 coverage regression floor（statements 92%、branches 87%、functions/lines 93%）、机器可读 JSON summary、配置生命周期测试和基于 SDK 内存 transport 的真实 MCP 协议测试；对抗矩阵与测试资产维护规则见 `docs/testing-strategy.md`。这只是 v1.11 的测试基础，不代表本版本供应链与可观测性目标已经完成。
 
 #### 2. 可观测性与隐私
 
@@ -1609,7 +1616,7 @@ interface ToolDependencies {
 - 日志级别和 telemetry 默认关闭/最小化；远程 telemetry 必须显式 opt-in 并有数据字典和保留策略。
 - 为 timeout、rate-limit、provenance failure、evidence stale 和 policy parse failure 定义可行动告警。
 
-#### 3. v1.12 必测特殊场景
+#### 3. v1.11 必测特殊场景
 
 - action SHA 更新与注释版本不一致、Dependabot PR 修改 workflow 权限、第三方 action 仓库转移/删除。
 - tag、package version、Registry version、artifact digest、SBOM 和 attestation 指向不同 commit。
@@ -1618,7 +1625,7 @@ interface ToolDependencies {
 - metrics backend 不可用不能阻塞 MCP 工具主路径；本地 buffer 也必须有上限和丢弃策略。
 - coverage 提升不能通过排除低覆盖文件、删除测试目标或只测生成代码实现。
 
-#### 4. v1.12 完成定义与非目标
+#### 4. v1.11 完成定义与非目标
 
 完成定义：
 
@@ -1635,7 +1642,7 @@ interface ToolDependencies {
 
 ### v2.0: 组织级治理、签名证据与可演进契约
 
-进入 v2.0 的条件不是“v1.12 做完了”，而是至少出现一个确实需要 breaking change 的产品需求，例如：公共 schema 无法 additive 演进、引入持久化 evidence identity、组织级策略继承需要新的授权模型，或签名/验证协议需要稳定 canonical format。若没有这些条件，继续发布 v1.13、v1.14，而不是为了路线图编号强行升主版本。
+进入 v2.0 的条件不是“v1.11 做完了”，而是至少出现一个确实需要 breaking change 的产品需求，例如：公共 schema 无法 additive 演进、引入持久化 evidence identity、组织级策略继承需要新的授权模型，或签名/验证协议需要稳定 canonical format。若没有这些条件，继续发布 v1.12、v1.13，而不是为了路线图编号强行升主版本。
 
 目标：在保持人类控制权的前提下，把单仓库即时判断升级为可跨仓库复用、可签名验证、可审计豁免的治理平台。
 
@@ -1714,6 +1721,7 @@ interface ToolDependencies {
 - 在 MCP server 内执行任意仓库代码修改
 - 保存或输出用户密钥、token、cookie、私有证书
 - 为单一 AI coding 客户端做专用流程或专属测试矩阵
+- 远程 OAuth、多租户托管或把 loopback HTTP 暴露到其他机器
 
 如果未来需要更主动的执行能力，也应保持最小权限、dry-run 优先、人类确认和完整审计记录。
 
@@ -1728,10 +1736,9 @@ interface ToolDependencies {
 | P2 | 合并门禁增强 | 从 CI 查询升级为工程治理判断 | ✅ v1.6.0 |
 | P0 | MCP Registry 发布与 `.agentic-sdlc.yml` 基础 | 先建立可发现、可配置、可解释的统一策略入口 | ✅ v1.7.1 |
 | P0 | 风险感知 `prepare_work_item` | 把高风险任务的防御性编程、负向测试、回滚、可观测性与有来源的上下文前移到开工阶段 | ✅ v1.8.0 |
-| P1 | `sdlc_evidence_packet` 与可信 handoff | 统一 verified/unverified/stale/partial 证据语义 | v1.9 待开始 |
-| P1 | HTTP 运行安全与凭据迁移 | 引入 request-scoped context/client、remote auth 和非明文凭据默认值 | v1.10 待开始 |
-| P1 | MCP 契约与 Agent evaluation | 用 Inspector、稳定评测、性能预算和故障注入验证 agent 真正会用 | v1.11 待开始 |
-| P1 | CI/CD 供应链与可观测性 | 固定 Actions、SBOM/provenance、coverage 门槛和隐私安全 metrics | v1.12 待开始 |
+| P1 | `sdlc_evidence_packet` 与可信 handoff | 统一 verified/unverified/stale/partial 证据语义 | ✅ v1.9.0 |
+| P1 | MCP 契约与 Agent evaluation | 用 Inspector、稳定评测、性能预算和故障注入验证 agent 真正会用 | v1.10 待开始 |
+| P1 | CI/CD 供应链与可观测性 | 固定 Actions、SBOM/provenance、coverage 门槛和隐私安全 metrics | v1.11 待开始 |
 | P2 | 组织策略与签名 evidence | 只有出现真实 breaking/persistence 需求时进入主版本 | v2.0 条件触发 |
 
 ## 成功指标
@@ -1745,16 +1752,16 @@ interface ToolDependencies {
 | 让 AI“长脑子” | 简报/计划中有来源的风险与约束覆盖率、verified 与 caller assertion 正确分离率、handoff 后不重复已验证步骤的成功率 |
 | 让组织“敢用” | 高风险结论 provenance 完整率、degraded/stale 正确暴露率、最小权限与人类 gate 覆盖率、敏感信息泄露与越权写入为零 |
 
-指标采集必须遵守 v1.12 的隐私原则：优先用本地/CI fixture 与聚合低基数数据，不收集私有源码、Issue/PR 正文或 secret；没有真实 telemetry 前，使用可重复 evaluation 和 contract tests 作为代理指标。
+指标采集必须遵守 v1.11 的隐私原则：优先用本地/CI fixture 与聚合低基数数据，不收集私有源码、Issue/PR 正文或 secret；没有真实 telemetry 前，使用可重复 evaluation 和 contract tests 作为代理指标。
 
 版本验收使用固定 fixture 的代理阈值（首次实现时把 fixture 与计算脚本一并纳入仓库，后续只能通过评审调整，不能为过 CI 临时降低）：
 
 - v1.7：策略 fixture 的 expected rule decision/source/digest 匹配率 100%，非法/未知配置静默生效率 0%。
 - v1.8：高风险 fixture 的 `riskProfile`、来源、防御性要求、negative scenarios、rollback、observability 必备字段覆盖率 100%；低风险 docs fixture 不相关高风险清单误加率 0%。
 - v1.9：`state`/`freshness`/`completeness` schema 契约匹配率 100%，`state: verified` claim 的 provenance 完整率 100%，caller assertion 被标成 verified 的数量为 0。
-- v1.10：至少 100 组交错并发双租户 fixture 中 credential/repo/client/cache/AbortSignal 串线为 0；无效 auth、Host/Origin 与超预算请求拒绝率 100%。
-- v1.11：固定工具选择与多工具组合 evaluation 总正确率至少 90%，其中涉及写操作、security gate、release gate 的安全关键题必须 100%；schema/structuredContent drift 为 0%。
-- v1.12：仓库内第三方 Actions 完整 SHA 固定率 100%，发布版本/tag/artifact/SBOM/attestation commit 一致率 100%，敏感内容作为 metric label 或远程 telemetry payload 的 fixture 泄露数为 0。
+- v1.10：固定工具选择与多工具组合 evaluation 总正确率至少 90%，其中涉及写操作、security gate、release gate 的安全关键题必须 100%；schema/structuredContent drift 为 0%。
+- v1.11：仓库内第三方 Actions 完整 SHA 固定率 100%，发布版本/tag/artifact/SBOM/attestation commit 一致率 100%，敏感内容作为 metric label 或远程 telemetry payload 的 fixture 泄露数为 0。
+- 远程部署条件触发指标：若未来重新立项，至少 100 组交错并发双租户 fixture 中 credential/repo/client/cache/AbortSignal 串线必须为 0；无效 auth、Host/Origin 与超预算请求拒绝率必须为 100%。
 
 这些阈值是发布 gate 的最低代理指标，不代表真实用户体验已经充分；每版仍需记录失败样本、人工可用性反馈和未覆盖场景。
 
@@ -1776,14 +1783,14 @@ interface ToolDependencies {
 - [x] 高风险简报包含防御性要求、negative scenarios、回滚和上线可观测性，且 Issue/派生验收项来源分离（v1.8 建设批次 1）
 - [x] related files 区分意图与仓库验证事实，并包含原因、置信度、CODEOWNERS、测试邻接和 incomplete 语义（v1.8 建设批次 2）
 - [x] blocked-by/blocking/sub-issues/cross-reference 使用官方关系来源，按来源限制预算并在部分失败时保留成功证据（v1.8 建设批次 2）
-- PR/Issue/release evidence packet 能用正交字段区分结论 state、freshness（fresh/stale/unknown）与 completeness（complete/partial/omitted）（v1.9）
-- handoff 不再把调用方自报状态伪装成系统验证事实（v1.9）
+- [x] PR/Issue/release evidence packet 能用正交字段区分结论 state、freshness（fresh/stale/unknown）与 completeness（complete/partial/omitted）（v1.9）
+- [x] handoff 不再把调用方自报状态伪装成系统验证事实（v1.9）
 
 长期成功指标：
 
-- MCP Inspector 与稳定 evaluation 能验证 agent 是否会正确选择并组合工具，而不只是 handler 单测通过（v1.11）
-- HTTP transport 具备官方授权、安全 Host/Origin、请求预算、timeout/cancellation 与并发隔离（v1.10）
-- 发布制品具备 SBOM/provenance，所有第三方 Actions 固定且供应链 gate 可解释（v1.12）
+- MCP Inspector 与稳定 evaluation 能验证 agent 是否会正确选择并组合工具，而不只是 handler 单测通过（v1.10）
+- 远程 HTTP/OAuth/多租户只在条件触发重新立项后评估，不属于当前版本路线
+- 发布制品具备 SBOM/provenance，所有第三方 Actions 固定且供应链 gate 可解释（v1.11）
 - 一个 PR 或 release 可以生成完整、版本化、来源可追溯的 evidence packet
 - 人类 reviewer 可以直接根据 evidence packet 判断 agent 工作是否可信，同时看见证据缺口和时效性
 - 下一个 agent 可以根据 handoff packet 无缝接续工作，不重复已验证步骤，也不继承未经验证的假设

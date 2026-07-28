@@ -17,6 +17,11 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import {
+  STRUCTURED_CONTENT_TRUST_META,
+  StructuredContentTrustBoundarySchema,
+  withStructuredContentTrustBoundary,
+} from "../security/trust-boundary.js";
 import { parse as parseYaml } from "yaml";
 import { resolveRepo, getOctokit, handleGitHubError } from "../github/client.js";
 import { safeMarkdownInline } from "../rendering/markdown.js";
@@ -43,6 +48,7 @@ export type WorkflowPermissionsAuditInput = z.infer<typeof WorkflowPermissionsAu
 // ---------------------------------------------------------------------------
 
 export const WorkflowPermissionsAuditOutputSchema = {
+  trustBoundary: StructuredContentTrustBoundarySchema.optional(),
   repo: z.string(),
   ref: z.string(),
   workflowsScanned: z.array(z.string()),
@@ -411,7 +417,8 @@ Returns: per-file findings by severity and a least_privilege/needs_review/over_p
         const { text, structured } = await handleWorkflowPermissionsAudit(params, ref, octokit);
         return {
           content: [{ type: "text", text }],
-          structuredContent: structured as unknown as Record<string, unknown>,
+          structuredContent: withStructuredContentTrustBoundary(structured),
+          _meta: STRUCTURED_CONTENT_TRUST_META,
         };
       } catch (error) {
         return {

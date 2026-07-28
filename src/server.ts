@@ -12,6 +12,7 @@ import { registerReleaseReadinessTool } from "./tools/release-readiness.js";
 import { registerRepoContextTool } from "./tools/repo-context.js";
 import { registerReviewPrTool } from "./tools/review-pr.js";
 import { registerSecurityTriageTool } from "./tools/security-triage.js";
+import { registerSdlcEvidencePacketTool } from "./tools/sdlc-evidence-packet.js";
 import { registerWorkflowPermissionsAuditTool } from "./tools/workflow-permissions-audit.js";
 import { SERVER_INFO } from "./version.js";
 
@@ -31,6 +32,7 @@ export function createAgenticSdlcServer(): McpServer {
   registerAgentHandoffTool(server);
   registerBranchProtectionStatusTool(server);
   registerWorkflowPermissionsAuditTool(server);
+  registerSdlcEvidencePacketTool(server);
   registerResources(server);
 
   return server;

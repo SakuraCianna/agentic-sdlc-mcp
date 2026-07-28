@@ -7,7 +7,13 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import {
+  STRUCTURED_CONTENT_TRUST_META,
+  StructuredContentTrustBoundarySchema,
+  withStructuredContentTrustBoundary,
+} from "../security/trust-boundary.js";
 import { resolveRepo, getOctokit, handleGitHubError } from "../github/client.js";
+import { safeMarkdownInline } from "../rendering/markdown.js";
 import type { RepoRef } from "../types.js";
 import type { Octokit } from "@octokit/rest";
 
@@ -50,6 +56,7 @@ export const CreateIssueSetInputSchema = z.object({
 export type CreateIssueSetInput = z.infer<typeof CreateIssueSetInputSchema>;
 
 export const CreateIssueSetOutputSchema = {
+  trustBoundary: StructuredContentTrustBoundarySchema.optional(),
   dryRun: z.boolean().describe("Whether this was a preview-only run."),
   count: z.number().int().describe("Number of issues previewed or successfully created."),
   targetRepo: z.string().describe("Repository targeted by the preview or live batch."),
@@ -214,6 +221,8 @@ export async function handleCreateIssueSet(
 ): Promise<{ text: string; structured: CreateIssueSetResult }> {
   const prefix = params.titlePrefix ? `${params.titlePrefix} ` : "";
   const targetRepo = `${ref.owner}/${ref.repo}`;
+  const inline = (value: string, maxLength = 500): string =>
+    safeMarkdownInline(value, { maxLength });
 
   if (params.dryRun) {
     const previewTitles = params.issues.map((i) => `${prefix}${i.title}`);
@@ -240,25 +249,27 @@ export async function handleCreateIssueSet(
       "",
       `> **Preview only -- no GitHub issues were created.** No write call was made to the GitHub API. Set \`dryRun: false\` to create them for real.`,
       "",
-      `**Target repo (confirm before a live write):** \`${targetRepo}\``,
+      `**Target repo (confirm before a live write):** \`${inline(targetRepo, 200)}\``,
       "",
     ];
 
     if (warnings.length > 0) {
       lines.push("## Warnings", "");
-      warnings.forEach((w) => lines.push(`- [WARN] ${w}`));
+      warnings.forEach((warning) => lines.push(`- [WARN] ${inline(warning, 500)}`));
       lines.push("");
     }
 
     params.issues.forEach((issue, i) => {
       lines.push(
-        `## ${i + 1}. ${prefix}${issue.title}`,
+        `## ${i + 1}. ${inline(`${prefix}${issue.title}`, 300)}`,
         "",
-        preview[i]?.bodySummary ?? "(empty)",
+        inline(preview[i]?.bodySummary ?? "(empty)", BODY_SUMMARY_MAX_CHARS + 20),
         "",
-        issue.labels && issue.labels.length > 0 ? `**Labels:** ${issue.labels.join(", ")}` : "**Labels:** (none)",
+        issue.labels && issue.labels.length > 0
+          ? `**Labels:** ${issue.labels.map((label) => inline(label, 100)).join(", ")}`
+          : "**Labels:** (none)",
         issue.assignees && issue.assignees.length > 0
-          ? `**Assignees:** ${issue.assignees.join(", ")}`
+          ? `**Assignees:** ${issue.assignees.map((assignee) => inline(assignee, 100)).join(", ")}`
           : "",
         ""
       );
@@ -310,14 +321,14 @@ export async function handleCreateIssueSet(
   const lines = [
     `# Issue Set Creation Result - ${created.length} created, ${failures.length} failed`,
     "",
-    `Repo: ${targetRepo}`,
+    `Repo: ${inline(targetRepo, 200)}`,
     "",
     "## Created",
     created.length > 0
       ? created
           .map(
             (issue) =>
-              `- #${issue.number} ${issue.title} - ${issue.url}${issue.labels.length > 0 ? ` [${issue.labels.join(", ")}]` : ""}`
+              `- #${issue.number} ${inline(issue.title, 300)} - ${inline(issue.url, 500)}${issue.labels.length > 0 ? ` [${issue.labels.map((label) => inline(label, 100)).join(", ")}]` : ""}`
           )
           .join("\n")
       : "(none)",
@@ -327,7 +338,7 @@ export async function handleCreateIssueSet(
       ? failures
           .map(
             (failure) =>
-              `- Issue ${failure.inputIndex + 1} (${failure.title}): ${failure.reason}`
+              `- Issue ${failure.inputIndex + 1} (${inline(failure.title, 300)}): ${inline(failure.reason, 500)}`
           )
           .join("\n")
       : "(none)",
@@ -375,7 +386,8 @@ Returns: Created issue numbers + URLs + labels (live) or a preview + warnings (d
         const { text, structured } = await handleCreateIssueSet(params, ref, octokit);
         return {
           content: [{ type: "text", text }],
-          structuredContent: structured as unknown as Record<string, unknown>,
+          structuredContent: withStructuredContentTrustBoundary(structured),
+          _meta: STRUCTURED_CONTENT_TRUST_META,
         };
       } catch (error) {
         return {

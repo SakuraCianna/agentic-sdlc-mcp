@@ -7,6 +7,13 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { adaptPrSummaryEvidence } from "../evidence/adapters.js";
+import { EvidenceItemSchema, type EvidenceItem } from "../evidence/model.js";
+import {
+  STRUCTURED_CONTENT_TRUST_META,
+  StructuredContentTrustBoundarySchema,
+  withStructuredContentTrustBoundary,
+} from "../security/trust-boundary.js";
 import { resolveRepo, getOctokit, paginateAll, handleGitHubError } from "../github/client.js";
 import type { RepoRef } from "../types.js";
 import type { Octokit } from "@octokit/rest";
@@ -29,6 +36,7 @@ export type CreatePrSummaryInput = z.infer<typeof CreatePrSummaryInputSchema>;
 // ---------------------------------------------------------------------------
 
 export const CreatePrSummaryOutputSchema = {
+  trustBoundary: StructuredContentTrustBoundarySchema.optional(),
   pullNumber: z.number().int(),
   title: z.string(),
   author: z.string(),
@@ -44,6 +52,7 @@ export const CreatePrSummaryOutputSchema = {
   filesTruncated: z.boolean(),
   risks: z.array(z.string()),
   labels: z.array(z.string()),
+  evidence: EvidenceItemSchema,
 };
 
 // ---------------------------------------------------------------------------
@@ -66,6 +75,7 @@ export interface PrSummaryResult {
   filesTruncated: boolean;
   risks: string[];
   labels: string[];
+  evidence: EvidenceItem;
 }
 
 // ---------------------------------------------------------------------------
@@ -132,7 +142,7 @@ export async function handleCreatePrSummary(
   if (!hasTests && !docsOnly) risks.push("No test files detected — risk of regression.");
   if (filesTruncated) risks.push("File evidence is incomplete after the 300-file safety cap.");
 
-  const structured: PrSummaryResult = {
+  const summary: Omit<PrSummaryResult, "evidence"> = {
     pullNumber: pr.number,
     title: pr.title,
     author: pr.user?.login ?? "unknown",
@@ -148,6 +158,19 @@ export async function handleCreatePrSummary(
     filesTruncated,
     risks,
     labels,
+  };
+  const structured: PrSummaryResult = {
+    ...summary,
+    evidence: adaptPrSummaryEvidence(
+      summary,
+      new Date().toISOString(),
+      `${ref.owner}/${ref.repo}`,
+      {
+        url: pr.html_url,
+        ref: pr.head.ref,
+        subjectSha: pr.head.sha,
+      }
+    ),
   };
 
   const renderedTitle = safeMarkdownInline(pr.title, { maxLength: 300 });
@@ -277,7 +300,8 @@ Returns: Markdown PR summary + structured metadata.`,
         const { text, structured } = await handleCreatePrSummary(params, ref, octokit);
         return {
           content: [{ type: "text", text }],
-          structuredContent: structured as unknown as Record<string, unknown>,
+          structuredContent: withStructuredContentTrustBoundary(structured),
+          _meta: STRUCTURED_CONTENT_TRUST_META,
         };
       } catch (error) {
         return {

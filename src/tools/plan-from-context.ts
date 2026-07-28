@@ -16,11 +16,17 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import {
+  STRUCTURED_CONTENT_TRUST_META,
+  StructuredContentTrustBoundarySchema,
+  withStructuredContentTrustBoundary,
+} from "../security/trust-boundary.js";
 import { resolveRepo, getOctokit, paginateAll, handleGitHubError } from "../github/client.js";
 import { fetchRepoContext } from "../github/context.js";
 import type { SdlcPlanPhase, SdlcPhase, SdlcWorkType, IssueDraft, IssueRiskLevel, RepoRef } from "../types.js";
 import type { Octokit } from "@octokit/rest";
 import type { AppliedPolicyRule, PolicySource } from "../policy/repository-policy.js";
+import { safeMarkdownInline } from "../rendering/markdown.js";
 
 // ---------------------------------------------------------------------------
 // Schema
@@ -63,6 +69,7 @@ const IssueDraftShape = z.object({
 });
 
 export const PlanFromContextOutputSchema = {
+  trustBoundary: StructuredContentTrustBoundarySchema.optional(),
   goal: z.string(),
   repo: z.string(),
   defaultBranch: z.string(),
@@ -959,14 +966,16 @@ export async function handlePlanFromContext(
     policyErrors: ctx.policyErrors ?? [],
   };
 
+  const inline = (value: string, maxLength = 500): string =>
+    safeMarkdownInline(value, { maxLength });
   const lines: string[] = [
-    `# SDLC Plan: ${params.goal}`,
+    `# SDLC Plan: ${inline(params.goal)}`,
     "",
-    `**Repository:** ${ctx.fullName}`,
-    `**Default branch:** \`${ctx.defaultBranch}\``,
-    `**Language:** ${ctx.language ?? "unknown"}`,
+    `**Repository:** ${inline(ctx.fullName, 200)}`,
+    `**Default branch:** \`${inline(ctx.defaultBranch, 200)}\``,
+    `**Language:** ${inline(ctx.language ?? "unknown", 100)}`,
     `**Work type:** ${inference.workType} (confidence: ${inference.confidence})`,
-    `**Reasoning:** ${inference.reasoning}`,
+    `**Reasoning:** ${inline(inference.reasoning)}`,
   ];
 
   if (inference.needsClarification) {
@@ -977,16 +986,16 @@ export async function handlePlanFromContext(
     );
   }
 
-  lines.push("", "## Background", `Goal: **${params.goal}**`);
+  lines.push("", "## Background", `Goal: **${inline(params.goal)}**`);
 
   if (effectiveConstraints.length > 0) {
     lines.push("", "### Constraints");
-    effectiveConstraints.forEach((c) => lines.push(`- ${c}`));
+    effectiveConstraints.forEach((constraint) => lines.push(`- ${inline(constraint)}`));
   }
 
   if (acceptance.length > 0) {
     lines.push("", "### Acceptance Criteria");
-    acceptance.forEach((a) => lines.push(`- ${a}`));
+    acceptance.forEach((criterion) => lines.push(`- ${inline(criterion)}`));
   }
 
   if (ctx.policy || ctx.policySources?.length) {
@@ -994,18 +1003,18 @@ export async function handlePlanFromContext(
       "",
       "## Policy provenance",
       `**Status:** ${ctx.policy?.degraded ? "degraded (safe defaults applied)" : ctx.policy?.found ? "repository policy loaded" : "built-in defaults"}`,
-      `**Digest:** ${ctx.policyDigest ? `\`${ctx.policyDigest}\`` : "unknown"}`,
-      `**Applied rule IDs:** ${ctx.appliedPolicyRules?.length ? ctx.appliedPolicyRules.map((rule) => rule.id).join(", ") : "(none)"}`
+      `**Digest:** ${ctx.policyDigest ? `\`${inline(ctx.policyDigest, 100)}\`` : "unknown"}`,
+      `**Applied rule IDs:** ${ctx.appliedPolicyRules?.length ? ctx.appliedPolicyRules.map((rule) => inline(rule.id, 100)).join(", ") : "(none)"}`
     );
     for (const source of ctx.policySources ?? []) {
-      lines.push(`- ${source.kind}: ${source.path ?? "built-in"} @ ${source.ref ?? "default"} (blob: ${source.blobSha ?? "n/a"})`);
+      lines.push(`- ${inline(source.kind, 100)}: ${inline(source.path ?? "built-in", 200)} @ ${inline(source.ref ?? "default", 200)} (blob: ${inline(source.blobSha ?? "n/a", 100)})`);
     }
   }
 
   lines.push("", "## Phase-by-Phase Plan");
   for (const phase of plan) {
-    lines.push("", `### ${capitalize(phase.phase)}`, `*${phase.summary}*`, "");
-    phase.tasks.forEach((t) => lines.push(`- [ ] ${t}`));
+    lines.push("", `### ${capitalize(phase.phase)}`, `*${inline(phase.summary)}*`, "");
+    phase.tasks.forEach((task) => lines.push(`- [ ] ${inline(task)}`));
   }
 
   lines.push(
@@ -1013,7 +1022,7 @@ export async function handlePlanFromContext(
     "## Suggested Issues to Create",
     "",
     "Use `create_issue_set` with these suggested issues:",
-    ...suggestedIssues.map((s) => `- ${s}`),
+    ...suggestedIssues.map((suggestedIssue) => `- ${inline(suggestedIssue)}`),
     "",
     "## Issue Drafts (ready for create_issue_set)",
     "",
@@ -1024,16 +1033,16 @@ export async function handlePlanFromContext(
     "",
     ...issueDrafts.map(
       (d) =>
-        `- **${d.title}** (risk: ${d.riskLevel}, labels: ${d.labels.length > 0 ? d.labels.join(", ") : "none confirmed in this repo"})`
+        `- **${inline(d.title, 300)}** (risk: ${d.riskLevel}, labels: ${d.labels.length > 0 ? d.labels.map((label) => inline(label, 100)).join(", ") : "none confirmed in this repo"})`
     ),
     "",
     "## Risks",
-    ...risks.map((r) => `- ${r}`),
+    ...risks.map((risk) => `- ${inline(risk)}`),
     "",
-    "## Human Approval Gates",
-    "- PR review must be approved before merge",
-    "- Security review required for auth/data-handling changes",
-    "- Release checklist must pass before deployment"
+    "## Repository Decision Gates",
+    "- Satisfy the repository's configured review policy before merge",
+    "- Complete any repository-required security review for auth/data-handling changes",
+    "- Satisfy the repository's release policy before deployment"
   );
 
   return { text: lines.join("\n"), structured };
@@ -1074,7 +1083,8 @@ Returns: Phase-by-phase SDLC plan tailored to the (inferred or explicit) work ty
         const { text, structured } = await handlePlanFromContext(params, fetchRepoContext);
         return {
           content: [{ type: "text", text }],
-          structuredContent: structured as unknown as Record<string, unknown>,
+          structuredContent: withStructuredContentTrustBoundary(structured),
+          _meta: STRUCTURED_CONTENT_TRUST_META,
         };
       } catch (error) {
         return {

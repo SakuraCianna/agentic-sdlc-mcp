@@ -8,9 +8,15 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import {
+  STRUCTURED_CONTENT_TRUST_META,
+  StructuredContentTrustBoundarySchema,
+  withStructuredContentTrustBoundary,
+} from "../security/trust-boundary.js";
 import { resolveRepo, getOctokit, paginateAll, handleGitHubError } from "../github/client.js";
 import type { Finding, RepoRef } from "../types.js";
 import type { Octokit } from "@octokit/rest";
+import { safeMarkdownInline } from "../rendering/markdown.js";
 
 // ---------------------------------------------------------------------------
 // Schema
@@ -29,6 +35,7 @@ export type BranchProtectionStatusInput = z.infer<typeof BranchProtectionStatusI
 // ---------------------------------------------------------------------------
 
 export const BranchProtectionStatusOutputSchema = {
+  trustBoundary: StructuredContentTrustBoundarySchema.optional(),
   repo: z.string(),
   branch: z.string(),
   classicProtectionEnabled: z.boolean(),
@@ -40,6 +47,9 @@ export const BranchProtectionStatusOutputSchema = {
   allowDeletions: z.boolean().nullable(),
   requiredConversationResolution: z.boolean().nullable(),
   rulesetRuleTypes: z.array(z.string()),
+  classicProtectionVerified: z.boolean(),
+  rulesetsVerified: z.boolean(),
+  verificationGaps: z.array(z.string()),
   findings: z.array(
     z.object({
       severity: z.enum(["critical", "high", "medium", "low", "info"]),
@@ -49,7 +59,7 @@ export const BranchProtectionStatusOutputSchema = {
     })
   ),
   errors: z.array(z.string()),
-  conclusion: z.enum(["protected", "partially_protected", "unprotected"]),
+  conclusion: z.enum(["protected", "partially_protected", "unprotected", "unknown"]),
 };
 
 // ---------------------------------------------------------------------------
@@ -68,9 +78,12 @@ export interface BranchProtectionStatusResult {
   allowDeletions: boolean | null;
   requiredConversationResolution: boolean | null;
   rulesetRuleTypes: string[];
+  classicProtectionVerified: boolean;
+  rulesetsVerified: boolean;
+  verificationGaps: string[];
   findings: Finding[];
   errors: string[];
-  conclusion: "protected" | "partially_protected" | "unprotected";
+  conclusion: "protected" | "partially_protected" | "unprotected" | "unknown";
 }
 
 // ---------------------------------------------------------------------------
@@ -80,9 +93,13 @@ export interface BranchProtectionStatusResult {
 export function computeConclusion(
   classicProtectionEnabled: boolean,
   rulesetRuleTypes: string[],
-  findings: Finding[]
+  findings: Finding[],
+  absenceVerified = true
 ): BranchProtectionStatusResult["conclusion"] {
-  if (!classicProtectionEnabled && rulesetRuleTypes.length === 0) return "unprotected";
+  if (!absenceVerified) return "unknown";
+  if (!classicProtectionEnabled && rulesetRuleTypes.length === 0) {
+    return "unprotected";
+  }
   const hasCriticalOrHigh = findings.some((f) => f.severity === "critical" || f.severity === "high");
   return hasCriticalOrHigh ? "partially_protected" : "protected";
 }
@@ -98,6 +115,7 @@ export async function handleBranchProtectionStatus(
 ): Promise<{ text: string; structured: BranchProtectionStatusResult }> {
   const errors: string[] = [];
   const findings: Finding[] = [];
+  const verificationGaps: string[] = [];
 
   let branch = params.branch;
   if (!branch) {
@@ -113,6 +131,7 @@ export async function handleBranchProtectionStatus(
   let allowForcePushes: boolean | null = null;
   let allowDeletions: boolean | null = null;
   let requiredConversationResolution: boolean | null = null;
+  let classicProtectionVerified = false;
 
   try {
     const { data: protection } = await octokit.repos.getBranchProtection({
@@ -120,6 +139,7 @@ export async function handleBranchProtectionStatus(
       repo: ref.repo,
       branch,
     });
+    classicProtectionVerified = true;
     classicProtectionEnabled = true;
     requiredApprovingReviewCount =
       protection.required_pull_request_reviews?.required_approving_review_count ?? null;
@@ -131,14 +151,21 @@ export async function handleBranchProtectionStatus(
     requiredConversationResolution = protection.required_conversation_resolution?.enabled ?? null;
   } catch (err) {
     const message = handleGitHubError(err);
+    const status = (err as { status?: unknown }).status;
+    const notConfigured = status === 404 || message.toLowerCase().includes("not found");
+    classicProtectionVerified = notConfigured;
+    if (!notConfigured) {
+      verificationGaps.push("Classic branch protection could not be verified.");
+    }
     errors.push(
-      message.toLowerCase().includes("not found")
+      notConfigured
         ? `Classic branch protection: not configured for \`${branch}\`.`
         : `Classic branch protection: ${message}`
     );
   }
 
   let rulesetRuleTypes: string[] = [];
+  let rulesetsVerified = false;
   try {
     const rules = await paginateAll(
       (page, perPage) =>
@@ -148,11 +175,14 @@ export async function handleBranchProtectionStatus(
       200
     );
     rulesetRuleTypes = rules.map((r) => r.type);
+    rulesetsVerified = true;
   } catch (err) {
     errors.push(`Rulesets: ${handleGitHubError(err)}`);
+    verificationGaps.push("Repository rulesets could not be verified.");
   }
 
-  if (!classicProtectionEnabled && rulesetRuleTypes.length === 0) {
+  const absenceVerified = classicProtectionVerified && rulesetsVerified;
+  if (absenceVerified && !classicProtectionEnabled && rulesetRuleTypes.length === 0) {
     findings.push({
       severity: "critical",
       category: "Branch Protection",
@@ -163,7 +193,7 @@ export async function handleBranchProtectionStatus(
 
   const hasRequiredReviews =
     (requiredApprovingReviewCount ?? 0) > 0 || rulesetRuleTypes.includes("pull_request");
-  if (!hasRequiredReviews) {
+  if (absenceVerified && !hasRequiredReviews) {
     findings.push({
       severity: "high",
       category: "Branch Protection",
@@ -174,7 +204,7 @@ export async function handleBranchProtectionStatus(
 
   const hasRequiredStatusChecks =
     requiredStatusCheckContexts.length > 0 || rulesetRuleTypes.includes("required_status_checks");
-  if (!hasRequiredStatusChecks) {
+  if (absenceVerified && !hasRequiredStatusChecks) {
     findings.push({
       severity: "high",
       category: "Branch Protection",
@@ -186,7 +216,7 @@ export async function handleBranchProtectionStatus(
   const hasProtectionOfAnyKind = classicProtectionEnabled || rulesetRuleTypes.length > 0;
   const forcePushBlocked =
     (classicProtectionEnabled && allowForcePushes === false) || rulesetRuleTypes.includes("non_fast_forward");
-  if (hasProtectionOfAnyKind && !forcePushBlocked) {
+  if (absenceVerified && hasProtectionOfAnyKind && !forcePushBlocked) {
     findings.push({
       severity: "high",
       category: "Branch Protection",
@@ -199,7 +229,7 @@ export async function handleBranchProtectionStatus(
 
   const deletionBlocked =
     (classicProtectionEnabled && allowDeletions === false) || rulesetRuleTypes.includes("deletion");
-  if (hasProtectionOfAnyKind && !deletionBlocked) {
+  if (absenceVerified && hasProtectionOfAnyKind && !deletionBlocked) {
     findings.push({
       severity: "high",
       category: "Branch Protection",
@@ -228,7 +258,12 @@ export async function handleBranchProtectionStatus(
     });
   }
 
-  const conclusion = computeConclusion(classicProtectionEnabled, rulesetRuleTypes, findings);
+  const conclusion = computeConclusion(
+    classicProtectionEnabled,
+    rulesetRuleTypes,
+    findings,
+    absenceVerified
+  );
 
   const structured: BranchProtectionStatusResult = {
     repo: `${ref.owner}/${ref.repo}`,
@@ -242,6 +277,9 @@ export async function handleBranchProtectionStatus(
     allowDeletions,
     requiredConversationResolution,
     rulesetRuleTypes,
+    classicProtectionVerified,
+    rulesetsVerified,
+    verificationGaps,
     findings,
     errors,
     conclusion,
@@ -252,20 +290,25 @@ export async function handleBranchProtectionStatus(
       ? "PROTECTED"
       : conclusion === "partially_protected"
       ? "PARTIALLY PROTECTED"
-      : "UNPROTECTED";
+      : conclusion === "unprotected"
+      ? "UNPROTECTED"
+      : "UNKNOWN";
+  const inline = (value: string, maxLength = 500): string =>
+    safeMarkdownInline(value, { maxLength });
 
   const lines: string[] = [
-    `# Branch Protection Status: ${ref.owner}/${ref.repo}@${branch}`,
+    `# Branch Protection Status: ${inline(`${ref.owner}/${ref.repo}@${branch}`, 300)}`,
     "",
     `**Conclusion:** ${conclusionLabel}`,
     `**Classic protection enabled:** ${classicProtectionEnabled ? "yes" : "no"}`,
-    `**Active ruleset rule types:** ${rulesetRuleTypes.length > 0 ? rulesetRuleTypes.join(", ") : "none"}`,
+    `**Active ruleset rule types:** ${rulesetRuleTypes.length > 0 ? rulesetRuleTypes.map((rule) => inline(rule, 100)).join(", ") : "none"}`,
+    `**Evidence complete:** ${absenceVerified ? "yes" : "no"}`,
     "",
   ];
 
   if (errors.length > 0) {
     lines.push("## Notes", "");
-    errors.forEach((e) => lines.push(`- ${e}`));
+    errors.forEach((error) => lines.push(`- ${inline(error)}`));
     lines.push("");
   }
 
@@ -276,7 +319,7 @@ export async function handleBranchProtectionStatus(
     "|---|---|",
     `| Required approving reviews | ${requiredApprovingReviewCount ?? "not set"} |`,
     `| Require code owner reviews | ${requireCodeOwnerReviews ?? "not set"} |`,
-    `| Required status check contexts | ${requiredStatusCheckContexts.length > 0 ? requiredStatusCheckContexts.join(", ") : "none"} |`,
+    `| Required status check contexts | ${requiredStatusCheckContexts.length > 0 ? requiredStatusCheckContexts.map((context) => inline(context, 200)).join(", ") : "none"} |`,
     `| Enforce admins | ${enforceAdmins ?? "not set"} |`,
     `| Allow force pushes | ${allowForcePushes ?? "not set"} |`,
     `| Allow deletions | ${allowDeletions ?? "not set"} |`,
@@ -290,8 +333,8 @@ export async function handleBranchProtectionStatus(
   } else {
     for (const f of findings) {
       lines.push(
-        `- **[${f.severity.toUpperCase()}]** ${f.category}: ${f.description}` +
-          (f.suggestion ? `\n  > Suggestion: ${f.suggestion}` : "")
+        `- **[${f.severity.toUpperCase()}]** ${inline(f.category, 100)}: ${inline(f.description)}` +
+          (f.suggestion ? `\n  > Suggestion: ${inline(f.suggestion)}` : "")
       );
     }
   }
@@ -316,7 +359,7 @@ Args:
   - owner, repo: Repository coordinates.
   - branch: Optional. Falls back to the repository's default branch.
 
-Returns: Required reviews / status checks / force-push / deletion settings from both classic protection and rulesets, findings by severity, and a protected/partially_protected/unprotected conclusion.`,
+Returns: Required reviews / status checks / force-push / deletion settings from both classic protection and rulesets, findings by severity, verification gaps, and a protected/partially_protected/unprotected/unknown conclusion.`,
       inputSchema: BranchProtectionStatusInputSchema,
       outputSchema: BranchProtectionStatusOutputSchema,
       annotations: {
@@ -333,7 +376,8 @@ Returns: Required reviews / status checks / force-push / deletion settings from 
         const { text, structured } = await handleBranchProtectionStatus(params, ref, octokit);
         return {
           content: [{ type: "text", text }],
-          structuredContent: structured as unknown as Record<string, unknown>,
+          structuredContent: withStructuredContentTrustBoundary(structured),
+          _meta: STRUCTURED_CONTENT_TRUST_META,
         };
       } catch (error) {
         return {
