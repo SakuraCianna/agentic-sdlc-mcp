@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   adaptCiEvidence,
+  adaptPrSummaryEvidence,
   adaptReleaseReadinessEvidence,
   adaptReviewEvidence,
 } from "../../evidence/adapters.js";
@@ -92,6 +93,45 @@ function pullRequestEvidence(): PullRequestEvidence {
 }
 
 describe("evidence adapters", () => {
+  it("adapts PR summary metadata into a provenance-bound evidence item", () => {
+    const evidence = adaptPrSummaryEvidence(
+      {
+        pullNumber: 7,
+        title: "Test",
+        author: "octocat",
+        isDraft: false,
+        baseRef: "main",
+        headRef: "feature/test",
+        commits: 1,
+        totalAdditions: 10,
+        totalDeletions: 2,
+        totalFiles: 301,
+        hasTests: true,
+        docsOnly: false,
+        filesTruncated: true,
+        risks: [],
+        labels: [],
+      },
+      "2026-07-26T00:00:00.000Z",
+      "test-org/test-repo",
+      {
+        url: "https://github.com/test-org/test-repo/pull/7",
+        subjectSha: "head-sha",
+      }
+    );
+
+    expect(evidence).toMatchObject({
+      id: "pr:summary",
+      state: "verified",
+      completeness: "partial",
+      subject: {
+        type: "pull_request",
+        number: 7,
+        sha: "head-sha",
+      },
+    });
+  });
+
   it("does not verify skipped-only CI", () => {
     const evidence = adaptCiEvidence(
       pullRequestEvidence(),

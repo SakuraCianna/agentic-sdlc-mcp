@@ -285,7 +285,7 @@ The server constrains its own tools. It cannot control every action available to
 - **Human gates remain external**: the server reports CODEOWNERS, review, policy, CI, security, and release evidence; GitHub and your team enforce the final decision
 - **Evidence stays qualified**: missing, stale, truncated, malformed, or permission-limited sources remain visible as gaps
 - **Repository policy is base-bound**: PR policy is read from the base SHA when available so a pull request cannot silently weaken its own gate
-- **External text is untrusted**: repository and caller text is bounded and escaped; high-confidence instruction override, secret/data exfiltration, encoded-command, and tool-coercion patterns are omitted from agent-facing Markdown while raw structured evidence remains available for inspection
+- **External text is untrusted**: repository and caller text is bounded and escaped; any detected instruction override, secret/data exfiltration, encoded-command, or tool-coercion pattern is omitted from agent-facing Markdown while raw structured evidence remains available for inspection
 - **Secret detection has limits**: trusted scanner provenance and patch heuristics reduce risk, but cross-file or runtime data flow still needs CodeQL or other static application security testing (SAST), secret scanners, tests, and human review
 - **Credentials remain your responsibility**: prefer client secret injection or environment variables; never commit tokens or paste them into Issue, PR, or log content
 - **Local-only transport boundary**: stdio and loopback HTTP are for a trusted local workstation. Remote OAuth and multi-tenant hosting are not on the current product roadmap

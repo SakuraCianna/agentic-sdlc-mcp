@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented here. Release history is also available on the [GitHub Releases page](https://github.com/SakuraCianna/agentic-sdlc-mcp/releases).
 
-## [1.9.0] - Unreleased
+## [1.9.0] - 2026-07-28
 
 ### Added
 
@@ -12,6 +12,7 @@ All notable changes to this project are documented here. Release history is also
 - Made prompt-injection evidence fail closed when Issue/PR text or PR changed-file names exceed collection budgets, and applied one abortable 30-second collection budget across each handoff.
 - Expanded handoffs with system-derived status, release subjects, goals, non-goals, completed actions, decisions, and deep PR/release evidence.
 - Added a shared public tool catalog and real MCP contract checks that keep all 13 tools and handoff resources aligned.
+- Added first-class unified evidence to `create_pr_summary`, including pinned PR head provenance and explicit partial semantics when changed-file evidence is truncated.
 - Added complete [v1.9.0 release notes](docs/releases/v1.9.0.md) and future-only [remote deployment re-entry criteria](docs/remote-deployment-considerations.md).
 
 ### Changed
@@ -21,12 +22,14 @@ All notable changes to this project are documented here. Release history is also
 - Added an explicit structured-content trust boundary to every tool response and output schema.
 - Updated static standards to follow repository-specific traceability and review policies, including sole-maintainer repositories.
 - Kept stdio and loopback HTTP as the supported local profiles; remote OAuth and multi-tenant hosting are no longer scheduled roadmap work.
+- Hardened the npm and MCP Registry OIDC release workflows with immutable action revisions plus tag, `main` ancestry, lockfile, server, package, and registry metadata validation before publication.
 
 ### Security
 
-- Added shared high-confidence prompt-injection detection for instruction overrides, role impersonation, tool coercion, secret/data exfiltration, encoded instructions, and Unicode zero-width/bidirectional obfuscation.
-- Omitted high-confidence injected text from agent-facing Markdown and handoff prompts while preserving raw structured evidence for untrusted-data inspection.
+- Added shared prompt-injection detection for instruction overrides, role impersonation, tool coercion, secret/data exfiltration, encoded instructions, and Unicode zero-width/bidirectional obfuscation.
+- Omitted every detected injection signal from agent-facing Markdown and handoff prompts while preserving raw structured evidence for untrusted-data inspection.
 - Applied repository-text protection to metadata, README and agent instructions, package scripts, workflows, policy fields, Issue/PR fields, plans, issue previews, release evidence, and branch findings.
+- Restricted the local credential configuration file to owner read/write permissions on platforms that implement POSIX file modes, including tightening existing files before use.
 - Added a safe initialization error boundary to `security_triage`.
 - Prevented skipped-only or incomplete CI and unavailable review decisions from being promoted to verified evidence.
 - Refreshed the lockfile to patched `fast-uri`, `brace-expansion`, and `postcss` releases without force-upgrading or downgrading direct dependencies.

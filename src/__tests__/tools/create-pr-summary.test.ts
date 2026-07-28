@@ -39,7 +39,8 @@ function makeMockOctokit(prOverrides = {}, files: ReturnType<typeof makeFile>[] 
           user: { login: "dev" },
           draft: false,
           base: { ref: "main" },
-          head: { ref: "feature/my-feature" },
+          head: { ref: "feature/my-feature", sha: "head-sha" },
+          html_url: "https://github.com/test-org/test-repo/pull/42",
           created_at: "2026-01-01T00:00:00Z",
           commits: 3,
           labels: [],
@@ -64,6 +65,17 @@ describe("handleCreatePrSummary", () => {
     expect(structured.isDraft).toBe(false);
     expect(structured.baseRef).toBe("main");
     expect(structured.headRef).toBe("feature/my-feature");
+    expect(structured.evidence).toMatchObject({
+      id: "pr:summary",
+      state: "verified",
+      completeness: "complete",
+      subject: {
+        type: "pull_request",
+        repo: "test-org/test-repo",
+        number: 42,
+        sha: "head-sha",
+      },
+    });
   });
 
   it("detects test files correctly", async () => {
@@ -153,6 +165,7 @@ describe("handleCreatePrSummary", () => {
 
     expect(structured.totalFiles).toBe(300);
     expect(structured.filesTruncated).toBe(true);
+    expect(structured.evidence.completeness).toBe("partial");
     expect(structured.risks.join(" ")).toMatch(/incomplete.*300|300.*incomplete/i);
     expect(text).toMatch(/truncated|incomplete/i);
     expect(() => z.object(CreatePrSummaryOutputSchema).parse(structured)).not.toThrow();

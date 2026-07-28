@@ -29,6 +29,7 @@ export const isSmokeMode =
 
 // Global config file path in user's home directory
 const CONFIG_PATH = path.join(os.homedir(), ".agentic-sdlc-mcp.json");
+const CONFIG_FILE_MODE = 0o600;
 
 /** Singleton config instance — properties will be populated on initialization */
 export const config: Config = {
@@ -43,6 +44,9 @@ export const config: Config = {
 async function loadConfigFile(): Promise<void> {
   try {
     if (fsSync.existsSync(CONFIG_PATH)) {
+      // writeFile's mode does not repair an existing file, so tighten it before
+      // reading credentials as well as after every write.
+      await fs.chmod(CONFIG_PATH, CONFIG_FILE_MODE);
       const content = await fs.readFile(CONFIG_PATH, "utf-8");
       const parsed = JSON.parse(content);
       if (parsed.GITHUB_TOKEN && !process.env["GITHUB_TOKEN"]) {
@@ -73,7 +77,11 @@ async function saveConfigFile(token: string, owner?: string, repo?: string): Pro
     if (repo) configData.GITHUB_REPO = repo;
 
     await fs.mkdir(path.dirname(CONFIG_PATH), { recursive: true });
-    await fs.writeFile(CONFIG_PATH, JSON.stringify(configData, null, 2), "utf-8");
+    await fs.writeFile(CONFIG_PATH, JSON.stringify(configData, null, 2), {
+      encoding: "utf-8",
+      mode: CONFIG_FILE_MODE,
+    });
+    await fs.chmod(CONFIG_PATH, CONFIG_FILE_MODE);
     console.error(`[Success] 配置已成功保存至: ${CONFIG_PATH}`);
   } catch (error) {
     console.error(`[Error] 写入配置文件失败:`, error);

@@ -1,4 +1,5 @@
 import type { PullRequestEvidence } from "../github/pull-request-evidence.js";
+import type { PrSummaryResult } from "../tools/create-pr-summary.js";
 import type { ReleaseReadinessResult } from "../tools/release-readiness.js";
 import type { SecurityTriageResult } from "../tools/security-triage.js";
 import type {
@@ -6,6 +7,43 @@ import type {
   EvidenceItemInput,
   EvidenceSubject,
 } from "./model.js";
+
+export function adaptPrSummaryEvidence(
+  summary: Omit<PrSummaryResult, "evidence">,
+  collectedAt: string,
+  repo: string,
+  provenance: EvidenceItem["provenance"]
+): EvidenceItem {
+  const subject: EvidenceSubject = {
+    type: "pull_request",
+    repo,
+    number: summary.pullNumber,
+    ref: summary.headRef,
+    sha: provenance.subjectSha,
+  };
+  const limitations = summary.filesTruncated
+    ? ["Pull request file evidence exceeded the 300-file collection budget."]
+    : [];
+
+  return {
+    id: "pr:summary",
+    kind: "pull_request_summary",
+    subject,
+    state: "verified",
+    freshness: "fresh",
+    completeness: summary.filesTruncated ? "partial" : "complete",
+    source: "github_api",
+    collectedAt,
+    provenance,
+    reason: summary.filesTruncated
+      ? "GitHub returned pull request metadata, but changed-file evidence was truncated."
+      : `GitHub returned pull request metadata and ${summary.totalFiles} changed file(s).`,
+    limitations,
+    recommendedNextActions: summary.filesTruncated
+      ? ["Inspect the complete changed-file list before relying on the summary."]
+      : [],
+  };
+}
 
 export function adaptCiEvidence(
   evidence: PullRequestEvidence,

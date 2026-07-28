@@ -38,7 +38,7 @@ export function safeMarkdownInline(
   options: SafeMarkdownInlineOptions = {}
 ): string {
   const maxLength = Math.max(1, Math.floor(options.maxLength ?? DEFAULT_MAX_LENGTH));
-  if (assessPromptInjection(value).severity === "high") {
+  if (assessPromptInjection(value).detected) {
     return PROMPT_INJECTION_PLACEHOLDER.slice(0, maxLength);
   }
   const fallback = normalizeInline(options.fallback ?? "unknown") || "unknown";

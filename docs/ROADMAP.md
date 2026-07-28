@@ -1163,7 +1163,7 @@ v1.7 的 policy consumer 固定为以上 6 个工具。`prepare_work_item` 在 v
 
 ### v1.9: Evidence Packet 与可信交接闭环
 
-> **状态：开发中（2026-07-26）。** 已建立统一 evidence schema/digest、Issue/PR/release packet、PR head stale 检测、release partial collection、公共工具 catalog、resources contract、branch-protection unknown 语义和仓库文本 prompt-injection 防护。Node 22/24 兼容矩阵与文档同步已进入本版本；最终完成仍以全部 CI 与 reviewer 结论为准。
+> **状态：发布内容完成（2026-07-28）。** 已建立统一 evidence schema/digest、Issue/PR/release packet、PR head stale 检测、release partial collection、公共工具 catalog、resources contract、branch-protection unknown 语义和仓库文本 prompt-injection 防护。Node 22/24 兼容矩阵、发布工作流目标校验与文档同步已完成；正式制品只在 PR 合并且 `main` CI 通过后由 release workflow 生成。
 
 目标：形成项目的核心差异化能力：把 AI agent 的工作过程整理成可审查、可归档、可交接的证据包。
 
@@ -1174,7 +1174,7 @@ v1.7 的 policy consumer 固定为以上 6 个工具。`prepare_work_item` 在 v
 - `sdlc_evidence_packet` 为 Issue、PR 与 release ref 提供统一 evidence ID、subject SHA、采集时间、freshness、completeness、provenance 与 partial semantics。
 - 静态 resources 与公共工具 catalog 由真实 MCP 协议 contract test 约束，handoff 模板必须包含全部公开工具。
 - evidence schema 固定为 `1.0`，packet 带 generator version 与排除易变 envelope 字段的稳定 `contentDigest`。
-- 仓库与调用方文本在共享 Markdown 边界执行有界转义和高置信 prompt-injection 隔离；原始 structured evidence 保留为不可信数据，所有工具在 `_meta` 与 `structuredContent.trustBoundary` 同时声明信任边界。
+- 仓库与调用方文本在共享 Markdown 边界执行有界转义；任何检测到的 prompt-injection 信号都从 agent-facing Markdown 隔离，原始 structured evidence 保留为不可信数据，所有工具在 `_meta` 与 `structuredContent.trustBoundary` 同时声明信任边界。
 - packet 公开并强制 GitHub request、源文本、文件/单源项目、Markdown、evidence item 与单源 timeout 预算；handoff 额外使用覆盖仓库、Issue、PR、policy 与深度 evidence 的 30 秒总预算。timeout 触发 AbortSignal，security alerts 使用 max+1 截断探测和 50 条 Markdown 展示上限，省略与截断均显式返回；Issue/PR 文本或 changed-file 列表不完整时，prompt-injection evidence 必须 fail closed 为 `unverified`/`partial`。
 
 本版本先实现只读、即时聚合的 evidence packet，不引入数据库或后台任务。证据持久化、签名与组织级策略留到 v2.0。
@@ -1736,7 +1736,7 @@ interface ToolDependencies {
 | P2 | 合并门禁增强 | 从 CI 查询升级为工程治理判断 | ✅ v1.6.0 |
 | P0 | MCP Registry 发布与 `.agentic-sdlc.yml` 基础 | 先建立可发现、可配置、可解释的统一策略入口 | ✅ v1.7.1 |
 | P0 | 风险感知 `prepare_work_item` | 把高风险任务的防御性编程、负向测试、回滚、可观测性与有来源的上下文前移到开工阶段 | ✅ v1.8.0 |
-| P1 | `sdlc_evidence_packet` 与可信 handoff | 统一 verified/unverified/stale/partial 证据语义 | v1.9 开发中 |
+| P1 | `sdlc_evidence_packet` 与可信 handoff | 统一 verified/unverified/stale/partial 证据语义 | ✅ v1.9.0 |
 | P1 | MCP 契约与 Agent evaluation | 用 Inspector、稳定评测、性能预算和故障注入验证 agent 真正会用 | v1.10 待开始 |
 | P1 | CI/CD 供应链与可观测性 | 固定 Actions、SBOM/provenance、coverage 门槛和隐私安全 metrics | v1.11 待开始 |
 | P2 | 组织策略与签名 evidence | 只有出现真实 breaking/persistence 需求时进入主版本 | v2.0 条件触发 |
@@ -1783,8 +1783,8 @@ interface ToolDependencies {
 - [x] 高风险简报包含防御性要求、negative scenarios、回滚和上线可观测性，且 Issue/派生验收项来源分离（v1.8 建设批次 1）
 - [x] related files 区分意图与仓库验证事实，并包含原因、置信度、CODEOWNERS、测试邻接和 incomplete 语义（v1.8 建设批次 2）
 - [x] blocked-by/blocking/sub-issues/cross-reference 使用官方关系来源，按来源限制预算并在部分失败时保留成功证据（v1.8 建设批次 2）
-- PR/Issue/release evidence packet 能用正交字段区分结论 state、freshness（fresh/stale/unknown）与 completeness（complete/partial/omitted）（v1.9）
-- handoff 不再把调用方自报状态伪装成系统验证事实（v1.9）
+- [x] PR/Issue/release evidence packet 能用正交字段区分结论 state、freshness（fresh/stale/unknown）与 completeness（complete/partial/omitted）（v1.9）
+- [x] handoff 不再把调用方自报状态伪装成系统验证事实（v1.9）
 
 长期成功指标：
 

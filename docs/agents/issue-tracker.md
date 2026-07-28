@@ -2,10 +2,10 @@
 
 ## Review baseline
 
-- Change set: v1.9.0 development
+- Change set: v1.9.0 release candidate
 - Fixed comparison point: `04f57f1094fdec674ea575b71a3f707cbc45b3b2`
 - Working branch: `sakuracianna`
-- Review date: 2026-07-26
+- Review date: 2026-07-28
 
 ## External risk status
 
@@ -16,3 +16,9 @@
 ## Reviewer findings
 
 Independent standards and specification reviews are required before commit. Findings are added here only when they remain open or are accepted with explicit risk.
+
+| ID | Severity | Status | Description | Resolution |
+|---|---|---|---|---|
+| REV-001 | High | Resolved | npm OIDC publish job used mutable third-party Action tags, and the Registry job lacked equivalent target ancestry checks | Pinned checkout/setup-node to full commit SHAs and applied release-tag, `main` ancestry and metadata checks to both OIDC publication jobs |
+| REV-002 | Medium | Resolved | Medium-severity prompt-injection signals could remain in agent-facing Markdown | Omit every detected signal from Markdown; preserve raw structured evidence as untrusted data |
+| REV-003 | Medium | Resolved | Local PAT config inherited default file permissions | Create and tighten the config file to `0600` where POSIX modes are supported |

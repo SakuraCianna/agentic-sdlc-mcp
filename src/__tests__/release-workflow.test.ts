@@ -10,6 +10,10 @@ interface WorkflowStep {
 }
 
 interface PublishWorkflow {
+  on?: {
+    release?: { types?: string[] };
+    workflow_dispatch?: unknown;
+  };
   jobs?: {
     publish?: {
       steps?: WorkflowStep[];
@@ -18,22 +22,78 @@ interface PublishWorkflow {
 }
 
 describe("npm publish workflow", () => {
-  it("installs from the official registry before upgrading npm for OIDC publishing", async () => {
+  it("publishes only a validated release target with immutable OIDC dependencies", async () => {
     const workflowPath = new URL("../../.github/workflows/publish.yml", import.meta.url);
-    const workflow = parse(await readFile(workflowPath, "utf8")) as PublishWorkflow;
+    const source = await readFile(workflowPath, "utf8");
+    const workflow = parse(source) as PublishWorkflow;
     const steps = workflow.jobs?.publish?.steps ?? [];
 
-    const setupNode = steps.find((step) => step.uses === "actions/setup-node@v6");
+    const setupNode = steps.find(
+      (step) =>
+        step.uses ===
+        "actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e"
+    );
+    const checkout = steps.find(
+      (step) =>
+        step.uses ===
+        "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0"
+    );
+    const verifyIndex = steps.findIndex(
+      (step) => step.name === "Verify release target and metadata"
+    );
     const installIndex = steps.findIndex((step) => step.run === "npm ci");
-    const checksIndex = steps.findIndex((step) => step.run === "npm run prepublishOnly");
     const upgradeIndex = steps.findIndex((step) => step.run === "npm install -g npm@11.11.0");
     const publishIndex = steps.findIndex((step) => step.run === "npm publish --access public");
 
+    expect(workflow.on?.release?.types).toEqual(["published"]);
+    expect(workflow.on).not.toHaveProperty("workflow_dispatch");
+    expect(checkout?.with?.["fetch-depth"]).toBe(0);
     expect(setupNode?.with?.["registry-url"]).toBe("https://registry.npmjs.org");
-    expect(installIndex).toBeGreaterThan(-1);
-    expect(checksIndex).toBeGreaterThan(installIndex);
-    expect(upgradeIndex).toBeGreaterThan(checksIndex);
+    expect(verifyIndex).toBeGreaterThan(-1);
+    expect(steps[verifyIndex]?.run).toContain("git merge-base --is-ancestor HEAD origin/main");
+    expect(steps[verifyIndex]?.run).toContain("release tag ${process.env.RELEASE_TAG}");
+    expect(steps[verifyIndex]?.run).toContain("package-lock root version != npm version");
+    expect(installIndex).toBeGreaterThan(verifyIndex);
+    expect(upgradeIndex).toBeGreaterThan(installIndex);
     expect(publishIndex).toBeGreaterThan(upgradeIndex);
+    expect(source).not.toContain("run: npm run prepublishOnly");
+  });
+
+  it("applies the same immutable target checks before MCP Registry publication", async () => {
+    const workflowPath = new URL(
+      "../../.github/workflows/publish-registry.yml",
+      import.meta.url
+    );
+    const source = await readFile(workflowPath, "utf8");
+    const workflow = parse(source) as PublishWorkflow;
+    const steps = workflow.jobs?.publish?.steps ?? [];
+    const checkout = steps.find(
+      (step) =>
+        step.uses ===
+        "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0"
+    );
+    const verifyIndex = steps.findIndex(
+      (step) => step.name === "Verify release target and metadata"
+    );
+    const loginIndex = steps.findIndex(
+      (step) => step.run === "./mcp-publisher login github-oidc"
+    );
+    const publishIndex = steps.findIndex(
+      (step) => step.run === "./mcp-publisher publish"
+    );
+
+    expect(workflow.on?.release?.types).toEqual(["published"]);
+    expect(workflow.on).not.toHaveProperty("workflow_dispatch");
+    expect(checkout?.with?.["fetch-depth"]).toBe(0);
+    expect(verifyIndex).toBeGreaterThan(-1);
+    expect(steps[verifyIndex]?.run).toContain(
+      "git merge-base --is-ancestor HEAD origin/main"
+    );
+    expect(steps[verifyIndex]?.run).toContain(
+      "package-lock root version != npm version"
+    );
+    expect(loginIndex).toBeGreaterThan(verifyIndex);
+    expect(publishIndex).toBeGreaterThan(loginIndex);
   });
 
   it("does not pin dependency tarballs to a third-party npm mirror", async () => {
