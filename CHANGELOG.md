@@ -36,7 +36,7 @@ All notable changes to this project are documented here. Release history is also
 - Tool and output changes are additive; stdio startup and the preview-first `create_issue_set` write boundary remain unchanged.
 - Node 22 validation runs only in GitHub Actions because the maintainer workstation does not have Node 22 installed.
 - `contentDigest` detects stable packet-content changes but is not a signature or compliance attestation.
-- The MCP SDK still brings `@hono/node-server` 1.x and its Windows `serve-static` advisory. This server does not use Hono `serve-static`; the available audit force fix would downgrade the MCP SDK and is intentionally not applied.
+- The MCP SDK resolves `@hono/node-server@1.19.15`, which the upstream maintainer lists as patched for GHSA-frvp-7c67-39w9. npm audit still applies its broader `<2.0.5` range and reports two moderate entries (Hono and the SDK), but this server imports only `getRequestListener` through the SDK and does not provide Hono static-file serving. Reassess the advisory if the dependency is downgraded or a URL-to-filesystem/static-file route is introduced.
 
 ## [1.8.0] - 2026-07-13
 
