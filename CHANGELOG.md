@@ -4,6 +4,14 @@ All notable changes to this project are documented here. Release history is also
 
 ## [Unreleased]
 
+### Added
+
+- Added an immutable v1.9.0 MCP discovery manifest, generated from its pinned release commit through real `tools/list` and `resources/list` calls in an isolated detached worktree.
+- Added a semantic compatibility gate for tool/resource removal, input narrowing or default drift, output guarantee loss, annotation or MIME drift, with explicit-only baseline updates and Node 22/24 CI coverage.
+- Added a separate Node 24 read-only replay that rebuilds the pinned v1.9.0 checkout and byte-compares fresh discovery with the tracked baseline, while the Node 22/24 matrix keeps the faster current-contract comparison.
+- Added boundary coverage for JSON Schema unions, object enums, boolean schemas, `integer`/`number` subtyping, composition/constraint drift, prototype-named keys, future boolean annotations, CLI path/provenance rejection, real deadlines, cancellation races, evidence-state degradation, bounded pagination, and temporary worktree cleanup.
+- Raised the global coverage regression floors to 94% statements, 89% branches, 94% functions, and 95% lines after expanding the suite to 1062 tests.
+
 ### Changed
 
 - Locked `@modelcontextprotocol/sdk` 1.30.0 as the v1.x rollback bridge before the v2 migration, bringing its stdio buffer, Content-Type, SSE keep-alive, and timer lifecycle fixes without enabling the 2026 wire protocol. The resolved `@hono/node-server` remains 1.19.15 and its unused `serve-static` advisory remains tracked as one moderate audit finding.
@@ -12,6 +20,9 @@ All notable changes to this project are documented here. Release history is also
 
 - Stopped `prepare_work_item` from treating LLM character/token budgets or benign phrases such as Secret Santa and "secret sauce" as credential evidence and incorrectly escalating ordinary feature work to critical risk.
 - Stopped the pull-request secret heuristic from treating operators and quantifiers inside credential-detection regex literals as runtime credential construction, without exempting dynamically built values that use metadata-like names, and stopped counting one typed TypeScript assignment twice at both `:` and `=`.
+- Prevented historical MCP discovery from retaining Windows checkout handles by running it in a bounded child process whose cwd stays outside the checkout, passing only an OS-runtime environment allowlist, and applying bounded cleanup retries before removing the detached worktree.
+- Prevented evidence collection from silently exiting before its deadline, from starting after an immediate parent cancellation, or from accepting non-finite timeout values.
+- Prevented invalid GitHub pagination sizes such as `perPage=0` from causing an unbounded request loop.
 
 ### Security
 

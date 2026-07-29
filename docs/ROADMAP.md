@@ -1536,7 +1536,7 @@ interface ToolDependencies {
 
 ### v1.10: MCP 契约、Inspector 与 Agent Evaluation
 
-> **状态：执行中（2026-07-29）。** 计划已获批准并合并；#43/#44 已按 T1–T11 更新，#44 已正式标记为 blocked by #43。已复现并修复首批 evaluation 与 PR reviewer 误判。T0 已在最新 main 基线上完成 SDK 1.30 lockfile 桥接，Gitleaks 与 Node 22/24 CI 通过；production audit 从 SDK/Hono 两条 moderate 收敛为仅剩未使用 `serve-static` 路径的 Hono moderate，未强制升级 Hono 2.x。详细依赖图、任务拆分和版本边界见 [v1.10.0 实施计划](superpowers/plans/2026-07-29-v1.10.0-contract-evaluation.md)。
+> **状态：执行中（2026-07-29）。** 计划已获批准并合并；#43/#44 已按 T1–T11 更新，#44 已正式标记为 blocked by #43。已复现并修复首批 evaluation 与 PR reviewer 误判。T0 已在最新 main 基线上完成 SDK 1.30 lockfile 桥接，Gitleaks 与 Node 22/24 CI 通过；T1 已从固定的 v1.9.0 release commit 建立 13 tools/5 resources 公共 discovery manifest、显式更新命令与语义兼容门禁，并用 checkout 外 cwd 的短生命周期子进程、有界重试和凭据环境清理解决 Windows 历史 worktree 句柄问题。测试扩展到 1062 个用例，补齐取消、证据降级和非法分页边界并提高 coverage floor。production audit 从 SDK/Hono 两条 moderate 收敛为仅剩未使用 `serve-static` 路径的 Hono moderate，未强制升级 Hono 2.x。详细依赖图、任务拆分和版本边界见 [v1.10.0 实施计划](superpowers/plans/2026-07-29-v1.10.0-contract-evaluation.md)。
 
 目标：验证“agent 是否能正确发现、选择和组合工具”，而不只验证 TypeScript handler。将协议契约、客户端兼容、响应预算和稳定 evaluation 建成独立质量阶段。
 
@@ -1544,7 +1544,7 @@ interface ToolDependencies {
 
 - 已有真实 SDK in-memory client 和 loopback HTTP 生命周期测试，但没有 MCP Inspector 的独立进程/传输黑盒验证。
 - 当前仍使用 `@modelcontextprotocol/sdk` v1 单包和 2025-era initialize；尚未迁移到稳定 SDK v2 分包，也未显式提供 2026 双 era。
-- tool input/output schema、annotations、structuredContent 与 Markdown 没有全量统一 contract snapshot。
+- 已有固定 v1.9.0 的 tool/resource discovery manifest 与 backward-compatibility gate，但 structuredContent/Markdown 的全工具调用矩阵仍未完成。
 - 真实 MCP tool call 集成测试只覆盖代表性工具，没有全部 13 个工具的成功、失败和降级矩阵。
 - 没有 provider-neutral 的工具选择、多工具组合、trace scorer 与稳定答案 evaluation。
 - evidence/handoff 已有局部预算，但没有跨工具统一的 API calls、items、字符/bytes、延迟测量和故障注入报告。
@@ -1752,7 +1752,7 @@ interface ToolDependencies {
 | P0 | MCP Registry 发布与 `.agentic-sdlc.yml` 基础 | 先建立可发现、可配置、可解释的统一策略入口 | ✅ v1.7.1 |
 | P0 | 风险感知 `prepare_work_item` | 把高风险任务的防御性编程、负向测试、回滚、可观测性与有来源的上下文前移到开工阶段 | ✅ v1.8.0 |
 | P1 | `sdlc_evidence_packet` 与可信 handoff | 统一 verified/unverified/stale/partial 证据语义 | ✅ v1.9.0 |
-| P1 | MCP 契约与 Agent evaluation | 用 Inspector、稳定评测、性能预算和故障注入验证 agent 真正会用 | v1.10 规划中 |
+| P1 | MCP 契约与 Agent evaluation | 用 Inspector、稳定评测、性能预算和故障注入验证 agent 真正会用 | v1.10 执行中（T0–T1 已完成） |
 | P1 | CI/CD 供应链与可观测性 | 固定 Actions、SBOM/provenance、coverage 门槛和隐私安全 metrics | v1.11 待开始 |
 | P2 | 组织策略与签名 evidence | 只有出现真实 breaking/persistence 需求时进入主版本 | v2.0 条件触发 |
 

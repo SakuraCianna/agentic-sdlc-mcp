@@ -14,6 +14,9 @@ export function withAbortableTimeout<T>(
   operation: (signal: AbortSignal) => Promise<T>,
   parentSignal?: AbortSignal
 ): Promise<T> {
+  if (!Number.isFinite(timeoutMs)) {
+    throw new TypeError(`${label} timeout must be a finite number.`);
+  }
   const normalizedTimeoutMs = Math.max(1, Math.floor(timeoutMs));
 
   return new Promise<T>((resolve, reject) => {
@@ -45,10 +48,14 @@ export function withAbortableTimeout<T>(
       controller.abort(error);
       reject(error);
     }, normalizedTimeoutMs);
-    timer.unref?.();
 
     Promise.resolve()
-      .then(() => operation(controller.signal))
+      .then(() => {
+        if (controller.signal.aborted) {
+          throw abortError(label, controller.signal);
+        }
+        return operation(controller.signal);
+      })
       .then(resolve, reject)
       .finally(cleanup);
   });

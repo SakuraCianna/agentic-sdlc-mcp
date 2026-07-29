@@ -339,10 +339,15 @@ npm run test
 | `npm run test` | 运行完整 Vitest 测试套件 |
 | `npm run test:integration` | 运行配置与 MCP runtime 集成测试 |
 | `npm run test:coverage` | 执行覆盖率门槛并生成报告 |
+| `npm run contracts:check` | 将当前真实 MCP discovery 与 tracked v1.9.0 契约比较，并验证本地 tag/SHA |
+| `npm run contracts:verify-baseline` | 只读重放固定 v1.9.0 checkout，证明 tracked 基线可重复生成 |
+| `npm run contracts:generate` | 从隔离的 v1.9.0 detached worktree 显式重新生成固定基线 |
 | `npm run smoke` | 在没有 GitHub 凭据时验证注册与加载 |
 | `npm run check:line-endings` | 拒绝 CRLF 和混合行尾 |
 
-CI 会在 Node 22 和 Node 24 上执行完整检查。Node 20 已结束维护，因此不属于受支持运行时；本地贡献者只需安装一个受支持版本，兼容矩阵由 GitHub Actions 负责。
+CI 会在 Node 22 和 Node 24 上执行完整产品检查与当前契约比较，并用独立 Node 24 job 重放一次不可变基线。Node 20 已结束维护，因此不属于受支持运行时；本地贡献者只需安装一个受支持版本，兼容矩阵由 GitHub Actions 负责。
+
+普通测试、`contracts:check` 与 `contracts:verify-baseline` 永远不会改写基线。重放命令和仅供维护者使用的 `contracts:generate` 都会验证固定 tag/commit，在系统临时目录按历史 lockfile 安装并构建 checkout；安装会关闭 lifecycle scripts、audit 与 funding 输出，再由 cwd 位于 checkout 外的有界短生命周期子进程通过真实 `tools/list` 和 `resources/list` 读取公开契约。该子进程只继承操作系统路径、临时目录、locale 与动态库 allowlist；凭据、业务配置、`NODE_OPTIONS` 和本地状态路径都不会进入。Windows 在历史句柄释放后以有界重试完成清理。命令需要访问 npm registry，但不会调用 GitHub API 或模型服务。只有 `contracts:generate` 会写 tracked JSON，并把差异留给 PR 审查。
 
 ## 通过 Issue 和 Pull Request 参与贡献
 
@@ -351,7 +356,7 @@ CI 会在 Node 22 和 Node 24 上执行完整检查。Node 20 已结束维护，
 1. Fork 仓库，并基于最新 `main` 创建范围明确的分支。
 2. 运行 `npm ci`，然后只修改本次贡献所需内容。
 3. 行为发生变化时，同步补充或更新测试与文档。
-4. 运行与变更相关的检查。完整 CI 会执行 `npm run check:line-endings`、`npm run typecheck`、`npm run build`、`npm run test`、`npm run smoke` 和 `npm run test:coverage`。
+4. 运行与变更相关的检查。Node 22/24 矩阵会执行 `npm run check:line-endings`、`npm run typecheck`、`npm run build`、`npm run contracts:check` 的 built 形式、`npm run test`、`npm run smoke` 和 `npm run test:coverage`；独立 Node 24 job 会执行 `npm run contracts:verify-baseline` 的 built 形式。
 5. 创建目标为 `main` 的 Pull Request，并说明问题、解决方案、风险、验证结果和关联 Issues。
 
 不要把 token、凭据、私有仓库内容或本地生成的配置提交到 commit、Issue、Pull Request 或日志。CI 通过是评审证据，但不能替代维护者批准。

@@ -19,6 +19,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js ${{ matrix.node-version }}
         uses: actions/setup-node@v6
@@ -38,6 +40,9 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Check MCP contract compatibility
+        run: node scripts/check-mcp-contract.mjs
+
       - name: Test
         run: npm run test
 
@@ -53,3 +58,28 @@ jobs:
           name: coverage-node-${{ matrix.node-version }}
           path: coverage/
           retention-days: 14
+
+  contract-baseline:
+    name: Contract baseline (Node 24)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout with release tags
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Replay immutable v1.9.0 baseline
+        run: node scripts/verify-mcp-baseline.mjs

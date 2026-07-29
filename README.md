@@ -339,10 +339,15 @@ npm run test
 | `npm run test` | Run the full Vitest suite |
 | `npm run test:integration` | Run configuration and MCP runtime integration tests |
 | `npm run test:coverage` | Enforce coverage floors and write reports |
+| `npm run contracts:check` | Compare current real MCP discovery with the tracked v1.9.0 contract and verify its local tag/SHA |
+| `npm run contracts:verify-baseline` | Read-only replay of the pinned v1.9.0 checkout to prove the tracked baseline is reproducible |
+| `npm run contracts:generate` | Explicitly regenerate that pinned baseline from an isolated v1.9.0 detached worktree |
 | `npm run smoke` | Verify registration without GitHub credentials |
 | `npm run check:line-endings` | Reject CRLF and mixed line endings |
 
-CI runs the full suite on Node 22 and Node 24. Node 20 is not a supported runtime because it is end-of-life; local contributors only need one supported Node version, while the compatibility matrix is enforced by GitHub Actions.
+CI runs the full product suite and current-contract comparison on Node 22 and Node 24. A separate Node 24 job replays the immutable baseline once. Node 20 is not a supported runtime because it is end-of-life; local contributors only need one supported Node version, while the compatibility matrix is enforced by GitHub Actions.
+
+Ordinary tests, `contracts:check`, and `contracts:verify-baseline` never rewrite the baseline. The replay command and the maintainer-only `contracts:generate` command verify the pinned tag/commit, install the historical lockfile with lifecycle scripts, audit, and funding output disabled, build it in the system temporary directory, and use real `tools/list` and `resources/list` calls in a bounded child process whose cwd stays outside the checkout. That child receives only an allowlist of OS path, temporary-directory, locale, and dynamic-library environment variables; credentials, business configuration, `NODE_OPTIONS`, and local state paths are not inherited. Windows cleanup uses bounded retries after historical handles are released. The commands require npm registry access but do not call GitHub APIs or model services. Only `contracts:generate` writes the tracked JSON, leaving its diff visible for review.
 
 ## Contribute through issues and pull requests
 
@@ -351,7 +356,7 @@ Issues and pull requests are welcome. Check the [open issues](https://github.com
 1. Fork the repository and create a focused branch from the latest `main`.
 2. Run `npm ci`, then make only the changes required for the contribution.
 3. Add or update tests and documentation when behavior changes.
-4. Run the checks relevant to your change. The full CI suite runs `npm run check:line-endings`, `npm run typecheck`, `npm run build`, `npm run test`, `npm run smoke`, and `npm run test:coverage`.
+4. Run the checks relevant to your change. The Node 22/24 matrix runs `npm run check:line-endings`, `npm run typecheck`, `npm run build`, the built form of `npm run contracts:check`, `npm run test`, `npm run smoke`, and `npm run test:coverage`; a separate Node 24 job runs the built form of `npm run contracts:verify-baseline`.
 5. Open a pull request against `main`. Describe the problem, solution, risks, validation results, and linked Issues.
 
 Keep tokens, credentials, private repository content, and generated local configuration out of commits, Issues, pull requests, and logs. A passing CI run supports review but does not replace maintainer approval.
