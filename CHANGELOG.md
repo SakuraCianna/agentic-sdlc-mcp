@@ -4,6 +4,10 @@ All notable changes to this project are documented here. Release history is also
 
 ## [Unreleased]
 
+### Changed
+
+- Locked `@modelcontextprotocol/sdk` 1.30.0 as the v1.x rollback bridge before the v2 migration, bringing its stdio buffer, Content-Type, SSE keep-alive, and timer lifecycle fixes without enabling the 2026 wire protocol. The resolved `@hono/node-server` remains 1.19.15 and its unused `serve-static` advisory remains tracked as one moderate audit finding.
+
 ### Fixed
 
 - Stopped `prepare_work_item` from treating LLM character/token budgets or benign phrases such as Secret Santa and "secret sauce" as credential evidence and incorrectly escalating ordinary feature work to critical risk.
