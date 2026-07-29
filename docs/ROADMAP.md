@@ -1536,7 +1536,7 @@ interface ToolDependencies {
 
 ### v1.10: MCP 契约、Inspector 与 Agent Evaluation
 
-> **状态：执行中（2026-07-29）。** 计划已获批准并合并；#43/#44 已按 T1–T11 更新，#44 已正式标记为 blocked by #43。已复现并修复首批 evaluation 误判：LLM 字符/token 预算及非凭据含义的 “secret” 不再被当作 credential。详细依赖图、任务拆分和版本边界见 [v1.10.0 实施计划](superpowers/plans/2026-07-29-v1.10.0-contract-evaluation.md)。
+> **状态：执行中（2026-07-29）。** 计划已获批准并合并；#43/#44 已按 T1–T11 更新，#44 已正式标记为 blocked by #43。已复现并修复首批 evaluation 与 PR reviewer 误判。T0 已在最新 main 基线上完成 SDK 1.30 lockfile 桥接，Gitleaks 与 Node 22/24 CI 通过；production audit 从 SDK/Hono 两条 moderate 收敛为仅剩未使用 `serve-static` 路径的 Hono moderate，未强制升级 Hono 2.x。详细依赖图、任务拆分和版本边界见 [v1.10.0 实施计划](superpowers/plans/2026-07-29-v1.10.0-contract-evaluation.md)。
 
 目标：验证“agent 是否能正确发现、选择和组合工具”，而不只验证 TypeScript handler。将协议契约、客户端兼容、响应预算和稳定 evaluation 建成独立质量阶段。
 
