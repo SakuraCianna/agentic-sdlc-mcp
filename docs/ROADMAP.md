@@ -1536,29 +1536,38 @@ interface ToolDependencies {
 
 ### v1.10: MCP 契约、Inspector 与 Agent Evaluation
 
+> **状态：规划中（2026-07-29）。** 已完成 v1.9.0 真实协议测试基线复核、#43/#44 风险简报与最新官方资料核对。详细依赖图、任务拆分和版本边界见 [v1.10.0 实施计划](superpowers/plans/2026-07-29-v1.10.0-contract-evaluation.md)。
+
 目标：验证“agent 是否能正确发现、选择和组合工具”，而不只验证 TypeScript handler。将协议契约、客户端兼容、响应预算和稳定 evaluation 建成独立质量阶段。
 
 当前代码缺口：
 
-- 目前主要是 pure/helper/handler 单测和 smoke registration，没有 MCP Inspector 的协议级验证。
+- 已有真实 SDK in-memory client 和 loopback HTTP 生命周期测试，但没有 MCP Inspector 的独立进程/传输黑盒验证。
+- 当前仍使用 `@modelcontextprotocol/sdk` v1 单包和 2025-era initialize；尚未迁移到稳定 SDK v2 分包，也未显式提供 2026 双 era。
 - tool input/output schema、annotations、structuredContent 与 Markdown 没有全量统一 contract snapshot。
-- 没有真实 client/agent 的工具可发现性、多工具组合与稳定答案 evaluation。
-- 性能、API 调用、响应/token 大小和故障注入没有统一预算。
+- 真实 MCP tool call 集成测试只覆盖代表性工具，没有全部 13 个工具的成功、失败和降级矩阵。
+- 没有 provider-neutral 的工具选择、多工具组合、trace scorer 与稳定答案 evaluation。
+- evidence/handoff 已有局部预算，但没有跨工具统一的 API calls、items、字符/bytes、延迟测量和故障注入报告。
 
 #### 1. MCP 契约、兼容性与 evaluation
 
-以 [MCP Specification](https://modelcontextprotocol.io/specification) 和官方 [MCP Inspector](https://github.com/modelcontextprotocol/inspector) 为协议依据；复杂、只读、独立、可验证、答案稳定等题目要求属于本项目的 evaluation 基线，不宣称是 MCP 官方认证标准。
+官方最新稳定规范已是 [MCP 2026-07-28 Specification](https://modelcontextprotocol.io/specification/2026-07-28)，官方 TypeScript SDK v2 分包也已发布稳定 2.0.0；v1.9.0 的已实现基线仍是 `2025-11-25`。v1.10 先迁移 SDK v2 并保持 legacy wire parity，再为本地 stdio/loopback 显式提供 2025/2026 双 era。两步分开审查和回滚，不引入远程 OAuth、多租户或公网监听。复杂、只读、独立、可验证、答案稳定等题目要求属于本项目的 evaluation 基线，不宣称是 MCP 官方认证标准。
 
-- 用 MCP Inspector 验证 stdio 与 Streamable HTTP 的 initialize、tools/list、tools/call、resources/list/read 和错误路径。
+- 从不可变 `v1.9.0` tag/commit 提取带 source SHA 的 contract manifest，不能从升级后的当前树反向生成旧基线。
+- 先完成 SDK v2 package migration 的 2025 legacy parity，再用 `serveStdio`/`createMcpHandler` 启用旧客户端 fallback 与 2026 `server/discover`。
+- 用精确固定的 [MCP Inspector 2](https://github.com/modelcontextprotocol/inspector/releases/tag/2.0.0) 验证 stdio 与 Streamable HTTP 的 legacy initialize、tools/resources discovery、无外部副作用的 `create_issue_set dryRun:true` 调用和错误路径；Inspector 不负责证明 `server/discover`，另用显式 pin 的 SDK v2 client 证明 2026 era。
+- 精确固定官方 Conformance 0.1.16 做 legacy 非阻塞 pilot；2026 场景稳定前不把它作为唯一 required gate。
 - 对每个工具建立 input/output schema snapshot、annotations、structuredContent/Markdown 一致性与 backward compatibility tests。
-- 建立至少 10 个只读、独立、复杂、可验证、答案稳定的 MCP evaluation；覆盖多工具组合，而不是只测 handler。
+- 建立至少 12 个只读、独立、复杂、可验证、答案稳定的 MCP evaluation；覆盖多工具组合，而不是只测 handler。
 - 增加工具可发现性评估：agent 能否从描述正确选择 `repo_context`、`prepare_work_item`、gate、review、security、release/evidence。
-- 建立响应预算：默认字符/token、items、分页、API calls、P95 latency 与超限降级行为。
+- 建立响应预算：默认字符/JSON bytes、items、分页、API calls、timeout/cancellation、固定 mock runner P95 与超限降级行为；token 只提供标明算法的 estimate。
 - 对 403/404/429/5xx、GraphQL partial errors、网络 timeout、截断、大仓库和 GitHub API schema 缺字段做故障注入。
 
 验收标准：
 
 - evaluation 有固定 fixture/recording 或可重复的测试仓库，不依赖持续变化的公开数据。
+- deterministic、recorded-agent 与可选 live-model 结果分别标记 provenance；trace replay 不得被描述为实时模型能力。
+- SDK v2 默认 legacy parity、2025 客户端 fallback 和显式 `2026-07-28` client 都通过同一 13 tools/5 resources manifest。
 - 所有 tool annotations 与实际副作用一致；写工具仍默认 dry-run。
 - output schema 与真实 structuredContent 零漂移。
 - 旧版客户端至少能继续调用 v1.x 已公开工具；新增字段保持 additive。
@@ -1571,20 +1580,25 @@ interface ToolDependencies {
 - 多次分页和多工具调用导致上下文膨胀；agent 应使用 limit/summary，而不是抓取全部内容。
 - MCP client 取消、重复调用、乱序响应、未知 tool/resource、schema invalid 和版本不匹配。
 - evaluation fixture 发生变化或答案不再稳定时必须 fail 明确，不能更新 golden answer 掩盖回归。
+- Issue/PR/comment、README/规则文件、workflow/log 与 GitHub error text 中的提示词注入不得改变工具序列、跳过 gate、扩大 repo/ref、关闭 dry-run、触发真实写入或进入 artifact。
 
 #### 3. v1.10 完成定义与非目标
 
 完成定义：
 
-- MCP Inspector 覆盖 stdio 与 Streamable HTTP 的 initialize、tools/list/call、resources/list/read 和错误路径。
+- 不可变 v1.9 manifest、SDK v2 legacy parity 和本地 2025/2026 双 era 均通过，无未解释 breaking drift。
+- MCP Inspector 覆盖 stdio 与 Streamable HTTP 的 legacy initialize、tools/list/call、resources/list/read 和错误路径；显式 SDK v2 client 覆盖 modern `server/discover`。
 - 每个工具拥有 schema/annotations/Markdown-structured 一致性与 backward compatibility tests。
-- 至少 10 个稳定 evaluation 进入 CI，并覆盖多工具选择、组合、分页和 degraded evidence。
-- 有明确的 API calls、items、字符/token、P95 latency 与超限降级预算。
+- 至少 12 个稳定 evaluation 进入 CI，并覆盖多工具选择、组合、分页和 degraded evidence。
+- 有明确的 API calls、items、字符/JSON bytes、timeout/cancellation、固定 runner P95 与超限降级预算。
 
 本版本非目标：
 
 - 不把 evaluation 分数作为自动合并或发布的唯一依据。
 - 不依赖持续变化的公开仓库作为唯一 fixture。
+- 不把 recorded trace 重放或 Inspector 通过宣传为 MCP 官方认证或任意模型能力证明。
+- 不删除 2025-era fallback，不把 SDK 包迁移与 2026 wire opt-in 混成一个不可回滚变更。
+- 不增加远程 OAuth、多租户、共享 session store 或非 loopback 默认监听。
 - 不在本版本同时做 Actions/SBOM/telemetry 改造。
 
 ### v1.11: 软件供应链、Coverage 门槛与可观测性
@@ -1737,7 +1751,7 @@ interface ToolDependencies {
 | P0 | MCP Registry 发布与 `.agentic-sdlc.yml` 基础 | 先建立可发现、可配置、可解释的统一策略入口 | ✅ v1.7.1 |
 | P0 | 风险感知 `prepare_work_item` | 把高风险任务的防御性编程、负向测试、回滚、可观测性与有来源的上下文前移到开工阶段 | ✅ v1.8.0 |
 | P1 | `sdlc_evidence_packet` 与可信 handoff | 统一 verified/unverified/stale/partial 证据语义 | ✅ v1.9.0 |
-| P1 | MCP 契约与 Agent evaluation | 用 Inspector、稳定评测、性能预算和故障注入验证 agent 真正会用 | v1.10 待开始 |
+| P1 | MCP 契约与 Agent evaluation | 用 Inspector、稳定评测、性能预算和故障注入验证 agent 真正会用 | v1.10 规划中 |
 | P1 | CI/CD 供应链与可观测性 | 固定 Actions、SBOM/provenance、coverage 门槛和隐私安全 metrics | v1.11 待开始 |
 | P2 | 组织策略与签名 evidence | 只有出现真实 breaking/persistence 需求时进入主版本 | v2.0 条件触发 |
 
