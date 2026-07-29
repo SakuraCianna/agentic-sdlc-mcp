@@ -205,7 +205,7 @@ npx -y agentic-sdlc-mcp configure
 
 - **`create_pr_summary`**：限制文件证据数量并报告截断。纯文档 PR 会收到文档验证建议，而不是错误的“缺少代码单元测试”警告。
 - **`quality_gate_status`**：PR 模式会组合 checks、commit statuses、reviews、CODEOWNERS 路由、draft/merge 状态、classic branch protection、Rulesets、阻塞标签、关联 Issues 和 base-SHA 仓库策略。权限失败会继续以 degraded 或 unverified evidence 显示。
-- **`review_pr_against_standard`**：支持 `basic`、`strict` 和 `security-focused`。只有当 check、Workflow、PR head SHA、base Workflow job、扫描器 action 和不可变 action SHA 可以关联时，才把 Gitleaks 或 TruffleHog 作为主要通过证据。动态密钥构造扫描器是有界的补丁内分析，不是全程序数据流分析，也不能证明仓库不存在密钥泄漏。
+- **`review_pr_against_standard`**：支持 `basic`、`strict` 和 `security-focused`。只有当 check、Workflow、PR head SHA、base Workflow job、扫描器 action 和不可变 action SHA 可以关联时，才把 Gitleaks 或 TruffleHog 作为主要通过证据。动态密钥构造扫描器是有界的补丁内分析，不是全程序数据流分析，也不能证明仓库不存在密钥泄漏；仅出现在凭据检测正则字面量内部的运算符和量词不会被当成运行时凭据构造，动态拼装的模式和规则则不因名称而豁免。
 
 </details>
 

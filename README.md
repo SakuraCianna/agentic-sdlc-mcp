@@ -205,7 +205,7 @@ The server registers 13 workflow-level tools. MCP clients receive the full input
 
 - **`create_pr_summary`**: Caps file evidence and reports truncation. Documentation-only changes receive document validation guidance instead of a false missing-code-tests warning.
 - **`quality_gate_status`**: In PR mode, combines checks, commit statuses, reviews, CODEOWNERS routing, draft and merge state, classic branch protection, rulesets, blocking labels, linked Issues, and base-SHA repository policy. Permission failures remain visible as degraded or unverified evidence.
-- **`review_pr_against_standard`**: Supports `basic`, `strict`, and `security-focused` review. It trusts Gitleaks or TruffleHog as primary passing evidence only when the check, workflow, PR head SHA, base workflow job, scanner action, and immutable action SHA can be linked. Its dynamic secret construction scanner is bounded, patch-local analysis, not whole-program data flow or proof that a repository is secret-free.
+- **`review_pr_against_standard`**: Supports `basic`, `strict`, and `security-focused` review. It trusts Gitleaks or TruffleHog as primary passing evidence only when the check, workflow, PR head SHA, base workflow job, scanner action, and immutable action SHA can be linked. Its dynamic secret construction scanner is bounded, patch-local analysis, not whole-program data flow or proof that a repository is secret-free. Operators and quantifiers that occur only inside credential-detection regex literals are not treated as runtime credential construction; dynamically assembled patterns and rules remain in scope regardless of their names.
 
 </details>
 

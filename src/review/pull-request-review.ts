@@ -786,20 +786,95 @@ function isTrustedRuntimeSecretExpression(value: string): boolean {
   return remainder.length === 0;
 }
 
+function regexLiteralCanStart(code: string, index: number): boolean {
+  const prefix = code.slice(0, index).trimEnd();
+  if (!prefix) return true;
+  const previous = prefix.at(-1) ?? "";
+  return (
+    /[\[(=,:;!&|?{}]/.test(previous) ||
+    /(?:=>|\b(?:case|return|throw|yield))$/.test(prefix)
+  );
+}
+
+function maskRegularExpressionLiterals(value: string): string {
+  const masked = [...value];
+  let quote: "'" | '"' | "`" | null = null;
+  let quotedEscape = false;
+
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index] ?? "";
+    if (quote) {
+      if (quotedEscape) {
+        quotedEscape = false;
+      } else if (character === "\\") {
+        quotedEscape = true;
+      } else if (character === quote) {
+        quote = null;
+      }
+      continue;
+    }
+    if (character === "'" || character === '"' || character === "`") {
+      quote = character;
+      quotedEscape = false;
+      continue;
+    }
+    if (
+      character !== "/" ||
+      value[index + 1] === "/" ||
+      value[index + 1] === "*" ||
+      !regexLiteralCanStart(value, index)
+    ) {
+      continue;
+    }
+
+    let escaped = false;
+    let inCharacterClass = false;
+    let closingSlash = -1;
+    for (let cursor = index + 1; cursor < value.length; cursor += 1) {
+      const current = value[cursor] ?? "";
+      if (current === "\n" || current === "\r") break;
+      if (escaped) {
+        escaped = false;
+      } else if (current === "\\") {
+        escaped = true;
+      } else if (current === "[") {
+        inCharacterClass = true;
+      } else if (current === "]") {
+        inCharacterClass = false;
+      } else if (current === "/" && !inCharacterClass) {
+        closingSlash = cursor;
+        break;
+      }
+    }
+    if (closingSlash < 0) continue;
+
+    let end = closingSlash + 1;
+    while (/[A-Za-z]/.test(value[end] ?? "")) end += 1;
+    for (let cursor = index; cursor < end; cursor += 1) {
+      if (masked[cursor] !== "\n" && masked[cursor] !== "\r") masked[cursor] = " ";
+    }
+    index = end - 1;
+  }
+
+  return masked.join("");
+}
+
 function isDynamicSecretExpression(value: string, codeValue: string): boolean {
   const normalized = value.trim();
   if (!normalized || isTrustedRuntimeSecretExpression(normalized)) return false;
+  const operatorCode = maskRegularExpressionLiterals(codeValue);
+  const semanticValue = maskRegularExpressionLiterals(normalized);
   return (
-    codeValue.includes("+") ||
-    codeValue.includes("%") ||
-    /\.(?:append|concat|format|join)\s*\(/i.test(codeValue) ||
-    /\b(?:String\.format|fmt\.Sprintf|format!|concat!)\s*\(/i.test(codeValue) ||
-    /\b(?:Buffer\.from|Convert\.FromBase64String|String\.fromCharCode|TextDecoder\s*\([^)]*\)\.decode|atob|base64\.(?:b64decode|urlsafe_b64decode)|btoa|decodeURIComponent)\s*\(/i.test(codeValue) ||
-    /`[^`]*\$\{[^}]+\}[^`]*`/s.test(normalized) ||
-    /\bf["'][^"']*\{[^}]+\}[^"']*["']/is.test(normalized) ||
-    /\$@?["'][^"']*\{[^}]+\}[^"']*["']/s.test(normalized) ||
-    /#\{[^}]+\}|\{\$[A-Za-z_][\w]*\}|\\\([^)]+\)/s.test(normalized) ||
-    /["'][^"']*\$[A-Za-z_][\w]*[^"']*["']/s.test(normalized)
+    operatorCode.includes("+") ||
+    operatorCode.includes("%") ||
+    /\.(?:append|concat|format|join)\s*\(/i.test(operatorCode) ||
+    /\b(?:String\.format|fmt\.Sprintf|format!|concat!)\s*\(/i.test(operatorCode) ||
+    /\b(?:Buffer\.from|Convert\.FromBase64String|String\.fromCharCode|TextDecoder\s*\([^)]*\)\.decode|atob|base64\.(?:b64decode|urlsafe_b64decode)|btoa|decodeURIComponent)\s*\(/i.test(operatorCode) ||
+    /`[^`]*\$\{[^}]+\}[^`]*`/s.test(semanticValue) ||
+    /\bf["'][^"']*\{[^}]+\}[^"']*["']/is.test(semanticValue) ||
+    /\$@?["'][^"']*\{[^}]+\}[^"']*["']/s.test(semanticValue) ||
+    /#\{[^}]+\}|\{\$[A-Za-z_][\w]*\}|\\\([^)]+\)/s.test(semanticValue) ||
+    /["'][^"']*\$[A-Za-z_][\w]*[^"']*["']/s.test(semanticValue)
   );
 }
 
@@ -860,6 +935,7 @@ export function scanPatchForSecrets(
   for (const statement of statements) {
     const aliases = credentialAliasesByHunk.get(statement.hunk) ?? new Set<string>();
     credentialAliasesByHunk.set(statement.hunk, aliases);
+    let dynamicConstructionRecorded = false;
     if (statement.truncated && statement.containsAddedLine) {
       recordFinding(
         finding(
@@ -895,17 +971,20 @@ export function scanPatchForSecrets(
           isDynamicSecretExpression(expression, codeExpression) ||
           isDynamicSecretExpression(target, codeTarget))
       ) {
-        recordFinding(
-          finding(
-            "high",
-            "DynamicSecretConstruction",
-            "security",
-            `Credential-like value is dynamically constructed in \`${normalizedFilename}\`.`,
-            [normalizedFilename],
-            "An added part of this assignment combines, interpolates, formats, joins, decodes, or indirectly assigns data into a credential-like target, so patch-local literal matching cannot establish whether the result is safe.",
-            "Verify every input source, remove hardcoded fragments, prefer a secret manager or environment variable, and require trusted scanner or SAST evidence plus manual review."
+        if (!dynamicConstructionRecorded) {
+          recordFinding(
+            finding(
+              "high",
+              "DynamicSecretConstruction",
+              "security",
+              `Credential-like value is dynamically constructed in \`${normalizedFilename}\`.`,
+              [normalizedFilename],
+              "An added part of this assignment combines, interpolates, formats, joins, decodes, or indirectly assigns data into a credential-like target, so patch-local literal matching cannot establish whether the result is safe.",
+              "Verify every input source, remove hardcoded fragments, prefer a secret manager or environment variable, and require trusted scanner or SAST evidence plus manual review."
+            )
           )
-        );
+          dynamicConstructionRecorded = true;
+        }
       }
 
       const identifier = assignedIdentifier(target);
@@ -932,17 +1011,20 @@ export function scanPatchForSecrets(
           isAdded ? /\S/.test(statement.semantic[match.index! + offset] ?? "") : false
         );
       if (!meaningfulAdded || !isDynamicSecretExpression(expression, codeExpression)) continue;
-      recordFinding(
-        finding(
-          "high",
-          "DynamicSecretConstruction",
-          "security",
-          `Credential-like value is dynamically constructed in \`${normalizedFilename}\`.`,
-          [normalizedFilename],
-          "An added API call constructs a credential-like header value dynamically, so patch-local literal matching cannot establish whether the result is safe.",
-          "Verify every input source, remove hardcoded fragments, prefer a secret manager or environment variable, and require trusted scanner or SAST evidence plus manual review."
+      if (!dynamicConstructionRecorded) {
+        recordFinding(
+          finding(
+            "high",
+            "DynamicSecretConstruction",
+            "security",
+            `Credential-like value is dynamically constructed in \`${normalizedFilename}\`.`,
+            [normalizedFilename],
+            "An added API call constructs a credential-like header value dynamically, so patch-local literal matching cannot establish whether the result is safe.",
+            "Verify every input source, remove hardcoded fragments, prefer a secret manager or environment variable, and require trusted scanner or SAST evidence plus manual review."
+          )
         )
-      );
+        dynamicConstructionRecorded = true;
+      }
     }
   }
 

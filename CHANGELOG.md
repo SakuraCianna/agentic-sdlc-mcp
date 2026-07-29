@@ -7,6 +7,7 @@ All notable changes to this project are documented here. Release history is also
 ### Fixed
 
 - Stopped `prepare_work_item` from treating LLM character/token budgets or benign phrases such as Secret Santa and "secret sauce" as credential evidence and incorrectly escalating ordinary feature work to critical risk.
+- Stopped the pull-request secret heuristic from treating operators and quantifiers inside credential-detection regex literals as runtime credential construction, without exempting dynamically built values that use metadata-like names, and stopped counting one typed TypeScript assignment twice at both `:` and `=`.
 
 ### Security
 
