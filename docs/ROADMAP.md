@@ -1536,7 +1536,7 @@ interface ToolDependencies {
 
 ### v1.10: MCP 契约、Inspector 与 Agent Evaluation
 
-> **状态：规划中（2026-07-29）。** 已完成 v1.9.0 真实协议测试基线复核、#43/#44 风险简报与最新官方资料核对。详细依赖图、任务拆分和版本边界见 [v1.10.0 实施计划](superpowers/plans/2026-07-29-v1.10.0-contract-evaluation.md)。
+> **状态：执行中（2026-07-29）。** 计划已获批准并合并；#43/#44 已按 T1–T11 更新，#44 已正式标记为 blocked by #43。已复现并修复首批 evaluation 误判：LLM 字符/token 预算及非凭据含义的 “secret” 不再被当作 credential。详细依赖图、任务拆分和版本边界见 [v1.10.0 实施计划](superpowers/plans/2026-07-29-v1.10.0-contract-evaluation.md)。
 
 目标：验证“agent 是否能正确发现、选择和组合工具”，而不只验证 TypeScript handler。将协议契约、客户端兼容、响应预算和稳定 evaluation 建成独立质量阶段。
 
@@ -1581,6 +1581,7 @@ interface ToolDependencies {
 - MCP client 取消、重复调用、乱序响应、未知 tool/resource、schema invalid 和版本不匹配。
 - evaluation fixture 发生变化或答案不再稳定时必须 fail 明确，不能更新 golden answer 掩盖回归。
 - Issue/PR/comment、README/规则文件、workflow/log 与 GitHub error text 中的提示词注入不得改变工具序列、跳过 gate、扩大 repo/ref、关闭 dry-run、触发真实写入或进入 artifact。
+- 风险分类必须区分 LLM token 预算与 credential token、非凭据 secret 短语与真实 secret handling，并把 `riskProfile` 明确为实施规划风险而非漏洞结论；误报/漏报使用成对 fixture 持续回归。
 
 #### 3. v1.10 完成定义与非目标
 

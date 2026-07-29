@@ -189,7 +189,7 @@ npx -y agentic-sdlc-mcp configure
 
 - **`repo_context`**：默认返回有界 README 摘要。可以选择读取 package scripts、Workflow 文件名、智能体规则、governance、经过验证的 `.agentic-sdlc.yml` 和最近待办工作。所有条目和字符数量都有明确上限，来源缺失时返回降级上下文，不编造事实。
 - **`plan_from_context`**：支持 `docs`、`feature`、`bugfix`、`refactor`、`security`、`release` 和 `infra`。省略类型时，工具会返回推断结果、置信度、理由和 `needsClarification`。仓库策略可以添加 required checks 和 protected-path 义务，调用方显式传入的 work type 优先。
-- **`prepare_work_item`**：读取有界 Issue/评论证据、确认存在的根目录脚本、仓库策略、Milestone 上下文，以及可选的关联文件、GitHub 官方 Issue 关系和近期 PR 历史。它会分离 Issue 原始验收标准与派生要求，深度证据路径会暴露请求预算和不完整来源警告。
+- **`prepare_work_item`**：读取有界 Issue/评论证据、确认存在的根目录脚本、仓库策略、Milestone 上下文，以及可选的关联文件、GitHub 官方 Issue 关系和近期 PR 历史。它会分离 Issue 原始验收标准与派生要求，深度证据路径会暴露请求预算和不完整来源警告。`riskProfile` 估算的是实施规划所需控制，不是漏洞或凭据泄露证明；LLM token 预算和非凭据含义的 “secret” 等多义表述必须具有明确凭据语境，才进入 secrets 风险域。
 
 </details>
 

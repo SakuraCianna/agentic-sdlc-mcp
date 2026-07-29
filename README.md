@@ -189,7 +189,7 @@ The server registers 13 workflow-level tools. MCP clients receive the full input
 
 - **`repo_context`**: Defaults to a bounded README summary. Opt in to package scripts, workflow names, agent instructions, governance, validated `.agentic-sdlc.yml`, and recent open work. Item and character limits are explicit, and missing sources produce degraded context rather than invented facts.
 - **`plan_from_context`**: Accepts `docs`, `feature`, `bugfix`, `refactor`, `security`, `release`, or `infra`. If omitted, the tool returns its inferred work type, confidence, reasoning, and `needsClarification`. Repository policy can add required checks and protected-path obligations, but an explicit caller work type wins.
-- **`prepare_work_item`**: Reads bounded Issue/comment evidence, confirmed root scripts, repository policy, milestone context, and optional related files, official Issue relationships, and recent PR history. It separates Issue-authored criteria from derived requirements. Deep evidence paths expose request budgets and incomplete-source warnings.
+- **`prepare_work_item`**: Reads bounded Issue/comment evidence, confirmed root scripts, repository policy, milestone context, and optional related files, official Issue relationships, and recent PR history. It separates Issue-authored criteria from derived requirements. Deep evidence paths expose request budgets and incomplete-source warnings. Its `riskProfile` estimates implementation-planning controls; it is not proof of a vulnerability or leaked credential. Ambiguous LLM token-budget and non-credential "secret" wording require explicit credential context before entering the secrets domain.
 
 </details>
 
