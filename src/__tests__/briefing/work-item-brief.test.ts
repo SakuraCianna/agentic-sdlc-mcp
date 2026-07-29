@@ -111,6 +111,121 @@ describe("buildRiskAwareBrief", () => {
     }
   );
 
+  it("does not treat an LLM token budget as secret handling", () => {
+    const brief = buildRiskAwareBrief({
+      title: "Establish agent evaluation baselines",
+      body: [
+        "定义 API calls、items、分页、字符/token、P95 latency 与超限降级预算。",
+        "Writing operations and security gate scenarios must reach 100% accuracy.",
+      ].join(" "),
+      labels: ["enhancement"],
+      fileHints: [],
+    });
+
+    expect(brief.riskProfile.domains).not.toContain("secrets");
+    expect(brief.riskProfile.level).not.toBe("critical");
+  });
+
+  it.each([
+    "Add a Secret Santa organizer",
+    "Configure Secret Santa reminders",
+    "Rotate Secret Santa assignments",
+    "Add Secret Santa configuration",
+    "Document the secret sauce metaphor",
+    "Write a secret sauce recipe",
+    "Document the secret sauce storage metaphor",
+    "Review The Secret Garden summary",
+    "Encrypt The Secret Garden notes",
+    "Optimize LLM token storage",
+    "Improve tokenizer token handling",
+    "The classifier must not treat token budgets as credentials",
+    "Define the MAX_TOKEN budget",
+    "Measure PROMPT_TOKEN usage",
+    "Limit CONTEXT_TOKEN growth",
+    "Report LLM_TOKEN and MODEL_TOKEN estimates",
+    "Compare INPUT_TOKEN, OUTPUT_TOKEN, and TOTAL_TOKEN counts",
+  ])(
+    "does not treat the benign phrase '%s' as secret handling",
+    (title) => {
+      const brief = buildRiskAwareBrief({
+        title,
+        body: "Implement the requested feature.",
+        labels: ["enhancement"],
+        fileHints: [],
+      });
+
+      expect(brief.workType).toBe("feature");
+      expect(brief.riskProfile.domains).not.toContain("secrets");
+      expect(brief.riskProfile.level).not.toBe("critical");
+    }
+  );
+
+  it.each(["secret", "secrets", "credential", "credentials"])(
+    "treats the exact structured label '%s' as a secrets risk",
+    (label) => {
+      const brief = buildRiskAwareBrief({
+        title: "Update runtime configuration",
+        body: "Implement the requested change.",
+        labels: [label],
+        fileHints: [],
+      });
+
+      expect(brief.workType).toBe("security");
+      expect(brief.workTypeConfidence).toBe("high");
+      expect(brief.riskProfile.domains).toContain("secrets");
+      expect(brief.riskProfile.level).toBe("critical");
+      expect(brief.riskProfile.confidence).toBe("high");
+    }
+  );
+
+  it.each([
+    "Rotate an exposed secret",
+    "Audit GitHub secrets usage",
+    "Move values into the secrets manager",
+    "Store credentials in the platform vault",
+    "Rotate a private key",
+    "Revoke an access token",
+    "Rotate a credential token",
+    "Revoke credentialToken",
+    "Rotate exposed apiKey",
+    "Rotate exposed apikey",
+    "Revoke accessToken",
+    "Revoke refreshToken",
+    "Remove githubToken from logs",
+    "Remove GITHUB_TOKEN from logs",
+    "Replace CLIENT_SECRET",
+    "Replace OPENAI_API_KEY",
+    "Rotate AWS_SECRET_ACCESS_KEY",
+    "Replace SSH_PRIVATE_KEY",
+    "Rotate MY_CLIENT_SECRET",
+    "Rotate an exposed secret from GITHUB_TOKEN",
+  ])("still treats genuine credential work '%s' as a secrets risk", (title) => {
+    const brief = buildRiskAwareBrief({
+      title,
+      body: "Update the affected runtime configuration.",
+      labels: ["enhancement"],
+      fileHints: ["src/config.ts"],
+    });
+
+    expect(brief.workType).toBe("security");
+    expect(brief.riskProfile.domains).toContain("secrets");
+    expect(brief.riskProfile.level).toBe("critical");
+    expect(new Set(brief.riskProfile.reasons).size).toBe(brief.riskProfile.reasons.length);
+  });
+
+  it("retains a real credential signal alongside a benign secret phrase", () => {
+    const brief = buildRiskAwareBrief({
+      title: "Configure Secret Santa reminders",
+      body: "Remove GITHUB_TOKEN from the diagnostic output.",
+      labels: ["enhancement"],
+      fileHints: [],
+    });
+
+    expect(brief.workType).toBe("security");
+    expect(brief.riskProfile.domains).toContain("secrets");
+    expect(brief.riskProfile.level).toBe("critical");
+  });
+
   it.each(["authentication", "login", "session", "oauth", "password"])(
     "treats a short %s task as an authentication risk",
     (term) => {

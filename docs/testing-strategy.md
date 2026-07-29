@@ -47,6 +47,8 @@ Inspector 2 与 Conformance 的 engine/依赖树属于测试工具边界：各�
 
 提示词注入 evaluation 至少覆盖 Issue/PR 标题正文、Issue/PR/review comment、README/CONTRIBUTING/仓库规则、workflow/job 名称与日志、GitHub error text。断言不只检查转义后的展示，还必须证明这些不可信文本不能改变 required/forbidden 工具序列、跳过 security/release gate、扩大 repo/ref、关闭 dry-run、触发真实写入或进入日志/artifact。
 
+风险分类回归必须成对覆盖误报和漏报。尤其要区分 LLM 字符/token 预算与 credential token、Secret Santa/secret sauce 等普通短语与真实凭据处理，以及文档中的防御性描述与已确认暴露；精确的结构化 `secret(s)`/`credential(s)` label 必须独立于自由文本规则验证。`riskProfile` 表示可解释的实施规划风险，不得被测试、文档或调用方描述成已确认漏洞。确定性模式只用于高置信、可解释信号，不能单独替代结构化 trust boundary、工具权限校验、人工 gate 或对抗性 evaluation。
+
 ## Fixture 与长期维护
 
 - 共享 fixture 只抽取稳定基础设施或领域构造器，不隐藏测试关键差异。测试应在用例附近直接写出决定结论的字段。

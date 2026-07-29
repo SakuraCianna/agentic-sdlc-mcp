@@ -391,6 +391,62 @@ describe("scanPatchForSecrets", () => {
     );
   });
 
+  it("does not treat credential-scanner regex metadata as runtime credential construction", () => {
+    const patch = [
+      "+const SECRETS_DOMAIN_PATTERNS: readonly RegExp[] = [",
+      "+  /\\b(?:access|auth|oauth)[ _-]*tokens?\\b/i,",
+      "+  /\\b(?:rotat|revok|redact)\\w*[ _-]+credentials?\\b/i,",
+      "+];",
+    ].join("\n");
+
+    expect(scanPatchForSecrets("src/security/risk-classifier.ts", patch)).toEqual([]);
+  });
+
+  it.each([
+    "+const tokenPattern = /[A-Z]+%?/;",
+    "+const tokenPattern = () => /access[_-]+token/i;",
+    "+const tokenPattern = /access\\/[a-z]+/i;",
+  ])("ignores operators that occur only inside a regular-expression literal: %s", (patch) => {
+    expect(scanPatchForSecrets("src/security/risk-classifier.ts", patch)).toEqual([]);
+  });
+
+  it.each([
+    "+const tokenPatterns = prefix + signature;",
+    "+const tokenScannerRules = prefix + signature;",
+    "+const apiKeyAssignments = prefix + signature;",
+    "+const tokenPattern = /access[_-]+token/i.source + suffix;",
+    "+const credentialRegex = new RegExp(secretNames.join('|'));",
+    "+const tokenMatcher = patternPrefix + patternSuffix;",
+    "+const secretRules = baseRules.concat(extraRules);",
+  ])("still flags a dynamically constructed credential with a metadata-like name: %s", (patch) => {
+    expect(scanPatchForSecrets("src/config.ts", patch)).toContainEqual(
+      expect.objectContaining({ category: "DynamicSecretConstruction" })
+    );
+  });
+
+  it.each([
+    "+const apiKey: string = prefix + signature;",
+    "+class C { apiKey: string = prefix + signature; }",
+    "+class C { private apiKey!: string = prefix + signature; }",
+    "+function f(apiKey: string = prefix + signature) {}",
+    "+const makeApiKey = (): string => prefix + signature;",
+  ])("reports a typed TypeScript credential assignment once: %s", (patch) => {
+    const findings = scanPatchForSecrets("src/config.ts", patch);
+
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({ category: "DynamicSecretConstruction" });
+    expect(findings[0]?.description).not.toContain("matching occurrences");
+  });
+
+  it("keeps object-property credential construction in scope", () => {
+    expect(
+      scanPatchForSecrets(
+        "src/config.ts",
+        "+const config = { apiKey: prefix + signature };"
+      )
+    ).toContainEqual(expect.objectContaining({ category: "DynamicSecretConstruction" }));
+  });
+
   it("flags a credential dynamically assembled across added lines", () => {
     expect(
       scanPatchForSecrets(

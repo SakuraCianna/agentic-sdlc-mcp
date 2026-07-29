@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented here. Release history is also available on the [GitHub Releases page](https://github.com/SakuraCianna/agentic-sdlc-mcp/releases).
 
+## [Unreleased]
+
+### Fixed
+
+- Stopped `prepare_work_item` from treating LLM character/token budgets or benign phrases such as Secret Santa and "secret sauce" as credential evidence and incorrectly escalating ordinary feature work to critical risk.
+- Stopped the pull-request secret heuristic from treating operators and quantifiers inside credential-detection regex literals as runtime credential construction, without exempting dynamically built values that use metadata-like names, and stopped counting one typed TypeScript assignment twice at both `:` and `=`.
+
+### Security
+
+- Kept credential-context secrets, credentials, private/API keys, qualified compact/camelCase tokens, credential-qualified uppercase token identifiers, and explicit key/secret/password environment suffixes in the high-signal secrets domain, with paired positive and negative regression coverage.
+- Kept exact structured `secret(s)` and `credential(s)` Issue labels as high-confidence risk signals without treating the same bare words anywhere in free text as equivalent evidence.
+- Clarified that `riskProfile` is an explainable implementation-planning estimate, not proof of a vulnerability, leaked credential, or exploitable finding.
+
 ## [1.9.0] - 2026-07-28
 
 ### Added

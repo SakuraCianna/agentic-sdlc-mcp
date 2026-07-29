@@ -76,6 +76,37 @@ function isDocumentationPath(path: string): boolean {
     /\.(?:md|mdx|rst|adoc)$/.test(basename);
 }
 
+// "Secret" and "token" are overloaded in agent work (for example, Secret
+// Santa features and token/character budgets). Require credential-specific
+// context, an action involving secrets, or a conventional environment
+// identifier instead of treating either bare word as critical evidence.
+const SECRETS_DOMAIN_PATTERNS: readonly RegExp[] = [
+  /\b(?:github|api|oauth|client|user|service|cloud|runtime|stored|exposed|leaked|stolen)[ _-]*credentials?\b/i,
+  /\bcredentials?[ _-]*(?:manager|management|provider|store|storage|vault|rotation|revocation|leak(?:age|ed)?|exposure|handling|usage)\b/i,
+  /\b(?:rotat|revok|redact|mask|expos|leak|encrypt|decrypt|exfiltrat|compromis|hardcod|stor)\w*[ _-]+credentials?\b/i,
+  /\b(?:private|secret)[ _-]*keys?\b/i,
+  /\bapi[ _-]*keys?\b/i,
+  /\b(?:client|consumer)[ _-]*secrets?\b/i,
+  /\bcredentials?[ _-]*tokens?\b/i,
+  /\b(?:access|auth(?:entication|orization)?|bearer|refresh|api|github|oauth|personal(?:[ _-]*access)?|session)[ _-]*tokens?\b/i,
+  /\btokens?[ _-]*(?:credentials?|rotation|revocation|leak(?:age|ed)?|exposure)\b/i,
+  /\b(?:exposed|leaked|stolen)[ _-]*tokens?\b/i,
+  /\b(?:github|repository|actions?|ci|environment)[ _-]*secrets?\b/i,
+  /\b(?:exposed|leaked|stolen|compromised|hardcoded)[ _-]+secrets?\b/i,
+  /\bsecrets?[ _-]*(?:manager|management|vault|rotation|revocation|scanner|scanning|store|storage|handling|usage|leak(?:age|ed)?|exposure|configuration|environment|variables?|values?|logs?|redaction|masking|encryption)\b/i,
+  /\b(?:[A-Z][A-Z0-9]*_)*(?:GITHUB|GH|GITLAB|NPM|API|AUTH|AUTHORIZATION|ACCESS|REFRESH|OAUTH|SESSION|BEARER|PERSONAL_ACCESS|CI_JOB|MCP|AZURE|AWS_SESSION|OPENAI|ANTHROPIC|SLACK|DISCORD|HUGGINGFACE|HF|VERCEL|CLOUDFLARE|ID|CSRF|RESET|INVITE|VERIFY|VERIFICATION|WEBHOOK|BOT)_TOKEN\b/,
+  /\b(?:[A-Z][A-Z0-9]*_)+(?:API_KEY|SECRET_ACCESS_KEY|PRIVATE_KEY|CLIENT_SECRET|SECRET_KEY|PASSWORD|PASSPHRASE)\b/,
+];
+const SECRETS_RISK_LABEL_PATTERN = /^(?:secrets?|credentials?)$/i;
+
+function hasSecretsDomainSignal(text: string): boolean {
+  return SECRETS_DOMAIN_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+function hasSecretsRiskLabel(labels: readonly string[]): boolean {
+  return labels.some((label) => SECRETS_RISK_LABEL_PATTERN.test(label.trim()));
+}
+
 function inferWorkType(text: string, labels: string[], paths: string[]): {
   value: SdlcWorkType;
   confidence: RiskConfidence;
@@ -86,25 +117,33 @@ function inferWorkType(text: string, labels: string[], paths: string[]): {
   if ((/\b(doc|docs|documentation)\b/.test(labelText) && !hasKnownNonDocumentationPath) || allKnownPathsAreDocumentation) {
     return { value: "docs", confidence: "high" };
   }
+  if (hasSecretsRiskLabel(labels)) return { value: "security", confidence: "high" };
   if (/\b(bug|bugfix|regression|fix)\b/.test(labelText)) return { value: "bugfix", confidence: "high" };
   if (/\bsecurity\b/.test(labelText)) return { value: "security", confidence: "high" };
   if (/\brelease\b/.test(labelText)) return { value: "release", confidence: "high" };
   if (/\b(refactor|cleanup)\b/.test(labelText)) return { value: "refactor", confidence: "high" };
   if (/\b(regression|bug|broken|incorrect|fails?|fix)\b/i.test(text)) return { value: "bugfix", confidence: "medium" };
-  if (/\b(?:authentication|authn|authz|auth|login|session|oauth|password|permission|vulnerab\w*|secret|injection|cve)\b/i.test(text)) return { value: "security", confidence: "medium" };
+  if (
+    /\b(?:authentication|authn|authz|auth|login|session|oauth|password|permission|vulnerab\w*|injection|cve)\b/i.test(text) ||
+    hasSecretsDomainSignal(text)
+  ) return { value: "security", confidence: "medium" };
   if (/\b(workflow|infrastructure|terraform|deployment|ci\/cd)\b/i.test(text)) return { value: "infra", confidence: "medium" };
   return { value: "feature", confidence: "low" };
 }
 
-const DOMAIN_RULES: Array<{ domain: string; pattern: RegExp; risk: WorkItemRiskLevel }> = [
-  { domain: "prompt-injection", pattern: /ignore (?:all |the )?(?:(?:previous|prior) instructions?|(?:repository )?policy)|reveal (?:the )?(?:token|secret)|print (?:the )?[A-Z_]*TOKEN|bypass (?:repository )?policy/i, risk: "high" },
-  { domain: "payment", pattern: /payment|billing|invoice|webhook|currency|refund|chargeback/i, risk: "high" },
-  { domain: "authorization", pattern: /authori[sz]ation|permission|access control|rbac|tenant|\b(?:authentication|authn|authz|auth|login|session|oauth|password)\b/i, risk: "high" },
-  { domain: "secrets", pattern: /secret|token|credential|private key|api[_ -]?key/i, risk: "critical" },
-  { domain: "migration", pattern: /migration|schema change|database upgrade|backfill|ddl\b/i, risk: "high" },
-  { domain: "workflow", pattern: /\.github\/workflows|github actions|workflow|oidc|release pipeline/i, risk: "high" },
-  { domain: "network-boundary", pattern: /webhook|callback|public api|http endpoint|url|redirect|proxy/i, risk: "medium" },
-  { domain: "dynamic-construction", pattern: /dynamic(?:ally)?|computed (?:field|key)|concatenat|template (?:string|interpolat)|interpolat|builder|decode|encode|拼接/i, risk: "medium" },
+const DOMAIN_RULES: Array<{
+  domain: string;
+  patterns: readonly RegExp[];
+  risk: WorkItemRiskLevel;
+}> = [
+  { domain: "prompt-injection", patterns: [/ignore (?:all |the )?(?:(?:previous|prior) instructions?|(?:repository )?policy)|reveal (?:the )?(?:token|secret)|print (?:the )?[A-Z_]*TOKEN|bypass (?:repository )?policy/i], risk: "high" },
+  { domain: "payment", patterns: [/payment|billing|invoice|webhook|currency|refund|chargeback/i], risk: "high" },
+  { domain: "authorization", patterns: [/authori[sz]ation|permission|access control|rbac|tenant|\b(?:authentication|authn|authz|auth|login|session|oauth|password)\b/i], risk: "high" },
+  { domain: "secrets", patterns: SECRETS_DOMAIN_PATTERNS, risk: "critical" },
+  { domain: "migration", patterns: [/migration|schema change|database upgrade|backfill|ddl\b/i], risk: "high" },
+  { domain: "workflow", patterns: [/\.github\/workflows|github actions|workflow|oidc|release pipeline/i], risk: "high" },
+  { domain: "network-boundary", patterns: [/webhook|callback|public api|http endpoint|url|redirect|proxy/i], risk: "medium" },
+  { domain: "dynamic-construction", patterns: [/dynamic(?:ally)?|computed (?:field|key)|concatenat|template (?:string|interpolat)|interpolat|builder|decode|encode|拼接/i], risk: "medium" },
 ];
 
 function addUnique(target: string[], ...values: string[]): void {
@@ -117,14 +156,22 @@ export function buildRiskAwareBrief(input: BuildRiskAwareBriefInput): RiskAwareB
   const workType = input.explicitWorkType ?? inferredWorkType.value;
   const confirmedDocsOnly = input.fileHints.length > 0 && input.fileHints.every(isDocumentationPath);
   const workTypeConfidence: RiskConfidence = input.explicitWorkType ? "high" : inferredWorkType.confidence;
+  const secretsLabelMatched = hasSecretsRiskLabel(input.labels) &&
+    !(workType === "docs" && confirmedDocsOnly);
   const domains: string[] = [];
   const reasons: string[] = [];
   let level: WorkItemRiskLevel = input.explicitRiskLevel ?? "low";
 
   if (input.explicitRiskLevel) reasons.push(`Explicit risk level: ${input.explicitRiskLevel}.`);
+  if (secretsLabelMatched) {
+    addUnique(domains, "secrets");
+    level = maxRisk(level, "critical");
+    reasons.push("Structured Issue label matched risk domain: secrets.");
+  }
   for (const rule of DOMAIN_RULES) {
     if (workType === "docs" && confirmedDocsOnly && rule.domain !== "prompt-injection") continue;
-    if (!rule.pattern.test(combined)) continue;
+    if (rule.domain === "secrets" && secretsLabelMatched) continue;
+    if (!rule.patterns.some((pattern) => pattern.test(combined))) continue;
     addUnique(domains, rule.domain);
     level = maxRisk(level, rule.risk);
     reasons.push(`Deterministic issue/path signal matched risk domain: ${rule.domain}.`);
@@ -154,7 +201,7 @@ export function buildRiskAwareBrief(input: BuildRiskAwareBriefInput): RiskAwareB
   }
 
   if (workType === "docs" && domains.length === 0 && !policyMatched && !input.explicitRiskLevel) level = "low";
-  const confidence: RiskConfidence = input.explicitRiskLevel || policyMatched
+  const confidence: RiskConfidence = input.explicitRiskLevel || policyMatched || secretsLabelMatched
     ? "high"
     : reasons.length >= 2
       ? "medium"
