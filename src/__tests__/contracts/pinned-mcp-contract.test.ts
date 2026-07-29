@@ -79,14 +79,14 @@ describe("pinned MCP contract checkout safety", () => {
       PATH: "C:\\safe-bin",
       TEMP: "C:\\safe-temp",
       SystemRoot: "C:\\Windows",
-      GITHUB_TOKEN: "github-secret",
-      GITHUB_PAT: "github-pat",
-      npm_token: "registry-secret",
-      OPENAI_API_KEY: "model-secret",
-      AWS_SECRET_ACCESS_KEY: "cloud-secret",
-      DATABASE_URL: "postgres://credential@example.test/database",
-      PGPASSWORD: "database-secret",
-      customToken: "camel-case-secret",
+      GITHUB_TOKEN: "placeholder-github-token",
+      GITHUB_PAT: "placeholder-github-pat",
+      npm_token: "placeholder-registry-token",
+      OPENAI_API_KEY: "placeholder-model-api-key",
+      AWS_SECRET_ACCESS_KEY: "placeholder-cloud-secret",
+      DATABASE_URL: "placeholder-database-url",
+      PGPASSWORD: "placeholder-database-password",
+      customToken: "placeholder-camel-case-token",
       NODE_OPTIONS: "--import=C:\\untrusted-hook.mjs",
       MAX_TOKEN_COUNT: "1000",
       MCP_STORAGE_DIR: "C:\\private-storage",
@@ -102,6 +102,6 @@ describe("pinned MCP contract checkout safety", () => {
       TEMP: "C:\\safe-temp",
       SystemRoot: "C:\\Windows",
     });
-    expect(environment.GITHUB_TOKEN).toBe("github-secret");
+    expect(environment.GITHUB_TOKEN).toBe("placeholder-github-token");
   });
 });
