@@ -33,6 +33,20 @@
 
 涉及远程 HTTP、OAuth、多租户 request context 或取消/超时的能力落地后，应增加真实 HTTP transport 的本地端到端套件；在此之前，不得用内存 transport 测试声称已经验证网络层安全。
 
+## v1.10 契约与 Evaluation 分层
+
+v1.10 在现有单元、handler、真实 SDK client 和 loopback HTTP 测试之上增加三类证据，三者不能互相冒充：
+
+1. **SDK/era parity**：先把 v1 单包迁移到稳定 SDK v2，但保持 2025 legacy wire；parity 通过后再为本地 stdio/loopback 显式启用 2025 fallback 与 `2026-07-28` modern era。package migration 与 wire opt-in 分 PR，modern 测试必须显式 pin 版本，不能从依赖版本推断。
+2. **Inspector/Conformance 黑盒**：使用精确固定的 Inspector 2，从进程外通过 stdio/loopback HTTP 验证发布构建产物，只消费机器可读 JSON 与稳定 exit class；Conformance 0.1.16 先作为 legacy 非阻塞 pilot。二者都不能被描述成官方认证，也不能替代显式 modern client 的 required 测试。
+3. **Agent evaluation**：required CI 使用固定 GitHub fixture 的真实 MCP tool call 和 recorded trace scorer；可选 live model-in-loop 必须记录 provider、model、版本、时间和场景 digest。recorded trace 只能证明 scorer/fixture/协议路径可重复，不能证明未来任意模型仍会做同样选择。
+
+公共工具契约从不可变 `v1.9.0` tag/commit 生成，记录 source SHA，并按语义比较 breaking/additive 变化。禁止从升级后的当前工作树伪造旧 baseline，也禁止在普通测试中自动更新；更新必须由单独命令执行，让 PR 显示工具/resource 删除、schema required/类型变化、annotations 与描述变化。大段 inline snapshot 不能替代 output schema 对真实 `structuredContent` 的逐工具验证。
+
+Inspector 2 与 Conformance 的 engine/依赖树属于测试工具边界：各自使用隔离 lockfile，并在 Node 24 contract job 运行，不提高生产包 `engines.node >=22` 的下限，也不把测试 UI、runner 或额外 SDK client 依赖引入产品运行时。required job 使用显式 target，将 `MCP_STORAGE_DIR` 设为专用临时目录，并将 `MCP_INSPECTOR_OAUTH_STATE_PATH` 设为该目录下的 `oauth.json` 文件；不得改写 `HOME`，不得交互式 OAuth，也不得继承真实 GitHub/model 凭据。HTTP 始终只绑定 loopback。
+
+提示词注入 evaluation 至少覆盖 Issue/PR 标题正文、Issue/PR/review comment、README/CONTRIBUTING/仓库规则、workflow/job 名称与日志、GitHub error text。断言不只检查转义后的展示，还必须证明这些不可信文本不能改变 required/forbidden 工具序列、跳过 security/release gate、扩大 repo/ref、关闭 dry-run、触发真实写入或进入日志/artifact。
+
 ## Fixture 与长期维护
 
 - 共享 fixture 只抽取稳定基础设施或领域构造器，不隐藏测试关键差异。测试应在用例附近直接写出决定结论的字段。
