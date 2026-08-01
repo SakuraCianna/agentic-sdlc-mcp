@@ -335,6 +335,7 @@ describe("legacy CODEOWNERS exports", () => {
 // ---------------------------------------------------------------------------
 
 const REF: RepoRef = { owner: "test-org", repo: "test-repo" };
+const PINNED_GITLEAKS_ACTION_SHA = "e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e";
 
 function makeMockOctokit(opts: {
   codeownersContent?: string;
@@ -378,12 +379,41 @@ function makeMockOctokit(opts: {
   >;
   workflowContents?: Record<string, string>;
   workflowContentError?: unknown;
+  scannerProvenance?: {
+    workflowPath: string;
+    runId: number;
+    jobId: number;
+    checkName: string;
+  };
   prDraft?: boolean;
   commits?: number;
   prTitle?: string;
   policyContent?: string;
 }) {
   return {
+    actions: {
+      getWorkflowRun: vi.fn().mockImplementation(({ run_id }: { run_id: number }) =>
+        opts.scannerProvenance?.runId === run_id
+          ? Promise.resolve({
+              data: {
+                path: opts.scannerProvenance.workflowPath,
+                head_sha: "head-sha",
+              },
+            })
+          : Promise.reject(Object.assign(new Error("Not Found"), { status: 404 }))
+      ),
+      getJobForWorkflowRun: vi.fn().mockImplementation(({ job_id }: { job_id: number }) =>
+        opts.scannerProvenance?.jobId === job_id
+          ? Promise.resolve({
+              data: {
+                name: opts.scannerProvenance.checkName,
+                run_id: opts.scannerProvenance.runId,
+                head_sha: "head-sha",
+              },
+            })
+          : Promise.reject(Object.assign(new Error("Not Found"), { status: 404 }))
+      ),
+    },
     checks: {
       listForRef: opts.checkRunsError
         ? vi.fn().mockRejectedValue(opts.checkRunsError)
@@ -953,6 +983,40 @@ describe("handleReviewPr — mature secret scanner evidence", () => {
     );
   });
 
+  it("fails closed when a valid Actions run URL cannot be verified through the API", async () => {
+    const octokit = makeMockOctokit({
+      checkRuns: [
+        {
+          id: 7,
+          name: "gitleaks",
+          status: "completed",
+          conclusion: "success",
+          details_url:
+            "https://github.com/test-org/test-repo/actions/runs/107/job/7",
+          app: { id: 15368 },
+        },
+      ],
+    });
+
+    const { structured } = await handleReviewPr(securityParams, REF, octokit);
+
+    expect(octokit.actions.getWorkflowRun).toHaveBeenCalledWith(
+      expect.objectContaining({ run_id: 107 })
+    );
+    expect(structured.secretScannerEvidence).toMatchObject({
+      status: "unverified",
+      verified: false,
+      degraded: true,
+    });
+    expect(
+      structured.errors.some(
+        (error) =>
+          error.startsWith("Secret scanner provenance:") &&
+          /not found/i.test(error)
+      )
+    ).toBe(true);
+  });
+
   it("turns a failing TruffleHog check into a critical blocker", async () => {
     const octokit = makeMockOctokit({
       checkRuns: [
@@ -1017,10 +1081,21 @@ describe("handleReviewPr — mature secret scanner evidence", () => {
           name: "gitleaks",
           status: "completed",
           conclusion: "success",
-          details_url: "https://github.com/checks/3",
+          details_url:
+            "https://github.com/test-org/test-repo/actions/runs/103/job/3",
           app: { id: 15368 },
         },
       ],
+      scannerProvenance: {
+        workflowPath: ".github/workflows/secret-scan.yml",
+        runId: 103,
+        jobId: 3,
+        checkName: "gitleaks",
+      },
+      workflowContents: {
+        ".github/workflows/secret-scan.yml":
+          `jobs:\n  gitleaks:\n    steps:\n      - uses: gitleaks/gitleaks-action@${PINNED_GITLEAKS_ACTION_SHA}`,
+      },
     });
 
     const { structured } = await handleReviewPr(securityParams, REF, octokit);
@@ -1031,6 +1106,115 @@ describe("handleReviewPr — mature secret scanner evidence", () => {
       degraded: true,
     });
     expect(structured.secretScannerEvidence?.reason).toMatch(/policy/i);
+  });
+
+  it("keeps a verified scanner result when an unrelated workflow changes", async () => {
+    const octokit = makeMockOctokit({
+      files: [
+        {
+          filename: ".github/workflows/ci.yml",
+          status: "modified",
+          additions: 2,
+          deletions: 1,
+        },
+      ],
+      checkRuns: [
+        {
+          id: 6,
+          name: "gitleaks",
+          status: "completed",
+          conclusion: "success",
+          details_url:
+            "https://github.com/test-org/test-repo/actions/runs/106/job/6",
+          app: { id: 15368 },
+        },
+      ],
+      scannerProvenance: {
+        workflowPath: ".github/workflows/secret-scan.yml",
+        runId: 106,
+        jobId: 6,
+        checkName: "gitleaks",
+      },
+      workflowContents: {
+        ".github/workflows/secret-scan.yml":
+          `jobs:\n  gitleaks:\n    steps:\n      - uses: gitleaks/gitleaks-action@${PINNED_GITLEAKS_ACTION_SHA}`,
+      },
+    });
+
+    const { structured } = await handleReviewPr(securityParams, REF, octokit);
+
+    expect(structured.secretScannerEvidence).toMatchObject({
+      status: "passing",
+      verified: true,
+      degraded: false,
+    });
+    expect(structured.secretScannerEvidence?.signals[0]).not.toHaveProperty(
+      "provenanceWorkflowPath"
+    );
+    expect(
+      structured.findings.some(
+        (finding) => finding.category === "MissingMatureSecretScannerEvidence"
+      )
+    ).toBe(false);
+  });
+
+  it("invalidates a scanner when its base workflow references a changed custom config", async () => {
+    const octokit = makeMockOctokit({
+      files: [
+        {
+          filename: "security/gitleaks-policy.toml",
+          status: "modified",
+          additions: 2,
+          deletions: 1,
+        },
+      ],
+      checkRuns: [
+        {
+          id: 8,
+          name: "gitleaks",
+          status: "completed",
+          conclusion: "success",
+          details_url:
+            "https://github.com/test-org/test-repo/actions/runs/108/job/8",
+          app: { id: 15368 },
+        },
+      ],
+      scannerProvenance: {
+        workflowPath: ".github/workflows/secret-scan.yml",
+        runId: 108,
+        jobId: 8,
+        checkName: "gitleaks",
+      },
+      workflowContents: {
+        ".github/workflows/secret-scan.yml": `jobs:
+  gitleaks:
+    env:
+      GITLEAKS_CONFIG: security/gitleaks-policy.toml
+    steps:
+      - uses: gitleaks/gitleaks-action@${PINNED_GITLEAKS_ACTION_SHA}`,
+      },
+    });
+
+    const { structured } = await handleReviewPr(securityParams, REF, octokit);
+
+    expect(structured.secretScannerEvidence).toMatchObject({
+      status: "unverified",
+      verified: false,
+      degraded: true,
+      signals: [
+        expect.objectContaining({
+          provider: "gitleaks",
+          trusted: false,
+          provenanceVerified: false,
+        }),
+      ],
+    });
+    expect(structured.findings).toContainEqual(
+      expect.objectContaining({
+        category: "MissingMatureSecretScannerEvidence",
+        severity: "high",
+      })
+    );
   });
 
   it("fails closed when the changed-file list is truncated before a policy file", async () => {
@@ -1095,10 +1279,21 @@ describe("handleReviewPr — mature secret scanner evidence", () => {
           name: "gitleaks",
           status: "completed",
           conclusion: "success",
-          details_url: "https://github.com/checks/5",
+          details_url:
+            "https://github.com/test-org/test-repo/actions/runs/105/job/5",
           app: { id: 15368 },
         },
       ],
+      scannerProvenance: {
+        workflowPath: ".github/workflows/secret-scan.yml",
+        runId: 105,
+        jobId: 5,
+        checkName: "gitleaks",
+      },
+      workflowContents: {
+        ".github/workflows/secret-scan.yml":
+          `jobs:\n  gitleaks:\n    steps:\n      - uses: gitleaks/gitleaks-action@${PINNED_GITLEAKS_ACTION_SHA}`,
+      },
     });
 
     const { structured } = await handleReviewPr(securityParams, REF, octokit);

@@ -1536,7 +1536,7 @@ interface ToolDependencies {
 
 ### v1.10: MCP 契约、Inspector 与 Agent Evaluation
 
-> **状态：执行中（2026-07-29）。** 计划已获批准并合并；#43/#44 已按 T1–T11 更新，#44 已正式标记为 blocked by #43。已复现并修复首批 evaluation 与 PR reviewer 误判。T0 已在最新 main 基线上完成 SDK 1.30 lockfile 桥接，Gitleaks 与 Node 22/24 CI 通过；T1 已从固定的 v1.9.0 release commit 建立 13 tools/5 resources 公共 discovery manifest、显式更新命令与语义兼容门禁，并用 checkout 外 cwd 的短生命周期子进程、有界重试和凭据环境清理解决 Windows 历史 worktree 句柄问题。测试扩展到 1062 个用例，补齐取消、证据降级和非法分页边界并提高 coverage floor。production audit 从 SDK/Hono 两条 moderate 收敛为仅剩未使用 `serve-static` 路径的 Hono moderate，未强制升级 Hono 2.x。详细依赖图、任务拆分和版本边界见 [v1.10.0 实施计划](superpowers/plans/2026-07-29-v1.10.0-contract-evaluation.md)。
+> **状态：执行中（2026-07-29）。** 计划已获批准并合并；#43/#44 已按 T1–T11 更新，#44 已正式标记为 blocked by #43。已复现并修复首批 evaluation 与 PR reviewer 误判。T0 已在最新 main 基线上完成 SDK 1.30 lockfile 桥接，Gitleaks 与 Node 22/24 CI 通过；T1 已从固定的 v1.9.0 release commit 建立 13 tools/5 resources 公共 discovery manifest、显式更新命令与语义兼容门禁，并用 checkout 外 cwd 的短生命周期子进程、有界重试和凭据环境清理解决 Windows 历史 worktree 句柄问题。测试扩展到 1143 个用例，补齐取消、证据降级、非法分页、扫描器 provenance/config、GitHub 元数据与保守的输出 composition 边界并提高 coverage floor；安全评审现以内部 immutable-base context 按真实扫描 Workflow 和静态配置依赖隔离 signal，不再因无关 CI Workflow 变更误判，同时对动态、歧义或缺失依赖继续 fail-closed，公开 MCP schema 保持不变。全量覆盖率为 95.65% statements / 91.56% branches / 95.93% functions / 96.25% lines。production audit 从 SDK/Hono 两条 moderate 收敛为仅剩未使用 `serve-static` 路径的 Hono moderate，未强制升级 Hono 2.x。详细依赖图、任务拆分和版本边界见 [v1.10.0 实施计划](superpowers/plans/2026-07-29-v1.10.0-contract-evaluation.md)。
 
 目标：验证“agent 是否能正确发现、选择和组合工具”，而不只验证 TypeScript handler。将协议契约、客户端兼容、响应预算和稳定 evaluation 建成独立质量阶段。
 

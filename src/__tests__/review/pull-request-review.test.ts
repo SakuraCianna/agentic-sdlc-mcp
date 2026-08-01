@@ -8,7 +8,10 @@ import {
   type PrFile,
   type ReviewPrMeta,
 } from "../../review/pull-request-review.js";
-import { evaluateSecretScannerEvidence } from "../../security/secret-scanner-evidence.js";
+import {
+  evaluateSecretScannerEvidence,
+  type SecretScannerPolicyContext,
+} from "../../security/secret-scanner-evidence.js";
 import type { CiEvidence, GateSignal } from "../../github/pull-request-evidence.js";
 
 function file(filename: string, overrides: Partial<PrFile> = {}): PrFile {
@@ -62,6 +65,105 @@ function secretScannerEvidence(state: GateSignal["state"]) {
     unverifiedSignals: [],
     errors: [],
   } satisfies CiEvidence);
+}
+
+function scannerPolicyContext(
+  workflowPath = ".github/workflows/secret-scan.yml"
+): SecretScannerPolicyContext {
+  return {
+    signals: [
+      {
+        name: "gitleaks",
+        provider: "gitleaks",
+        source: "check_run",
+        appId: 15368,
+        url: "https://github.com/example/checks/1",
+        workflowPath,
+        configurationPaths: [
+          ".gitleaks.toml",
+          "gitleaks.toml",
+          ".gitleaksignore",
+        ],
+      },
+    ],
+  };
+}
+
+function independentSecretScannerEvidence() {
+  const passing = [
+    {
+      name: "gitleaks",
+      source: "check_run",
+      appId: 15368,
+      state: "passing",
+      rawStatus: "completed",
+      rawConclusion: "success",
+      rawState: null,
+      url: "https://github.com/example/checks/1",
+      provenanceVerified: true,
+    },
+    {
+      name: "TruffleHog",
+      source: "check_run",
+      appId: 15368,
+      state: "passing",
+      rawStatus: "completed",
+      rawConclusion: "success",
+      rawState: null,
+      url: "https://github.com/example/checks/2",
+      provenanceVerified: true,
+    },
+  ] satisfies GateSignal[];
+  return evaluateSecretScannerEvidence({
+    checkRuns: {
+      passing,
+      failing: [],
+      pending: [],
+      skipped: [],
+      total: passing.length,
+    },
+    commitStatuses: {
+      passing: [],
+      failing: [],
+      pending: [],
+      skipped: [],
+      total: 0,
+    },
+    totalSignals: passing.length,
+    hasFailing: false,
+    hasPending: false,
+    unverifiedSignals: [],
+    errors: [],
+  });
+}
+
+function independentScannerPolicyContext(): SecretScannerPolicyContext {
+  return {
+    signals: [
+      {
+        name: "gitleaks",
+        provider: "gitleaks",
+        source: "check_run",
+        appId: 15368,
+        url: "https://github.com/example/checks/1",
+        workflowPath: ".github/workflows/gitleaks.yml",
+        configurationPaths: [
+          ".gitleaks.toml",
+          "gitleaks.toml",
+          ".gitleaksignore",
+        ],
+      },
+      {
+        name: "TruffleHog",
+        provider: "trufflehog",
+        source: "check_run",
+        appId: 15368,
+        url: "https://github.com/example/checks/2",
+        workflowPath: ".github/workflows/trufflehog.yml",
+        configurationPaths: [],
+      },
+    ],
+  };
 }
 
 describe("classifyPrFiles", () => {
@@ -1123,6 +1225,8 @@ describe("evaluatePullRequestReview", () => {
     file("docs/retired-secret-scan.yml", {
       previousFilename: ".github/workflows/secret-scan.yml",
     }),
+    file(".GITHUB\\WORKFLOWS\\SECRET-SCAN.YML"),
+    file(".gitleaks.toml"),
   ])("downgrades direct passing evidence when scanner policy is changed: $filename", (policyFile) => {
     const result = evaluatePullRequestReview({
       pr: pr(),
@@ -1130,15 +1234,121 @@ describe("evaluatePullRequestReview", () => {
       workType: "feature",
       standard: "security-focused",
       secretScannerEvidence: secretScannerEvidence("passing"),
+      secretScannerPolicyContext: scannerPolicyContext(),
     });
 
     expect(result.secretScannerEvidence).toMatchObject({
       status: "unverified",
       verified: false,
       degraded: true,
+      signals: [
+        expect.objectContaining({
+          trusted: false,
+          provenanceVerified: false,
+        }),
+      ],
     });
     expect(result.findings).toContainEqual(
       expect.objectContaining({ category: "MissingMatureSecretScannerEvidence", severity: "high" })
+    );
+  });
+
+  it.each([
+    file(".github/workflows/ci.yml"),
+    file(".github/workflows/build.yml", {
+      previousFilename: ".github/workflows/old-build.yml",
+    }),
+  ])(
+    "keeps verified scanner evidence when an unrelated workflow changes: $filename",
+    (workflowFile) => {
+      const result = evaluatePullRequestReview({
+        pr: pr(),
+        files: [workflowFile, file("src/index.test.ts")],
+        workType: "infra",
+        standard: "security-focused",
+        secretScannerEvidence: secretScannerEvidence("passing"),
+        secretScannerPolicyContext: scannerPolicyContext(),
+      });
+
+      expect(result.secretScannerEvidence).toMatchObject({
+        status: "passing",
+        verified: true,
+        degraded: false,
+      });
+      expect(
+        result.findings.some(
+          (finding) => finding.category === "MissingMatureSecretScannerEvidence"
+        )
+      ).toBe(false);
+    }
+  );
+
+  it.each([undefined, "docs/not-a-workflow.yml"])(
+    "fails closed for any workflow change when verified scanner evidence has no valid workflow path: %s",
+    (workflowPath) => {
+      const result = evaluatePullRequestReview({
+        pr: pr(),
+        files: [file(".github/workflows/ci.yml"), file("src/index.test.ts")],
+        workType: "infra",
+        standard: "security-focused",
+        secretScannerEvidence: secretScannerEvidence("passing"),
+        ...(workflowPath === undefined
+          ? {}
+          : { secretScannerPolicyContext: scannerPolicyContext(workflowPath) }),
+      });
+
+      expect(result.secretScannerEvidence).toMatchObject({
+        status: "unverified",
+        verified: false,
+        degraded: true,
+      });
+      expect(result.findings).toContainEqual(
+        expect.objectContaining({
+          category: "MissingMatureSecretScannerEvidence",
+          severity: "high",
+        })
+      );
+    }
+  );
+
+  it("invalidates only the changed scanner when independent evidence remains", () => {
+    const result = evaluatePullRequestReview({
+      pr: pr(),
+      files: [
+        file(".github/workflows/gitleaks.yml"),
+        file("src/index.test.ts"),
+      ],
+      workType: "infra",
+      standard: "security-focused",
+      secretScannerEvidence: independentSecretScannerEvidence(),
+      secretScannerPolicyContext: independentScannerPolicyContext(),
+    });
+
+    expect(result.secretScannerEvidence).toMatchObject({
+      status: "passing",
+      verified: true,
+      degraded: false,
+    });
+    expect(
+      result.secretScannerEvidence?.signals.find(
+        (signal) => signal.provider === "gitleaks"
+      )
+    ).toMatchObject({
+      trusted: false,
+      provenanceVerified: false,
+    });
+    expect(
+      result.secretScannerEvidence?.signals.find(
+        (signal) => signal.provider === "trufflehog"
+      )
+    ).toMatchObject({
+      trusted: true,
+      provenanceVerified: true,
+    });
+    expect(result.secretScannerEvidence?.signals).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ provenanceWorkflowPath: expect.any(String) }),
+      ])
     );
   });
 
@@ -1149,6 +1359,7 @@ describe("evaluatePullRequestReview", () => {
       workType: "feature",
       standard: "security-focused",
       secretScannerEvidence: secretScannerEvidence("passing"),
+      secretScannerPolicyContext: scannerPolicyContext(),
     });
 
     expect(result.secretScannerEvidence).toMatchObject({

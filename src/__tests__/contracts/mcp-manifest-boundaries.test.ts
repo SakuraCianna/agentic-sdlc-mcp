@@ -795,6 +795,87 @@ describe("output guarantee compatibility boundaries", () => {
     );
   });
 
+  it("keeps an optional property inside a closed nullable anyOf behind manual review", () => {
+    const nullableObject = () => ({
+      anyOf: [
+        {
+          type: "object",
+          properties: {
+            status: { type: "string" },
+          },
+          required: ["status"],
+          additionalProperties: false,
+        },
+        { type: "null" },
+      ],
+    });
+    const result = compare(
+      (raw) => {
+        Object.assign(outputProperty(raw), nullableObject());
+      },
+      (raw) => {
+        const current = nullableObject();
+        const objectBranch = current.anyOf[0] as {
+          properties: Record<string, unknown>;
+        };
+        objectBranch.properties["provenanceWorkflowPath"] = {
+          type: "string",
+        };
+        Object.assign(outputProperty(raw), current);
+      }
+    );
+
+    expect(result.breaking).toContainEqual(
+      expect.objectContaining({
+        code: "output_schema_composition_changed",
+        path: expect.stringContaining("anyOf"),
+      })
+    );
+  });
+
+  it("keeps oneOf drift behind manual review because exclusivity can change", () => {
+    const result = compare(
+      (raw) => {
+        outputProperty(raw).oneOf = [
+          { type: "string" },
+          { type: "number" },
+        ];
+      },
+      (raw) => {
+        outputProperty(raw).oneOf = [
+          { type: "number" },
+          { type: "string" },
+        ];
+      }
+    );
+
+    expect(result.breaking).toContainEqual(
+      expect.objectContaining({
+        code: "output_schema_composition_changed",
+        path: expect.stringContaining("oneOf"),
+      })
+    );
+  });
+
+  it("keeps a newly introduced anyOf behind manual review without a baseline union", () => {
+    const result = compare(
+      () => undefined,
+      (raw) => {
+        outputProperty(raw).anyOf = [
+          { type: "string" },
+          { type: "null" },
+        ];
+      }
+    );
+
+    expect(result.breaking).toContainEqual(
+      expect.objectContaining({
+        code: "output_schema_composition_changed",
+        path: expect.stringContaining("anyOf"),
+      })
+    );
+  });
+
   it("rejects removal of a documented output property", () => {
     const result = compare(
       () => undefined,

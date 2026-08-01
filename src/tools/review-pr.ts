@@ -24,7 +24,6 @@ import type { Finding, Severity, RepoRef } from "../types.js";
 import type { Octokit } from "@octokit/rest";
 import {
   evaluateSecretScannerEvidence,
-  isSecretScannerPolicyPath,
   verifySecretScannerProvenance,
   type SecretScannerEvidence,
 } from "../security/secret-scanner-evidence.js";
@@ -706,6 +705,9 @@ export async function handleReviewPr(
   }
 
   let secretScannerEvidence: SecretScannerEvidence | null = null;
+  let secretScannerPolicyContext:
+    | Awaited<ReturnType<typeof verifySecretScannerProvenance>>["policyContext"]
+    | undefined;
   if (params.standard === "security-focused") {
     const provenance = await verifySecretScannerProvenance(evidence.ci, {
       ref,
@@ -717,16 +719,11 @@ export async function handleReviewPr(
       ...provenance.errors.map((error) => `Secret scanner provenance: ${error}`)
     );
     secretScannerEvidence = evaluateSecretScannerEvidence(provenance.ci, {
-          policyFilesChanged: files.some(
-            (file) =>
-              isSecretScannerPolicyPath(file.filename) ||
-              (file.previousFilename !== undefined &&
-                isSecretScannerPolicyPath(file.previousFilename))
-          ),
-          incompleteReasons: evidence.unverifiedSignals.includes("changed_files")
-            ? ["changed_files"]
-            : [],
-        });
+      incompleteReasons: evidence.unverifiedSignals.includes("changed_files")
+        ? ["changed_files"]
+        : [],
+    });
+    secretScannerPolicyContext = provenance.policyContext;
   }
 
   const review = evaluatePullRequestReview({
@@ -741,6 +738,7 @@ export async function handleReviewPr(
     workType: params.workType,
     standard: params.standard,
     secretScannerEvidence: secretScannerEvidence ?? undefined,
+    secretScannerPolicyContext,
     policyFindings: [
       ...ownershipPolicyFindings,
       ...workflowPolicyFindings,

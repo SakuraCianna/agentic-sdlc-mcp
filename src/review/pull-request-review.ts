@@ -1,9 +1,10 @@
 import type { Finding, SdlcWorkType, Severity } from "../types.js";
 import {
-  isSecretScannerPolicyPath,
+  applySecretScannerPolicyChanges,
   secretScannerPolicyFinding,
   unverifiedSecretScannerEvidence,
   type SecretScannerEvidence,
+  type SecretScannerPolicyContext,
 } from "../security/secret-scanner-evidence.js";
 
 export type ReviewDimension =
@@ -79,6 +80,8 @@ export interface ReviewEvaluationInput {
   workType?: SdlcWorkType;
   standard?: ReviewStandard;
   secretScannerEvidence?: SecretScannerEvidence;
+  /** Internal immutable-base dependencies used to invalidate changed scanner signals. */
+  secretScannerPolicyContext?: SecretScannerPolicyContext;
   /** Complete policy evidence gathered by the orchestration layer, such as workflow permissions. */
   policyFindings?: StructuredReviewFinding[];
 }
@@ -1822,22 +1825,11 @@ export function evaluatePullRequestReview(
     unverifiedSecretScannerEvidence(
       "The security-focused review did not receive CI evidence from a mature secret scanner."
     );
-  const scannerPolicyChanged = classified.allFiles.some(
-    (file) =>
-      isSecretScannerPolicyPath(file.filename) ||
-      (file.previousFilename !== undefined &&
-        isSecretScannerPolicyPath(file.previousFilename))
+  const effectiveSecretScannerEvidence = applySecretScannerPolicyChanges(
+    classified.allFiles,
+    suppliedSecretScannerEvidence,
+    input.secretScannerPolicyContext
   );
-  const effectiveSecretScannerEvidence: SecretScannerEvidence =
-    suppliedSecretScannerEvidence.status === "passing" && scannerPolicyChanged
-      ? {
-          ...unverifiedSecretScannerEvidence(
-            "The PR changes secret-scanner workflow or configuration policy, so its supplied passing evidence is not trusted."
-          ),
-          providers: suppliedSecretScannerEvidence.providers,
-          signals: suppliedSecretScannerEvidence.signals,
-        }
-      : suppliedSecretScannerEvidence;
   const totalChangedLines = classified.allFiles.reduce(
     (total, file) => total + (file.changes ?? (file.additions ?? 0) + (file.deletions ?? 0)),
     0

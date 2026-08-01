@@ -10,7 +10,7 @@ All notable changes to this project are documented here. Release history is also
 - Added a semantic compatibility gate for tool/resource removal, input narrowing or default drift, output guarantee loss, annotation or MIME drift, with explicit-only baseline updates and Node 22/24 CI coverage.
 - Added a separate Node 24 read-only replay that rebuilds the pinned v1.9.0 checkout and byte-compares fresh discovery with the tracked baseline, while the Node 22/24 matrix keeps the faster current-contract comparison.
 - Added boundary coverage for JSON Schema unions, object enums, boolean schemas, `integer`/`number` subtyping, composition/constraint drift, prototype-named keys, future boolean annotations, CLI path/provenance rejection, real deadlines, cancellation races, evidence-state degradation, bounded pagination, and temporary worktree cleanup.
-- Raised the global coverage regression floors to 94% statements, 89% branches, 94% functions, and 95% lines after expanding the suite to 1062 tests.
+- Raised the global coverage regression floors to 94% statements, 89% branches, 94% functions, and 95% lines after expanding the suite to 1143 tests; the current full-suite baseline is 95.65% statements, 91.56% branches, 95.93% functions, and 96.25% lines.
 
 ### Changed
 
@@ -23,6 +23,7 @@ All notable changes to this project are documented here. Release history is also
 - Prevented historical MCP discovery from retaining Windows checkout handles by running it in a bounded child process whose cwd stays outside the checkout, passing only an OS-runtime environment allowlist, and applying bounded cleanup retries before removing the detached worktree.
 - Prevented evidence collection from silently exiting before its deadline, from starting after an immediate parent cancellation, or from accepting non-finite timeout values.
 - Prevented invalid GitHub pagination sizes such as `perPage=0` from causing an unbounded request loop.
+- Prevented security-focused PR review from invalidating verified scanner evidence when an unrelated Actions workflow changes. Internal immutable-base provenance now binds each Gitleaks/TruffleHog signal to its exact workflow and static configuration dependencies, invalidates only affected signals, and remains fail-closed when a dependency is missing, dynamic, ambiguous, absolute, or outside the repository. The internal paths are not added to the public MCP output schema.
 
 ### Security
 
