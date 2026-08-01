@@ -128,7 +128,7 @@ export function createInspectorEnvironment({
     DOTENV_CONFIG_QUIET: "true",
     GITHUB_OWNER: "inspector-fixture-owner",
     GITHUB_REPO: "inspector-fixture-repo",
-    GITHUB_TOKEN: INSPECTOR_PLACEHOLDER_TOKEN,
+    GITHUB_TOKEN: "test-only-not-a-github-credential",
     MCP_AUTO_OPEN_ENABLED: "false",
     MCP_CLIENT_CONFIG_PATH: path.join(storageDirectory, "client.json"),
     MCP_INSPECTOR_HARNESS_MARKER_PATH: path.join(

@@ -5,7 +5,6 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const PLACEHOLDER_TOKEN = "test-only-not-a-github-credential";
 const GITHUB_CREDENTIAL_NAMES = [
   "GH_TOKEN",
   "GITHUB_APP_PRIVATE_KEY",
@@ -14,7 +13,7 @@ const GITHUB_CREDENTIAL_NAMES = [
 ];
 
 for (const name of GITHUB_CREDENTIAL_NAMES) delete process.env[name];
-process.env.GITHUB_TOKEN = PLACEHOLDER_TOKEN;
+process.env.GITHUB_TOKEN = "test-only-not-a-github-credential";
 process.env.GITHUB_OWNER = "inspector-fixture-owner";
 process.env.GITHUB_REPO = "inspector-fixture-repo";
 process.env.DOTENV_CONFIG_QUIET = "true";

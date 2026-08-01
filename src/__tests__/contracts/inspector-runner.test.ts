@@ -46,9 +46,9 @@ describe("Inspector contract runner", () => {
       parentEnvironment: {
         HOME: "C:\\Users\\Example",
         PATH: "C:\\Windows\\System32",
-        GITHUB_TOKEN: "real-token",
-        GH_TOKEN: "real-gh-token",
-        GITHUB_PAT: "real-pat",
+        GITHUB_TOKEN: "placeholder-parent-github-token",
+        GH_TOKEN: "placeholder-parent-gh-token",
+        GITHUB_PAT: "placeholder-parent-github-pat",
         MCP_CATALOG_PATH: "C:\\Users\\Example\\default-catalog.json",
         NODE_OPTIONS: "--inspect",
       },
@@ -91,9 +91,13 @@ describe("Inspector contract runner", () => {
     expect(() =>
       assertInspectorOutputIsSafe(`token=${INSPECTOR_PLACEHOLDER_TOKEN}`, "")
     ).toThrow("credential canary");
-    expect(() => assertInspectorOutputIsSafe("", "real-token", ["real-token"])).toThrow(
-      "credential canary"
-    );
+    expect(() =>
+      assertInspectorOutputIsSafe(
+        "",
+        "placeholder-output-canary",
+        ["placeholder-output-canary"]
+      )
+    ).toThrow("credential canary");
   });
 
   it("blocks the global config path and deceptive DNS fetch/socket targets", () => {
