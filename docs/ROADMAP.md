@@ -1540,14 +1540,16 @@ interface ToolDependencies {
 
 > **T3 进展（2026-08-01）：** 本地 stdio 与 loopback HTTP 已显式提供 2025/2026 双 era，保留 legacy fallback、Host/Origin/100 KiB body limit、无状态 JSON 响应和 local-only 边界；modern wire metadata 由官方 SDK 生成。本地 Node 24 已通过 51 files/1177 tests、47 条 integration、13 tools/5 resources contract check 与 95.22/91.16/95.57/95.88 coverage；Node 22 等待本切片 PR CI。2025 stateless HTTP 无 session/client identity，不能把独立取消 POST 安全关联到原请求；跨时代 header/body 冲突会明确拒绝，factory/serving 异常只返回有界 JSON-RPC 500。两个 era 的 async factory pre-abort 与 handler shutdown 即使 factory 不释放也会立即 499，迟到 server 会关闭；modern handoff 同 tick 竞态、启动真实 `dist/index.js` 的隔离 stdio child 和 watch 排除均已有显式测试与文档。
 
+> **T4 进展（2026-08-01）：** 全部 13 个公开工具现已在 legacy stdio wrapper 与显式 pin `2026-07-28` 的 modern production direct-fetch 两条路径分别通过真实 `Client.callTool`。成功响应经过 SDK 注册层 output schema validation，并逐工具检查关键 Markdown、structuredContent 与 trust boundary；schema invalid/GitHub 403 不携带成功 structuredContent，可选安全源 403 保持有界降级。`create_issue_set` 省略 `dryRun` 后仍默认 preview，live-write 哨兵与外部 fetch/socket guard 均为零调用。Node 24 本地通过 52 files/1183 tests、53 条 integration 与 96.33/91.27/97.01/97.08 coverage；Node 22 证据等待本切片 PR CI。
+
 目标：验证“agent 是否能正确发现、选择和组合工具”，而不只验证 TypeScript handler。将协议契约、客户端兼容、响应预算和稳定 evaluation 建成独立质量阶段。
 
 当前代码缺口：
 
 - 已有显式 legacy/modern SDK client、真实 stdio child process 和 loopback HTTP 生命周期测试，但没有 MCP Inspector 的独立进程/传输黑盒验证。
-- 已完成稳定 SDK v2 分包迁移、2025-era initialize parity 与本地 2025/2026 双 era；Node 22 尚需由本切片 PR CI 证明。
-- 已有固定 v1.9.0 的 tool/resource discovery manifest 与 backward-compatibility gate，但 structuredContent/Markdown 的全工具调用矩阵仍未完成。
-- 真实 MCP tool call 集成测试只覆盖代表性工具，没有全部 13 个工具的成功、失败和降级矩阵。
+- 已完成稳定 SDK v2 分包迁移、2025-era initialize parity 与本地 2025/2026 双 era；T2/T3 的 Node 22/24 CI 均已通过，T4 的 Node 22 证据等待本切片 PR CI。
+- 已有固定 v1.9.0 的 tool/resource discovery manifest、backward-compatibility gate，以及 structuredContent/Markdown 的 13 工具双 era 调用矩阵。
+- 真实 MCP tool call 集成测试已覆盖全部 13 个工具、代表性 schema/GitHub 错误和可恢复降级；进程外实际调用与 Inspector/Conformance artifact 仍待 T5/T6。
 - 没有 provider-neutral 的工具选择、多工具组合、trace scorer 与稳定答案 evaluation。
 - evidence/handoff 已有局部预算，但没有跨工具统一的 API calls、items、字符/bytes、延迟测量和故障注入报告。
 
