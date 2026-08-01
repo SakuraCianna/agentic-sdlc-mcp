@@ -52,7 +52,7 @@ const REQUIRED_RESOURCE_URIS = [
   "sdlc://templates/release-readiness",
   "sdlc://templates/handoff",
 ];
-const CREDENTIAL_ENVIRONMENT_NAMES = [
+const SENSITIVE_ENVIRONMENT_NAMES = [
   "GH_TOKEN",
   "GITHUB_APP_PRIVATE_KEY",
   "GITHUB_PAT",
@@ -103,8 +103,8 @@ function assertEqualJson(actual, expected, label) {
   }
 }
 
-function captureCredentialCanaries(environment) {
-  return CREDENTIAL_ENVIRONMENT_NAMES
+function captureInheritedSensitiveValues(environment) {
+  return SENSITIVE_ENVIRONMENT_NAMES
     .map((name) => environment[name])
     .filter((value) => typeof value === "string" && value.length > 0);
 }
@@ -119,7 +119,7 @@ export function createInspectorEnvironment({
     const value = parentEnvironment[name];
     if (value !== undefined) environment[name] = value;
   }
-  for (const name of CREDENTIAL_ENVIRONMENT_NAMES) delete environment[name];
+  for (const name of SENSITIVE_ENVIRONMENT_NAMES) delete environment[name];
 
   return {
     ...environment,
@@ -187,9 +187,9 @@ export function parseInspectorJsonOutput(output) {
   return record(parsed);
 }
 
-export function assertInspectorOutputIsSafe(stdout, stderr, credentialCanaries = []) {
+export function assertInspectorOutputIsSafe(stdout, stderr, inheritedSensitiveValues = []) {
   const combined = `${stdout}\n${stderr}`;
-  const canaries = [INSPECTOR_PLACEHOLDER_TOKEN, ...credentialCanaries]
+  const canaries = [INSPECTOR_PLACEHOLDER_TOKEN, ...inheritedSensitiveValues]
     .filter((value) => value.length > 0);
   if (canaries.some((value) => combined.includes(value))) {
     throw new Error("Inspector output contained a credential canary.");
@@ -215,7 +215,7 @@ function invokeInspector({
   toolName,
   toolArguments,
   uri,
-  credentialCanaries,
+  inheritedSensitiveValues,
 }) {
   const child = spawnSync(
     process.execPath,
@@ -239,7 +239,7 @@ function invokeInspector({
   );
   const stdout = child.stdout ?? "";
   const stderr = child.stderr ?? "";
-  assertInspectorOutputIsSafe(stdout, stderr, credentialCanaries);
+  assertInspectorOutputIsSafe(stdout, stderr, inheritedSensitiveValues);
   if (child.error) {
     throw new Error(`Inspector process failed before an exit code: ${child.error.message}`);
   }
@@ -289,7 +289,7 @@ export async function runInspectorStdioContracts(projectRoot = DEFAULT_PROJECT_R
   await verifyInspectorInstallation();
   const fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), "agentic-sdlc-inspector-"));
   const storageDirectory = path.join(fixtureRoot, "storage");
-  const credentialCanaries = captureCredentialCanaries(process.env);
+  const inheritedSensitiveValues = captureInheritedSensitiveValues(process.env);
   try {
     await fs.mkdir(storageDirectory, { recursive: true });
     await fs.writeFile(path.join(storageDirectory, "empty.env"), "", "utf8");
@@ -301,7 +301,7 @@ export async function runInspectorStdioContracts(projectRoot = DEFAULT_PROJECT_R
     const invoke = (options) => invokeInspector({
       environment,
       projectRoot,
-      credentialCanaries,
+      inheritedSensitiveValues,
       ...options,
     });
 

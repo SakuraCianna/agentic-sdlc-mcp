@@ -26,5 +26,5 @@ export function parseInspectorJsonOutput(output: string): Record<string, unknown
 export function assertInspectorOutputIsSafe(
   stdout: string,
   stderr: string,
-  credentialCanaries?: readonly string[]
+  inheritedSensitiveValues?: readonly string[]
 ): void;
