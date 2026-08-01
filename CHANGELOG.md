@@ -10,7 +10,7 @@ All notable changes to this project are documented here. Release history is also
 - Added a semantic compatibility gate for tool/resource removal, input narrowing or default drift, output guarantee loss, annotation or MIME drift, with explicit-only baseline updates and Node 22/24 CI coverage.
 - Added a separate Node 24 read-only replay that rebuilds the pinned v1.9.0 checkout and byte-compares fresh discovery with the tracked baseline, while the Node 22/24 matrix keeps the faster current-contract comparison.
 - Added boundary coverage for JSON Schema unions, object enums, boolean schemas, `integer`/`number` subtyping, composition/constraint drift, prototype-named keys, future boolean annotations, CLI path/provenance rejection, real deadlines, cancellation races, evidence-state degradation, bounded pagination, and temporary worktree cleanup.
-- Raised the global coverage regression floors to 94% statements, 89% branches, 94% functions, and 95% lines; after the SDK v2 migration, the current 1152-test full-suite baseline is 95.46% statements, 91.36% branches, 95.93% functions, and 96.08% lines.
+- Raised the global coverage regression floors to 94% statements, 89% branches, 94% functions, and 95% lines; after the SDK v2 migration, the current 1153-test full-suite baseline is 95.46% statements, 91.36% branches, 95.93% functions, and 96.08% lines.
 
 ### Changed
 
@@ -34,6 +34,7 @@ All notable changes to this project are documented here. Release history is also
 - Kept exact structured `secret(s)` and `credential(s)` Issue labels as high-confidence risk signals without treating the same bare words anywhere in free text as equivalent evidence.
 - Clarified that `riskProfile` is an explainable implementation-planning estimate, not proof of a vulnerability, leaked credential, or exploitable finding.
 - Reconfirmed that MCP SDK v2's Node adapter reaches `@hono/node-server@1.19.15` only through `getRequestListener`; the project still exposes no static-file route or `serve-static` import. npm audit therefore retains two moderate advisory entries without a destructive transport replacement or false all-clear claim.
+- Reordered loopback HTTP middleware so Host and Origin guards reject untrusted requests before any body parsing, while preserving the prior 100 KiB JSON limit as an explicit bound.
 
 ## [1.9.0] - 2026-07-28
 

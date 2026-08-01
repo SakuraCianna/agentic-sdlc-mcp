@@ -73,7 +73,7 @@ Inspector 2 与 Conformance 的 engine/依赖树属于测试工具边界：各�
 
 ## 覆盖率门槛
 
-`npm run test:coverage` 当前执行全局最低门槛：statements 94%、branches 89%、functions 94%、lines 95%，并输出 text、LCOV 与 `coverage/coverage-summary.json`。SDK v2 迁移后的当前基线为 1152 个测试、95.46% statements / 91.36% branches / 95.93% functions / 96.08% lines；门槛刻意保留 Node 22/24 插桩余量。新增边界覆盖包括扫描器 Workflow 精确 provenance、无关 Workflow 负例、重命名前路径、双扫描器逐 signal 隔离、自定义 Gitleaks/TruffleHog 配置、动态/绝对/穿越/歧义参数拒绝、合法空格/括号仓库路径、Actions API 失败、旧 provenance 缺口清理、输入不可变、非法 URL/YAML/workflow AST、不可用 base Workflow 内容、嵌套模板词法状态、scanner provenance/workflow fixture 元数据误判、GitHub Issue/PR 混合元数据归一化，以及封闭 nullable `anyOf` 中可选字段新增仍进入人工复核。真实动态 credential 与 header sink 的正向控制保持 fail-high。
+`npm run test:coverage` 当前执行全局最低门槛：statements 94%、branches 89%、functions 94%、lines 95%，并输出 text、LCOV 与 `coverage/coverage-summary.json`。SDK v2 迁移后的当前基线为 1153 个测试、95.46% statements / 91.36% branches / 95.93% functions / 96.08% lines；门槛刻意保留 Node 22/24 插桩余量。新增边界覆盖包括扫描器 Workflow 精确 provenance、无关 Workflow 负例、重命名前路径、双扫描器逐 signal 隔离、自定义 Gitleaks/TruffleHog 配置、动态/绝对/穿越/歧义参数拒绝、合法空格/括号仓库路径、Actions API 失败、旧 provenance 缺口清理、输入不可变、非法 URL/YAML/workflow AST、不可用 base Workflow 内容、嵌套模板词法状态、scanner provenance/workflow fixture 元数据误判、GitHub Issue/PR 混合元数据归一化、HTTP Host/Origin 前置于有界 JSON parsing，以及封闭 nullable `anyOf` 中可选字段新增仍进入人工复核。真实动态 credential 与 header sink 的正向控制保持 fail-high。
 
 门槛用于阻止回退，不是完成定义。新增高风险模块应优先达到更高的局部覆盖，尤其是权限、策略、证据截断和写入边界。提高门槛前先观察完整套件的稳定基线并保留合理余量；降低门槛、扩大 exclude 或删除断言必须在 PR 中单独解释，不能作为通过 CI 的快捷方式。
 

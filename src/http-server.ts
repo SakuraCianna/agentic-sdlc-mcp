@@ -11,6 +11,7 @@ export type McpServerFactory = () => McpServer;
 
 export const DEFAULT_MCP_HTTP_HOST = "127.0.0.1";
 export const DEFAULT_MCP_HTTP_PORT = 3000;
+const MAX_MCP_HTTP_JSON_BYTES = 100 * 1024;
 
 const LOCAL_ORIGIN_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]"]);
 const closingServers = new WeakMap<Server, Promise<void>>();
@@ -76,12 +77,12 @@ function safeHttpError(error: unknown, _req: Request, res: Response, _next: Next
 export function createMcpHttpApp(
   createServer: McpServerFactory = createAgenticSdlcServer
 ): Express {
-  // Keep the v1 middleware order and bounded Origin error contract while using
-  // the v2 adapter's public DNS-rebinding guard.
+  // Reject untrusted network headers before reading request bodies, then retain
+  // the bounded JSON contract used by the legacy adapter.
   const app = express();
-  app.use(express.json());
   app.use(localhostHostValidation());
   app.use(validateLocalOrigin);
+  app.use(express.json({ limit: MAX_MCP_HTTP_JSON_BYTES }));
 
   app.post("/mcp", async (req: Request, res: Response, next: NextFunction) => {
     let requestServer: McpServer | undefined;
