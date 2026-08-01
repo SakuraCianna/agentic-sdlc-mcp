@@ -308,7 +308,9 @@ Static resources are available under the `sdlc://` scheme:
 
 ## Local HTTP profile
 
-Stdio is the default and recommended local transport. A local client that requires Streamable HTTP can opt in after building from source:
+Stdio is the default and recommended local transport. Both local entries use the official SDK v2 era router: 2025 clients continue through `initialize`, while clients that explicitly negotiate `2026-07-28` use `server/discover`. Both eras expose the same 13 tools and 5 resources.
+
+A local client that requires Streamable HTTP can opt in after building from source:
 
 ```powershell
 $env:TRANSPORT = "http"
@@ -316,7 +318,9 @@ $env:PORT = "3000"
 node dist/index.js
 ```
 
-The endpoint is `http://127.0.0.1:3000/mcp`. It binds only to loopback, validates `Host` and supplied `Origin`, creates an isolated stateless server and transport for each POST, rejects unsupported GET/DELETE session operations, bounds error details, and handles shutdown signals.
+The endpoint is `http://127.0.0.1:3000/mcp`. It binds only to loopback, validates `Host` and supplied `Origin` before parsing a bounded request body, creates an isolated stateless server and transport for each POST, rejects unsupported GET/DELETE session operations, bounds error details, and aborts in-flight exchanges during shutdown.
+
+The 2025 stateless HTTP profile has no session or client identity with which to correlate a separate `notifications/cancelled` POST to an earlier request. The client still observes its local cancellation, but the original server operation may run to natural completion. Both stdio eras and 2026 HTTP propagate cancellation to the server request. Prefer stdio when server-side cancellation of legacy calls is required.
 
 Do not expose or reverse-proxy this endpoint to another machine. Remote OAuth and multi-tenant hosting are not planned. If that scope is reconsidered, the project must first satisfy the separate [remote deployment re-entry criteria](docs/remote-deployment-considerations.md); the current local server is not a safe remote deployment base.
 

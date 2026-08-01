@@ -11,8 +11,8 @@
  */
 import "dotenv/config";
 
-import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { createAgenticSdlcServer } from "./server.js";
+import { serveMcpStdio } from "./stdio-server.js";
 
 // Config (exits early if GITHUB_TOKEN missing — skipped in smoke mode)
 import { config, initializeConfig } from "./config.js";
@@ -78,8 +78,10 @@ if (transport === "http") {
   process.once("SIGTERM", () => void shutdown());
 } else {
   // Default: stdio
-  const server = createAgenticSdlcServer();
-  const stdioTransport = new StdioServerTransport();
-  await server.connect(stdioTransport);
+  serveMcpStdio(createAgenticSdlcServer, {
+    onerror: () => {
+      console.error("[agentic-sdlc-mcp] stdio transport error");
+    },
+  });
   console.error("[agentic-sdlc-mcp] Server running via stdio transport");
 }

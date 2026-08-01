@@ -4,6 +4,7 @@ import type { Express } from "express";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { TOOL_NAMES } from "../catalog.js";
 import {
   closeMcpHttp,
   createMcpHttpApp,
@@ -11,6 +12,12 @@ import {
   parseMcpHttpPort,
 } from "../http-server.js";
 import { createAgenticSdlcServer } from "../server.js";
+import {
+  LEGACY_PROTOCOL_VERSION,
+  MODERN_PROTOCOL_VERSION,
+  connectHttpMcp,
+  type McpProtocolEra,
+} from "./fixtures/mcp-client.js";
 
 describe("real MCP HTTP request lifecycle", () => {
   const closeCallbacks: Array<() => Promise<void>> = [];
@@ -119,6 +126,28 @@ describe("real MCP HTTP request lifecycle", () => {
     );
     expect(serverFactory).toHaveBeenCalledTimes(5);
   });
+
+  it.each(["legacy", "modern"] satisfies McpProtocolEra[])(
+    "negotiates %s over the real loopback HTTP adapter",
+    async (era) => {
+      const { baseUrl } = await startApp(createMcpHttpApp());
+      const fixture = await connectHttpMcp(new URL(`${baseUrl}/mcp`), era);
+      try {
+        expect(fixture.client.getProtocolEra()).toBe(era);
+        expect(fixture.client.getNegotiatedProtocolVersion()).toBe(
+          era === "modern" ? MODERN_PROTOCOL_VERSION : LEGACY_PROTOCOL_VERSION
+        );
+        const [tools, resources] = await Promise.all([
+          fixture.client.listTools(),
+          fixture.client.listResources(),
+        ]);
+        expect(tools.tools.map((tool) => tool.name).sort()).toEqual([...TOOL_NAMES].sort());
+        expect(resources.resources).toHaveLength(5);
+      } finally {
+        await fixture.close();
+      }
+    }
+  );
 
   it("rejects untrusted Host and Origin headers while allowing non-browser and localhost clients", async () => {
     const { baseUrl } = await startApp(createMcpHttpApp());

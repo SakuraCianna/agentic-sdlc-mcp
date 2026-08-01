@@ -1538,12 +1538,14 @@ interface ToolDependencies {
 
 > **状态：执行中（2026-08-01）。** 计划已获批准并合并；#43/#44 已按 T1–T11 更新，#44 已正式标记为 blocked by #43。已复现并修复首批 evaluation 与 PR reviewer 误判。T0 已在最新 main 基线上完成 SDK 1.30 lockfile 桥接，Gitleaks 与 Node 22/24 CI 通过；T1 已从固定的 v1.9.0 release commit 建立 13 tools/5 resources 公共 discovery manifest、显式更新命令与语义兼容门禁，并用 checkout 外 cwd 的短生命周期子进程、有界重试和凭据环境清理解决 Windows 历史 worktree 句柄问题。T2 已迁移到精确固定的 MCP SDK v2.0.0 `server`/`node`/`express` 生产分包与开发期 `client`，保持 2025-era initialize、工具/resource/错误和本地 HTTP 生命周期；真实契约比较只记录根 schema 从 draft-07 到 2020-12 的官方 dialect 升级，其他 schema composition 仍 fail-closed，历史 v1 baseline 也可从同一脚本隔离重放。测试扩展到 1153 个用例，Node 22/24 CI 均通过；loopback HTTP 先执行 Host/Origin 防护，再进入显式 100 KiB JSON parser。安全评审继续对真实动态 credential 与动态、歧义或缺失依赖 fail-closed，公开 MCP 字段与副作用保持不变。`@modelcontextprotocol/node` 仍通过 `getRequestListener` 使用 `@hono/node-server@1.19.15`，没有静态文件服务；production audit 因同一不可达 `serve-static` 公告报告两个 moderate，未为清除数字破坏性替换 transport。详细依赖图、任务拆分和版本边界见 [v1.10.0 实施计划](superpowers/plans/2026-07-29-v1.10.0-contract-evaluation.md)。
 
+> **T3 进展（2026-08-01）：** 本地 stdio 与 loopback HTTP 已显式提供 2025/2026 双 era，保留 legacy fallback、Host/Origin/100 KiB body limit、无状态 JSON 响应和 local-only 边界；modern wire metadata 由官方 SDK 生成。本地 Node 24 已通过 51 files/1177 tests、47 条 integration、13 tools/5 resources contract check 与 95.22/91.16/95.57/95.88 coverage；Node 22 等待本切片 PR CI。2025 stateless HTTP 无 session/client identity，不能把独立取消 POST 安全关联到原请求；跨时代 header/body 冲突会明确拒绝，factory/serving 异常只返回有界 JSON-RPC 500。两个 era 的 async factory pre-abort 与 handler shutdown 即使 factory 不释放也会立即 499，迟到 server 会关闭；modern handoff 同 tick 竞态、启动真实 `dist/index.js` 的隔离 stdio child 和 watch 排除均已有显式测试与文档。
+
 目标：验证“agent 是否能正确发现、选择和组合工具”，而不只验证 TypeScript handler。将协议契约、客户端兼容、响应预算和稳定 evaluation 建成独立质量阶段。
 
 当前代码缺口：
 
-- 已有真实 SDK in-memory client 和 loopback HTTP 生命周期测试，但没有 MCP Inspector 的独立进程/传输黑盒验证。
-- 已完成稳定 SDK v2 分包迁移并保持 2025-era initialize parity；尚未显式提供 2026 双 era。
+- 已有显式 legacy/modern SDK client、真实 stdio child process 和 loopback HTTP 生命周期测试，但没有 MCP Inspector 的独立进程/传输黑盒验证。
+- 已完成稳定 SDK v2 分包迁移、2025-era initialize parity 与本地 2025/2026 双 era；Node 22 尚需由本切片 PR CI 证明。
 - 已有固定 v1.9.0 的 tool/resource discovery manifest 与 backward-compatibility gate，但 structuredContent/Markdown 的全工具调用矩阵仍未完成。
 - 真实 MCP tool call 集成测试只覆盖代表性工具，没有全部 13 个工具的成功、失败和降级矩阵。
 - 没有 provider-neutral 的工具选择、多工具组合、trace scorer 与稳定答案 evaluation。
@@ -1752,7 +1754,7 @@ interface ToolDependencies {
 | P0 | MCP Registry 发布与 `.agentic-sdlc.yml` 基础 | 先建立可发现、可配置、可解释的统一策略入口 | ✅ v1.7.1 |
 | P0 | 风险感知 `prepare_work_item` | 把高风险任务的防御性编程、负向测试、回滚、可观测性与有来源的上下文前移到开工阶段 | ✅ v1.8.0 |
 | P1 | `sdlc_evidence_packet` 与可信 handoff | 统一 verified/unverified/stale/partial 证据语义 | ✅ v1.9.0 |
-| P1 | MCP 契约与 Agent evaluation | 用 Inspector、稳定评测、性能预算和故障注入验证 agent 真正会用 | v1.10 执行中（T0–T2 已完成） |
+| P1 | MCP 契约与 Agent evaluation | 用 Inspector、稳定评测、性能预算和故障注入验证 agent 真正会用 | v1.10 执行中（T0–T3 已完成） |
 | P1 | CI/CD 供应链与可观测性 | 固定 Actions、SBOM/provenance、coverage 门槛和隐私安全 metrics | v1.11 待开始 |
 | P2 | 组织策略与签名 evidence | 只有出现真实 breaking/persistence 需求时进入主版本 | v2.0 条件触发 |
 
