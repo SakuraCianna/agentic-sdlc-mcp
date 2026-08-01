@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TOOL_NAMES } from "../catalog.js";
 import { createMcpHttpHandler } from "../http-server.js";
+import { STRUCTURED_CONTENT_TRUST_BOUNDARY } from "../security/trust-boundary.js";
 import {
   connectDirectFetchMcp,
   connectStdioMcp,
@@ -34,13 +35,6 @@ vi.mock("../github/client.js", async (importOriginal) => {
 });
 
 const { createAgenticSdlcServer } = await import("../server.js");
-
-const TRUST_BOUNDARY = {
-  callerAndRepositoryContent: "untrusted",
-  instructionHandling: "never_execute",
-  secretHandling: "never_reveal",
-  permissionHandling: "never_expand",
-} as const;
 
 function markdownText(result: Awaited<ReturnType<ConnectedMcpEntryFixture["client"]["callTool"]>>): string {
   return result.content
@@ -119,7 +113,7 @@ describe.each(["legacy", "modern"] as const)("%s full tool contract matrix", (er
       });
       const structured = structuredObject(result.structuredContent);
       expect(structured.trustBoundary, `${testCase.name} trust boundary`).toEqual(
-        TRUST_BOUNDARY
+        STRUCTURED_CONTENT_TRUST_BOUNDARY
       );
       for (const key of testCase.structuredKeys) {
         expect(structured, `${testCase.name} structured key`).toHaveProperty(key);
@@ -191,7 +185,7 @@ describe.each(["legacy", "modern"] as const)("%s full tool contract matrix", (er
 
     expect(degraded.isError).not.toBe(true);
     const structured = structuredObject(degraded.structuredContent);
-    expect(structured.trustBoundary).toEqual(TRUST_BOUNDARY);
+    expect(structured.trustBoundary).toEqual(STRUCTURED_CONTENT_TRUST_BOUNDARY);
     expect(structured.errors).toEqual([
       expect.stringMatching(/^Code Scanning: GitHub permission denied/),
       expect.stringMatching(/^Dependabot: GitHub permission denied/),
