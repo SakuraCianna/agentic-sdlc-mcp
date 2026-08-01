@@ -1,0 +1,12 @@
+{
+  "name": "agentic-sdlc-mcp-inspector-contracts",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Pinned MCP Inspector dependency for release contract verification.",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/inspector": "2.0.0"
+  }
+}

@@ -3,6 +3,7 @@
 
 # Dependencies
 /node_modules
+/tools/*/node_modules
 
 # Environment variables — NEVER commit real tokens
 .env

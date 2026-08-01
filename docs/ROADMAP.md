@@ -1538,18 +1538,20 @@ interface ToolDependencies {
 
 > **状态：执行中（2026-08-01）。** 计划已获批准并合并；#43/#44 已按 T1–T11 更新，#44 已正式标记为 blocked by #43。已复现并修复首批 evaluation 与 PR reviewer 误判。T0 已在最新 main 基线上完成 SDK 1.30 lockfile 桥接，Gitleaks 与 Node 22/24 CI 通过；T1 已从固定的 v1.9.0 release commit 建立 13 tools/5 resources 公共 discovery manifest、显式更新命令与语义兼容门禁，并用 checkout 外 cwd 的短生命周期子进程、有界重试和凭据环境清理解决 Windows 历史 worktree 句柄问题。T2 已迁移到精确固定的 MCP SDK v2.0.0 `server`/`node`/`express` 生产分包与开发期 `client`，保持 2025-era initialize、工具/resource/错误和本地 HTTP 生命周期；真实契约比较只记录根 schema 从 draft-07 到 2020-12 的官方 dialect 升级，其他 schema composition 仍 fail-closed，历史 v1 baseline 也可从同一脚本隔离重放。测试扩展到 1153 个用例，Node 22/24 CI 均通过；loopback HTTP 先执行 Host/Origin 防护，再进入显式 100 KiB JSON parser。安全评审继续对真实动态 credential 与动态、歧义或缺失依赖 fail-closed，公开 MCP 字段与副作用保持不变。`@modelcontextprotocol/node` 仍通过 `getRequestListener` 使用 `@hono/node-server@1.19.15`，没有静态文件服务；production audit 因同一不可达 `serve-static` 公告报告两个 moderate，未为清除数字破坏性替换 transport。详细依赖图、任务拆分和版本边界见 [v1.10.0 实施计划](superpowers/plans/2026-07-29-v1.10.0-contract-evaluation.md)。
 
-> **T3 进展（2026-08-01）：** 本地 stdio 与 loopback HTTP 已显式提供 2025/2026 双 era，保留 legacy fallback、Host/Origin/100 KiB body limit、无状态 JSON 响应和 local-only 边界；modern wire metadata 由官方 SDK 生成。本地 Node 24 已通过 51 files/1177 tests、47 条 integration、13 tools/5 resources contract check 与 95.22/91.16/95.57/95.88 coverage；Node 22 等待本切片 PR CI。2025 stateless HTTP 无 session/client identity，不能把独立取消 POST 安全关联到原请求；跨时代 header/body 冲突会明确拒绝，factory/serving 异常只返回有界 JSON-RPC 500。两个 era 的 async factory pre-abort 与 handler shutdown 即使 factory 不释放也会立即 499，迟到 server 会关闭；modern handoff 同 tick 竞态、启动真实 `dist/index.js` 的隔离 stdio child 和 watch 排除均已有显式测试与文档。
+> **T3 进展（2026-08-01）：** 本地 stdio 与 loopback HTTP 已显式提供 2025/2026 双 era，保留 legacy fallback、Host/Origin/100 KiB body limit、无状态 JSON 响应和 local-only 边界；modern wire metadata 由官方 SDK 生成。本地 Node 24 已通过 51 files/1177 tests、47 条 integration、13 tools/5 resources contract check 与 95.22/91.16/95.57/95.88 coverage，Node 22/24 CI 均通过。2025 stateless HTTP 无 session/client identity，不能把独立取消 POST 安全关联到原请求；跨时代 header/body 冲突会明确拒绝，factory/serving 异常只返回有界 JSON-RPC 500。两个 era 的 async factory pre-abort 与 handler shutdown 即使 factory 不释放也会立即 499，迟到 server 会关闭；modern handoff 同 tick 竞态、启动真实 `dist/index.js` 的隔离 stdio child 和 watch 排除均已有显式测试与文档。
 
-> **T4 进展（2026-08-01）：** 全部 13 个公开工具现已在 legacy stdio wrapper 与显式 pin `2026-07-28` 的 modern production direct-fetch 两条路径分别通过真实 `Client.callTool`。成功响应经过 SDK 注册层 output schema validation，并逐工具检查关键 Markdown、structuredContent 与 trust boundary；schema invalid/GitHub 403 不携带成功 structuredContent，可选安全源 403 保持有界降级。`create_issue_set` 省略 `dryRun` 后仍默认 preview，live-write 哨兵与外部 fetch/socket guard 均为零调用。Node 24 本地通过 52 files/1183 tests、53 条 integration 与 96.33/91.27/97.01/97.08 coverage；Node 22 证据等待本切片 PR CI。
+> **T4 进展（2026-08-01）：** 全部 13 个公开工具现已在 legacy stdio wrapper 与显式 pin `2026-07-28` 的 modern production direct-fetch 两条路径分别通过真实 `Client.callTool`。成功响应经过 SDK 注册层 output schema validation，并逐工具检查关键 Markdown、structuredContent 与 trust boundary；schema invalid/GitHub 403 不携带成功 structuredContent，可选安全源 403 保持有界降级。`create_issue_set` 省略 `dryRun` 后仍默认 preview，live-write 哨兵与外部 fetch/socket guard 均为零调用。Node 24 本地通过 52 files/1183 tests、53 条 integration 与 96.33/91.27/97.01/97.08 coverage，Node 22/24 CI 均通过。
+
+> **T5 进展（2026-08-01）：** Inspector 2.0.0 已由隔离 lockfile 精确固定，并通过显式 ad-hoc stdio target 从进程外启动正式 `dist/index.js`。本地 Windows Node 24 已通过 53 files/1188 tests 和 Inspector 黑盒，PR #64 的 Linux Node 24 Inspector job 与 Node 22/24 产品矩阵、不可变基线、Gitleaks 均通过。门禁验证 legacy `2025-11-25` initialize、server version、13 tools、5 resources 的逐项 read、显式 `create_issue_set dryRun:true` 且 created 为 0，以及 invalid schema/unknown resource URI 的机器退出与错误码；所有 `tools/call` 都只指向 dry-run 工具。runner 使用官方 `-e` 把固定环境传给目标，真实 server 未写临时 harness marker 时会失败；它不改写 HOME、不读取默认 Inspector catalog，独立 storage/OAuth/client state，屏蔽产品全局配置文件，清除真实 GitHub 凭据，并在纯 stdio 检查中禁用全部 fetch/TCP。该结果不是 MCP 官方认证，也不证明 modern `server/discover`。
 
 目标：验证“agent 是否能正确发现、选择和组合工具”，而不只验证 TypeScript handler。将协议契约、客户端兼容、响应预算和稳定 evaluation 建成独立质量阶段。
 
 当前代码缺口：
 
-- 已有显式 legacy/modern SDK client、真实 stdio child process 和 loopback HTTP 生命周期测试，但没有 MCP Inspector 的独立进程/传输黑盒验证。
-- 已完成稳定 SDK v2 分包迁移、2025-era initialize parity 与本地 2025/2026 双 era；T2/T3 的 Node 22/24 CI 均已通过，T4 的 Node 22 证据等待本切片 PR CI。
+- 已有显式 legacy/modern SDK client、真实 stdio child process、loopback HTTP 生命周期测试和 Inspector stdio 黑盒验证；Inspector loopback HTTP 仍待 T6。
+- 已完成稳定 SDK v2 分包迁移、2025-era initialize parity、本地 2025/2026 双 era 与 13 工具双时代矩阵；T2/T3/T4 的 Node 22/24 CI 均已通过。
 - 已有固定 v1.9.0 的 tool/resource discovery manifest、backward-compatibility gate，以及 structuredContent/Markdown 的 13 工具双 era 调用矩阵。
-- 真实 MCP tool call 集成测试已覆盖全部 13 个工具、代表性 schema/GitHub 错误和可恢复降级；进程外实际调用与 Inspector/Conformance artifact 仍待 T5/T6。
+- 真实 MCP tool call 集成测试已覆盖全部 13 个工具、代表性 schema/GitHub 错误和可恢复降级；Inspector stdio 的进程外调用已完成，HTTP 与 Conformance artifact 仍待 T6。
 - 没有 provider-neutral 的工具选择、多工具组合、trace scorer 与稳定答案 evaluation。
 - evidence/handoff 已有局部预算，但没有跨工具统一的 API calls、items、字符/bytes、延迟测量和故障注入报告。
 

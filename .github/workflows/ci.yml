@@ -83,3 +83,29 @@ jobs:
 
       - name: Replay immutable v1.9.0 baseline
         run: node scripts/verify-mcp-baseline.mjs
+
+  inspector-stdio-contract:
+    name: Inspector stdio contract (Node 24)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            tools/inspector/package-lock.json
+
+      - name: Install product dependencies
+        run: npm ci
+
+      - name: Install pinned Inspector without lifecycle scripts
+        run: npm run contracts:inspector:install
+
+      - name: Verify stdio through Inspector 2
+        run: npm run contracts:inspector:stdio

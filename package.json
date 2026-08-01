@@ -32,6 +32,9 @@
     "contracts:generate": "npm run build && node scripts/generate-mcp-contract.mjs --tag v1.9.0 --expected-commit 3e1cdbb2d591ba482903f53579f1f76cc95ff1c4 --release-url https://github.com/SakuraCianna/agentic-sdlc-mcp/releases/tag/v1.9.0 --output contracts/mcp/v1.9.0.json --update",
     "contracts:check": "npm run build && node scripts/check-mcp-contract.mjs",
     "contracts:verify-baseline": "npm run build && node scripts/verify-mcp-baseline.mjs",
+    "contracts:inspector:install": "npm ci --prefix tools/inspector --ignore-scripts --no-audit --no-fund",
+    "precontracts:inspector:stdio": "npm run build",
+    "contracts:inspector:stdio": "node scripts/run-inspector-contracts.mjs",
     "smoke": "node dist/index.js --smoke",
     "prepublishOnly": "npm run build && node scripts/verify-mcp-baseline.mjs && node scripts/check-mcp-contract.mjs && npm run typecheck && npm run test && npm run smoke"
   },
