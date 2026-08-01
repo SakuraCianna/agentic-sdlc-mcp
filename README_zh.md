@@ -205,7 +205,7 @@ npx -y agentic-sdlc-mcp configure
 
 - **`create_pr_summary`**：限制文件证据数量并报告截断。纯文档 PR 会收到文档验证建议，而不是错误的“缺少代码单元测试”警告。
 - **`quality_gate_status`**：PR 模式会组合 checks、commit statuses、reviews、CODEOWNERS 路由、draft/merge 状态、classic branch protection、Rulesets、阻塞标签、关联 Issues 和 base-SHA 仓库策略。权限失败会继续以 degraded 或 unverified evidence 显示。
-- **`review_pr_against_standard`**：支持 `basic`、`strict` 和 `security-focused`。只有当 check、Workflow、PR head SHA、base Workflow job、扫描器 action 和不可变 action SHA 可以关联时，才把 Gitleaks 或 TruffleHog 作为主要通过证据。动态密钥构造扫描器是有界的补丁内分析，不是全程序数据流分析，也不能证明仓库不存在密钥泄漏；仅出现在凭据检测正则字面量内部的运算符和量词不会被当成运行时凭据构造，动态拼装的模式和规则则不因名称而豁免。
+- **`review_pr_against_standard`**：支持 `basic`、`strict` 和 `security-focused`。只有当 check、Workflow、PR head SHA、base Workflow job、扫描器 action 和不可变 action SHA 可以关联时，才把 Gitleaks 或 TruffleHog 作为主要通过证据。内部 provenance 会把每个 signal 绑定到精确的 base Workflow 与静态配置依赖，但不会改变公开 MCP 输出 schema。无关 Workflow 变更不会使 signal 失效；其 Workflow（包括重命名前路径）、Gitleaks 根目录默认配置或 `GITLEAKS_CONFIG` 路径、TruffleHog `extra_args --config` 路径发生变化时，只使受影响的扫描器失效；动态、歧义、绝对、穿越或其他无法限定的配置继续 fail-closed。动态密钥构造扫描器是有界的补丁内分析，不是全程序数据流分析，也不能证明仓库不存在密钥泄漏；仅出现在凭据检测正则字面量内部的运算符和量词不会被当成运行时凭据构造，动态拼装的模式和规则则不因名称而豁免。
 
 </details>
 
@@ -339,10 +339,15 @@ npm run test
 | `npm run test` | 运行完整 Vitest 测试套件 |
 | `npm run test:integration` | 运行配置与 MCP runtime 集成测试 |
 | `npm run test:coverage` | 执行覆盖率门槛并生成报告 |
+| `npm run contracts:check` | 将当前真实 MCP discovery 与 tracked v1.9.0 契约比较，并验证本地 tag/SHA |
+| `npm run contracts:verify-baseline` | 只读重放固定 v1.9.0 checkout，证明 tracked 基线可重复生成 |
+| `npm run contracts:generate` | 从隔离的 v1.9.0 detached worktree 显式重新生成固定基线 |
 | `npm run smoke` | 在没有 GitHub 凭据时验证注册与加载 |
 | `npm run check:line-endings` | 拒绝 CRLF 和混合行尾 |
 
-CI 会在 Node 22 和 Node 24 上执行完整检查。Node 20 已结束维护，因此不属于受支持运行时；本地贡献者只需安装一个受支持版本，兼容矩阵由 GitHub Actions 负责。
+CI 会在 Node 22 和 Node 24 上执行完整产品检查与当前契约比较，并用独立 Node 24 job 重放一次不可变基线。Node 20 已结束维护，因此不属于受支持运行时；本地贡献者只需安装一个受支持版本，兼容矩阵由 GitHub Actions 负责。
+
+普通测试、`contracts:check` 与 `contracts:verify-baseline` 永远不会改写基线。重放命令和仅供维护者使用的 `contracts:generate` 都会验证固定 tag/commit，在系统临时目录按历史 lockfile 安装并构建 checkout；安装会关闭 lifecycle scripts、audit 与 funding 输出，再由 cwd 位于 checkout 外的有界短生命周期子进程通过真实 `tools/list` 和 `resources/list` 读取公开契约。该子进程只继承操作系统路径、临时目录、locale 与动态库 allowlist；凭据、业务配置、`NODE_OPTIONS` 和本地状态路径都不会进入。Windows 在历史句柄释放后以有界重试完成清理。命令需要访问 npm registry，但不会调用 GitHub API 或模型服务。只有 `contracts:generate` 会写 tracked JSON，并把差异留给 PR 审查。
 
 ## 通过 Issue 和 Pull Request 参与贡献
 
@@ -351,7 +356,7 @@ CI 会在 Node 22 和 Node 24 上执行完整检查。Node 20 已结束维护，
 1. Fork 仓库，并基于最新 `main` 创建范围明确的分支。
 2. 运行 `npm ci`，然后只修改本次贡献所需内容。
 3. 行为发生变化时，同步补充或更新测试与文档。
-4. 运行与变更相关的检查。完整 CI 会执行 `npm run check:line-endings`、`npm run typecheck`、`npm run build`、`npm run test`、`npm run smoke` 和 `npm run test:coverage`。
+4. 运行与变更相关的检查。Node 22/24 矩阵会执行 `npm run check:line-endings`、`npm run typecheck`、`npm run build`、`npm run contracts:check` 的 built 形式、`npm run test`、`npm run smoke` 和 `npm run test:coverage`；独立 Node 24 job 会执行 `npm run contracts:verify-baseline` 的 built 形式。
 5. 创建目标为 `main` 的 Pull Request，并说明问题、解决方案、风险、验证结果和关联 Issues。
 
 不要把 token、凭据、私有仓库内容或本地生成的配置提交到 commit、Issue、Pull Request 或日志。CI 通过是评审证据，但不能替代维护者批准。

@@ -43,11 +43,17 @@ v1.10 在现有单元、handler、真实 SDK client 和 loopback HTTP 测试之�
 
 公共工具契约从不可变 `v1.9.0` tag/commit 生成，记录 source SHA，并按语义比较 breaking/additive 变化。禁止从升级后的当前工作树伪造旧 baseline，也禁止在普通测试中自动更新；更新必须由单独命令执行，让 PR 显示工具/resource 删除、schema required/类型变化、annotations 与描述变化。大段 inline snapshot 不能替代 output schema 对真实 `structuredContent` 的逐工具验证。
 
+T1 的 `contracts/mcp/v1.9.0.json` 固定到 release commit `3e1cdbb2d591ba482903f53579f1f76cc95ff1c4`。`npm run contracts:check` 构建当前 server，通过真实 SDK client discovery 做快速只读语义比较，并验证本地 tag/SHA；`npm run contracts:verify-baseline` 在独立 Node 24 CI job 从系统临时目录重放历史 checkout，逐字证明 tracked JSON 可重复；`npm run contracts:generate` 是唯一写入入口。历史安装使用 lockfile 与 `--ignore-scripts --no-audit --no-fund`，需要 npm registry，但不得调用 GitHub API/模型服务、读取 GitHub/model 凭据或启动公网监听。历史 discovery 在短生命周期 Node 子进程内执行，子进程 cwd 位于 checkout 外且只继承进程启动所需的系统路径、临时目录、locale 与动态库环境变量；业务配置、凭据、`NODE_OPTIONS`、storage 与 OAuth state 都不会进入子进程。Windows 在模块句柄释放后再注销 worktree，并以有界重试删除依赖树。discovery 有 15 秒 deadline，路径 containment 与 Git worktree 注册状态都会被校验。
+
+比较器阻塞工具/resource 删除、输入删除/收窄/default 漂移、新增 required、输出 required/type/enum/constraint/composition 保证弱化、MIME 与 annotations 漂移；可选字段只有在相对旧 `additionalProperties` 有效 schema 确实不收窄时才通过。它认识 `integer` 是 `number` 子集、JSON Schema boolean schema 与任意 JSON enum，并用 locale-independent 稳定顺序与 prototype-safe key 处理生成 manifest。`$schema`、引用、composition 或其他无法证明兼容的 validation keyword 变化按保守策略进入人工复核，不能为了消除误报而静默放行。
+
 Inspector 2 与 Conformance 的 engine/依赖树属于测试工具边界：各自使用隔离 lockfile，并在 Node 24 contract job 运行，不提高生产包 `engines.node >=22` 的下限，也不把测试 UI、runner 或额外 SDK client 依赖引入产品运行时。required job 使用显式 target，将 `MCP_STORAGE_DIR` 设为专用临时目录，并将 `MCP_INSPECTOR_OAUTH_STATE_PATH` 设为该目录下的 `oauth.json` 文件；不得改写 `HOME`，不得交互式 OAuth，也不得继承真实 GitHub/model 凭据。HTTP 始终只绑定 loopback。
 
 提示词注入 evaluation 至少覆盖 Issue/PR 标题正文、Issue/PR/review comment、README/CONTRIBUTING/仓库规则、workflow/job 名称与日志、GitHub error text。断言不只检查转义后的展示，还必须证明这些不可信文本不能改变 required/forbidden 工具序列、跳过 security/release gate、扩大 repo/ref、关闭 dry-run、触发真实写入或进入日志/artifact。
 
 风险分类回归必须成对覆盖误报和漏报。尤其要区分 LLM 字符/token 预算与 credential token、Secret Santa/secret sauce 等普通短语与真实凭据处理，以及文档中的防御性描述与已确认暴露；精确的结构化 `secret(s)`/`credential(s)` label 必须独立于自由文本规则验证。`riskProfile` 表示可解释的实施规划风险，不得被测试、文档或调用方描述成已确认漏洞。确定性模式只用于高置信、可解释信号，不能单独替代结构化 trust boundary、工具权限校验、人工 gate 或对抗性 evaluation。
+
+取消与分页属于跨工具公共边界。timeout 测试必须覆盖父级预取消、运行中取消、非 `Error` reason、operation 同步失败、真实进程中仅剩 deadline 句柄，以及 `NaN/Infinity`；不能用 `unref()` 让进程在 deadline 前静默退出。分页测试必须覆盖短页、精确上限、`maxItems=0` 和非法 `perPage`，GitHub 每页范围固定为 1–100，避免零页大小导致无限请求。证据适配器按 CI/review/release/security 的 verified/failed/pending/unverified/not-applicable 与 partial 组合做表驱动回归。
 
 ## Fixture 与长期维护
 
@@ -67,7 +73,7 @@ Inspector 2 与 Conformance 的 engine/依赖树属于测试工具边界：各�
 
 ## 覆盖率门槛
 
-`npm run test:coverage` 当前执行全局最低门槛：statements 92%、branches 87%、functions 93%、lines 93%，并输出 text、LCOV 与 `coverage/coverage-summary.json`。
+`npm run test:coverage` 当前执行全局最低门槛：statements 94%、branches 89%、functions 94%、lines 95%，并输出 text、LCOV 与 `coverage/coverage-summary.json`。当前 T1 加固基线为 1146 个测试、95.44% statements / 91.34% branches / 95.93% functions / 96.06% lines；门槛刻意保留 Node 22/24 插桩余量。新增边界覆盖包括扫描器 Workflow 精确 provenance、无关 Workflow 负例、重命名前路径、双扫描器逐 signal 隔离、自定义 Gitleaks/TruffleHog 配置、动态/绝对/穿越/歧义参数拒绝、合法空格/括号仓库路径、Actions API 失败、旧 provenance 缺口清理、输入不可变、非法 URL/YAML/workflow AST、不可用 base Workflow 内容、嵌套模板词法状态、scanner provenance/workflow fixture 元数据误判、GitHub Issue/PR 混合元数据归一化，以及封闭 nullable `anyOf` 中可选字段新增仍进入人工复核。真实动态 credential 与 header sink 的正向控制保持 fail-high。
 
 门槛用于阻止回退，不是完成定义。新增高风险模块应优先达到更高的局部覆盖，尤其是权限、策略、证据截断和写入边界。提高门槛前先观察完整套件的稳定基线并保留合理余量；降低门槛、扩大 exclude 或删除断言必须在 PR 中单独解释，不能作为通过 CI 的快捷方式。
 
@@ -79,6 +85,8 @@ npm run test:integration
 npm run test:coverage
 npm run typecheck
 npm run build
+npm run contracts:check
+npm run contracts:verify-baseline
 npm run smoke
 npm run check:line-endings
 ```

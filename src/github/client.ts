@@ -53,6 +53,16 @@ export async function paginateAll<T>(
   maxItems = 300,
   perPage = 100
 ): Promise<T[]> {
+  if (!Number.isSafeInteger(maxItems) || maxItems < 0) {
+    throw new TypeError("maxItems must be a non-negative safe integer.");
+  }
+  if (
+    !Number.isSafeInteger(perPage) ||
+    perPage < 1 ||
+    perPage > 100
+  ) {
+    throw new TypeError("perPage must be a safe integer between 1 and 100.");
+  }
   const all: T[] = [];
   let page = 1;
   while (all.length < maxItems) {
