@@ -346,12 +346,16 @@ npm run test
 | `npm run contracts:check` | 将当前真实 MCP discovery 与 tracked v1.9.0 契约比较，并验证本地 tag/SHA |
 | `npm run contracts:verify-baseline` | 只读重放固定 v1.9.0 checkout，证明 tracked 基线可重复生成 |
 | `npm run contracts:generate` | 从隔离的 v1.9.0 detached worktree 显式重新生成固定基线 |
+| `npm run contracts:inspector:install` | 从隔离 lockfile 安装精确固定的 Inspector 2.0.0 测试依赖 |
+| `npm run contracts:inspector:stdio` | 通过官方 Inspector CLI 验证构建后的 stdio server |
 | `npm run smoke` | 在没有 GitHub 凭据时验证注册与加载 |
 | `npm run check:line-endings` | 拒绝 CRLF 和混合行尾 |
 
-integration 门禁会让全部 13 个公开工具在两个时代都通过真实 SDK `Client.callTool`：legacy 经过项目 stdio wrapper，modern 经过显式 pin `2026-07-28` 的生产 direct-fetch HTTP handler。它会验证注册 output schema、关键 Markdown/structured 结果、trust boundary、错误/降级语义、modern wire headers，以及 `create_issue_set` 的默认 dry-run 行为。fixture 对任何真实 Issue 写入立即失败，并阻断外部 fetch/socket。构建产物的 Inspector 进程外覆盖单独追踪，因此不会把这套本进程矩阵误述为 Inspector 结果。
+integration 门禁会让全部 13 个公开工具在两个时代都通过真实 SDK `Client.callTool`：legacy 经过项目 stdio wrapper，modern 经过显式 pin `2026-07-28` 的生产 direct-fetch HTTP handler。它会验证注册 output schema、关键 Markdown/structured 结果、trust boundary、错误/降级语义、modern wire headers，以及 `create_issue_set` 的默认 dry-run 行为。fixture 对任何真实 Issue 写入立即失败，并阻断外部 fetch/socket。
 
-CI 会在 Node 22 和 Node 24 上执行完整产品检查与当前契约比较，并用独立 Node 24 job 重放一次不可变基线。Node 20 已结束维护，因此不属于受支持运行时；本地贡献者只需安装一个受支持版本，兼容矩阵由 GitHub Actions 负责。
+独立的 Inspector stdio 门禁通过自己的 lockfile 精确固定 Inspector 2.0.0，并从进程外调用真实 `dist/index.js`。它验证 legacy initialize、13 个工具声明、5 个 resource 的逐项读取、一次显式零写入的 `create_issue_set` 预览，以及无效输入和未知 resource URI 的稳定 JSON/退出契约。所有 `tools/call` 都只调用显式 `dryRun:true` 的 `create_issue_set`。Inspector 使用官方 `-e` 选项向目标传递固定环境 allowlist，且真实 server 未写入临时的 harness-loaded 标记时整项失败。护栏保留用户 HOME 的值，但屏蔽产品全局配置文件探测，清除继承的 GitHub 凭据并设置非秘密测试占位值，隔离 Inspector storage/OAuth state，并在这个纯 stdio 检查中禁用全部 fetch/TCP。这个结果只是黑盒兼容证据，不是 MCP 官方认证，也不能证明 modern `server/discover`。
+
+CI 会在 Node 22 和 Node 24 上执行完整产品检查与当前契约比较，并用独立 Node 24 jobs 重放不可变基线和运行 Inspector stdio 契约。Node 20 已结束维护，因此不属于受支持运行时；本地贡献者只需安装一个受支持版本，兼容矩阵由 GitHub Actions 负责。
 
 普通测试、`contracts:check` 与 `contracts:verify-baseline` 永远不会改写基线。重放命令和仅供维护者使用的 `contracts:generate` 都会验证固定 tag/commit，在系统临时目录按历史 lockfile 安装并构建 checkout；安装会关闭 lifecycle scripts、audit 与 funding 输出，再由 cwd 位于 checkout 外的有界短生命周期子进程通过真实 `tools/list` 和 `resources/list` 读取公开契约。该子进程只继承操作系统路径、临时目录、locale 与动态库 allowlist；凭据、业务配置、`NODE_OPTIONS` 和本地状态路径都不会进入。Windows 在历史句柄释放后以有界重试完成清理。命令需要访问 npm registry，但不会调用 GitHub API 或模型服务。只有 `contracts:generate` 会写 tracked JSON，并把差异留给 PR 审查。
 
@@ -362,7 +366,7 @@ CI 会在 Node 22 和 Node 24 上执行完整产品检查与当前契约比较�
 1. Fork 仓库，并基于最新 `main` 创建范围明确的分支。
 2. 运行 `npm ci`，然后只修改本次贡献所需内容。
 3. 行为发生变化时，同步补充或更新测试与文档。
-4. 运行与变更相关的检查。Node 22/24 矩阵会执行 `npm run check:line-endings`、`npm run typecheck`、`npm run build`、`npm run contracts:check` 的 built 形式、`npm run test`、`npm run smoke` 和 `npm run test:coverage`；独立 Node 24 job 会执行 `npm run contracts:verify-baseline` 的 built 形式。
+4. 运行与变更相关的检查。Node 22/24 矩阵会执行 `npm run check:line-endings`、`npm run typecheck`、`npm run build`、`npm run contracts:check` 的 built 形式、`npm run test`、`npm run smoke` 和 `npm run test:coverage`；独立 Node 24 jobs 会重放不可变基线并运行固定 Inspector stdio 契约。
 5. 创建目标为 `main` 的 Pull Request，并说明问题、解决方案、风险、验证结果和关联 Issues。
 
 不要把 token、凭据、私有仓库内容或本地生成的配置提交到 commit、Issue、Pull Request 或日志。CI 通过是评审证据，但不能替代维护者批准。

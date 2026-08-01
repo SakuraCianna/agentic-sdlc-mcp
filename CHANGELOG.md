@@ -12,7 +12,8 @@ All notable changes to this project are documented here. Release history is also
 - Added boundary coverage for JSON Schema unions, object enums, boolean schemas, `integer`/`number` subtyping, composition/constraint drift, prototype-named keys, future boolean annotations, CLI path/provenance rejection, real deadlines, cancellation races, evidence-state degradation, bounded pagination, and temporary worktree cleanup.
 - Added explicit MCP 2025/2026 era suites for the production stdio wrapper, direct-fetch HTTP, real loopback HTTP, and a built stdio child process. They cover pinned version negotiation, 13-tool/5-resource parity, modern wire metadata, unknown methods, mismatches, cancellation, and shutdown.
 - Added a full 13-tool protocol-call matrix across legacy stdio routing and pinned modern production direct-fetch. It validates registered output schemas, Markdown/structured parity, trust boundaries, error-versus-degradation semantics, modern wire headers, external-network isolation, and the default dry-run live-write boundary.
-- Raised the global coverage regression floors to 94% statements, 89% branches, 94% functions, and 95% lines; after adding the full tool matrix, the current 1183-test baseline is 96.33% statements, 91.27% branches, 97.01% functions, and 97.08% lines.
+- Added an Inspector 2.0.0 stdio black-box gate with an isolated lockfile. It launches the real built entry through an explicit ad-hoc target, verifies legacy initialization, 13 tools, five resource reads, a zero-write issue preview, and machine-readable invalid-schema/unknown-resource failures without inheriting credentials or allowing external network access.
+- Raised the global coverage regression floors to 94% statements, 89% branches, 94% functions, and 95% lines; after adding the full tool matrix and Inspector runner boundaries, the current 1188-test baseline is 96.33% statements, 91.27% branches, 97.01% functions, and 97.08% lines.
 
 ### Changed
 
