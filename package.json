@@ -35,6 +35,11 @@
     "contracts:inspector:install": "npm ci --prefix tools/inspector --ignore-scripts --no-audit --no-fund",
     "precontracts:inspector:stdio": "npm run build",
     "contracts:inspector:stdio": "node scripts/run-inspector-contracts.mjs",
+    "precontracts:inspector:http": "npm run build",
+    "contracts:inspector:http": "node scripts/run-inspector-contracts.mjs --transport http",
+    "contracts:conformance:install": "npm ci --prefix tools/conformance --ignore-scripts --no-audit --no-fund",
+    "precontracts:conformance:pilot": "npm run build",
+    "contracts:conformance:pilot": "node scripts/run-conformance-pilot.mjs",
     "smoke": "node dist/index.js --smoke",
     "prepublishOnly": "npm run build && node scripts/verify-mcp-baseline.mjs && node scripts/check-mcp-contract.mjs && npm run typecheck && npm run test && npm run smoke"
   },

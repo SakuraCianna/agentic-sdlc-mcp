@@ -1548,16 +1548,16 @@ interface ToolDependencies {
 
 当前代码缺口：
 
-- 已有显式 legacy/modern SDK client、真实 stdio child process、loopback HTTP 生命周期测试和 Inspector stdio 黑盒验证；Inspector loopback HTTP 仍待 T6。
+- 已有显式 legacy/modern SDK client、真实 stdio child process、loopback HTTP 生命周期测试，以及 Inspector stdio/loopback HTTP 黑盒验证。
 - 已完成稳定 SDK v2 分包迁移、2025-era initialize parity、本地 2025/2026 双 era 与 13 工具双时代矩阵；T2/T3/T4 的 Node 22/24 CI 均已通过。
 - 已有固定 v1.9.0 的 tool/resource discovery manifest、backward-compatibility gate，以及 structuredContent/Markdown 的 13 工具双 era 调用矩阵。
-- 真实 MCP tool call 集成测试已覆盖全部 13 个工具、代表性 schema/GitHub 错误和可恢复降级；Inspector stdio 的进程外调用已完成，HTTP 与 Conformance artifact 仍待 T6。
+- 真实 MCP tool call 集成测试已覆盖全部 13 个工具、代表性 schema/GitHub 错误和可恢复降级；Inspector stdio/HTTP 的进程外调用与 Conformance 0.1.16 artifact pilot 已完成。
 - 没有 provider-neutral 的工具选择、多工具组合、trace scorer 与稳定答案 evaluation。
 - evidence/handoff 已有局部预算，但没有跨工具统一的 API calls、items、字符/bytes、延迟测量和故障注入报告。
 
 #### 1. MCP 契约、兼容性与 evaluation
 
-官方最新稳定规范已是 [MCP 2026-07-28 Specification](https://modelcontextprotocol.io/specification/2026-07-28)，官方 TypeScript SDK v2 分包也已发布稳定 2.0.0；v1.9.0 的已实现基线仍是 `2025-11-25`。v1.10 先迁移 SDK v2 并保持 legacy wire parity，再为本地 stdio/loopback 显式提供 2025/2026 双 era。两步分开审查和回滚，不引入远程 OAuth、多租户或公网监听。复杂、只读、独立、可验证、答案稳定等题目要求属于本项目的 evaluation 基线，不宣称是 MCP 官方认证标准。
+官方最新稳定规范是 [MCP 2026-07-28 Specification](https://github.com/modelcontextprotocol/modelcontextprotocol/releases/tag/2026-07-28)，它已取代此前的 `2026-07-28-RC`；官方 TypeScript SDK v2 分包也已发布稳定 2.0.0。v1.10 在保留 `2025-11-25` legacy wire parity 的同时，为本地 stdio/loopback 显式验证稳定的 2026 era。两步分开审查和回滚，不引入远程 OAuth、多租户或公网监听。复杂、只读、独立、可验证、答案稳定等题目要求属于本项目的 evaluation 基线，不宣称是 MCP 官方认证标准。
 
 - 从不可变 `v1.9.0` tag/commit 提取带 source SHA 的 contract manifest，不能从升级后的当前树反向生成旧基线。
 - 先完成 SDK v2 package migration 的 2025 legacy parity，再用 `serveStdio`/`createMcpHandler` 启用旧客户端 fallback 与 2026 `server/discover`。

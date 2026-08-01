@@ -1,0 +1,158 @@
+{
+  "schemaVersion": 1,
+  "toolVersion": "0.1.16",
+  "protocolVersion": "2025-11-25",
+  "suite": "active",
+  "expectedFailures": [
+    {
+      "scenario": "completion-complete",
+      "reason": "The local product does not advertise the MCP completion capability.",
+      "owner": "SakuraCianna",
+      "removeWhen": "Completion support is intentionally added to the public product contract."
+    },
+    {
+      "scenario": "elicitation-sep1034-defaults",
+      "reason": "The local product does not advertise or request MCP elicitation.",
+      "owner": "SakuraCianna",
+      "removeWhen": "Elicitation is intentionally supported with explicit local-only UX and tests."
+    },
+    {
+      "scenario": "elicitation-sep1330-enums",
+      "reason": "The local product does not advertise or request MCP elicitation.",
+      "owner": "SakuraCianna",
+      "removeWhen": "Elicitation is intentionally supported with explicit local-only UX and tests."
+    },
+    {
+      "scenario": "logging-set-level",
+      "reason": "The local product does not advertise the MCP logging capability.",
+      "owner": "SakuraCianna",
+      "removeWhen": "Protocol-level logging and set-level behavior are intentionally added."
+    },
+    {
+      "scenario": "prompts-get-embedded-resource",
+      "reason": "The local product exposes guidance as resources and does not advertise MCP prompts.",
+      "owner": "SakuraCianna",
+      "removeWhen": "Prompts are intentionally added to the public contract with injection-safe fixtures."
+    },
+    {
+      "scenario": "prompts-get-simple",
+      "reason": "The local product exposes guidance as resources and does not advertise MCP prompts.",
+      "owner": "SakuraCianna",
+      "removeWhen": "Prompts are intentionally added to the public contract with injection-safe fixtures."
+    },
+    {
+      "scenario": "prompts-get-with-args",
+      "reason": "The local product exposes guidance as resources and does not advertise MCP prompts.",
+      "owner": "SakuraCianna",
+      "removeWhen": "Prompts are intentionally added to the public contract with injection-safe fixtures."
+    },
+    {
+      "scenario": "prompts-get-with-image",
+      "reason": "The local product exposes guidance as resources and does not advertise MCP prompts.",
+      "owner": "SakuraCianna",
+      "removeWhen": "Prompts are intentionally added to the public contract with injection-safe fixtures."
+    },
+    {
+      "scenario": "prompts-list",
+      "reason": "The local product exposes guidance as resources and does not advertise MCP prompts.",
+      "owner": "SakuraCianna",
+      "removeWhen": "Prompts are intentionally added to the public contract with injection-safe fixtures."
+    },
+    {
+      "scenario": "resources-read-binary",
+      "reason": "The upstream scenario requests its fixed everything-server binary URI, not a product resource.",
+      "owner": "SakuraCianna",
+      "removeWhen": "The runner supports product-specific resource mappings or binary resources are deliberately added."
+    },
+    {
+      "scenario": "resources-read-text",
+      "reason": "The upstream scenario requests its fixed everything-server text URI, not a product sdlc URI.",
+      "owner": "SakuraCianna",
+      "removeWhen": "The runner supports product-specific resource mappings without adding test-only production URIs."
+    },
+    {
+      "scenario": "resources-subscribe",
+      "reason": "The stateless local resources do not advertise subscriptions.",
+      "owner": "SakuraCianna",
+      "removeWhen": "Resource subscriptions are intentionally implemented and become part of the public contract."
+    },
+    {
+      "scenario": "resources-templates-read",
+      "reason": "The upstream scenario requests its fixed everything-server template URI, not a product resource.",
+      "owner": "SakuraCianna",
+      "removeWhen": "The runner supports product-specific resource mappings or templates are deliberately added."
+    },
+    {
+      "scenario": "resources-unsubscribe",
+      "reason": "The stateless local resources do not advertise subscriptions.",
+      "owner": "SakuraCianna",
+      "removeWhen": "Resource subscriptions are intentionally implemented and become part of the public contract."
+    },
+    {
+      "scenario": "server-sse-multiple-streams",
+      "reason": "The local loopback adapter is intentionally stateless and does not expose session GET streams.",
+      "owner": "SakuraCianna",
+      "removeWhen": "The upstream suite can target stateless Streamable HTTP semantics or the product boundary changes intentionally."
+    },
+    {
+      "scenario": "tools-call-audio",
+      "reason": "The upstream scenario calls an everything-server media fixture tool that is not in the product contract.",
+      "owner": "SakuraCianna",
+      "removeWhen": "The runner supports product-specific mappings or audio output is deliberately added."
+    },
+    {
+      "scenario": "tools-call-elicitation",
+      "reason": "The upstream scenario calls an everything-server elicitation fixture tool that is not in the product contract.",
+      "owner": "SakuraCianna",
+      "removeWhen": "The runner supports product-specific mappings or elicitation is deliberately added."
+    },
+    {
+      "scenario": "tools-call-embedded-resource",
+      "reason": "The upstream scenario calls an everything-server embedded-resource fixture tool that is not in the product contract.",
+      "owner": "SakuraCianna",
+      "removeWhen": "The runner supports product-specific mappings or embedded-resource output is deliberately added."
+    },
+    {
+      "scenario": "tools-call-error",
+      "reason": "The upstream scenario calls its fixed everything-server error fixture tool, not a product tool.",
+      "owner": "SakuraCianna",
+      "removeWhen": "The runner supports product-specific tool mappings without adding a test-only production tool."
+    },
+    {
+      "scenario": "tools-call-image",
+      "reason": "The upstream scenario calls an everything-server media fixture tool that is not in the product contract.",
+      "owner": "SakuraCianna",
+      "removeWhen": "The runner supports product-specific mappings or image output is deliberately added."
+    },
+    {
+      "scenario": "tools-call-mixed-content",
+      "reason": "The upstream scenario calls an everything-server mixed-content fixture tool that is not in the product contract.",
+      "owner": "SakuraCianna",
+      "removeWhen": "The runner supports product-specific mappings or mixed-content output is deliberately added."
+    },
+    {
+      "scenario": "tools-call-sampling",
+      "reason": "The upstream scenario calls an everything-server sampling fixture tool that is not in the product contract.",
+      "owner": "SakuraCianna",
+      "removeWhen": "The runner supports product-specific mappings or sampling is deliberately added."
+    },
+    {
+      "scenario": "tools-call-simple-text",
+      "reason": "The upstream scenario calls its fixed everything-server text fixture tool, not one of the product tools.",
+      "owner": "SakuraCianna",
+      "removeWhen": "The runner supports product-specific tool mappings without adding a test-only production tool."
+    },
+    {
+      "scenario": "tools-call-with-logging",
+      "reason": "The upstream scenario calls an everything-server logging fixture tool that is not in the product contract.",
+      "owner": "SakuraCianna",
+      "removeWhen": "The runner supports product-specific mappings or protocol logging is deliberately added."
+    },
+    {
+      "scenario": "tools-call-with-progress",
+      "reason": "The upstream scenario calls an everything-server progress fixture tool that is not in the product contract.",
+      "owner": "SakuraCianna",
+      "removeWhen": "The runner supports product-specific mappings or progress notifications are deliberately added."
+    }
+  ]
+}
