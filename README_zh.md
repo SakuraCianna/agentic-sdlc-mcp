@@ -349,6 +349,8 @@ npm run test
 | `npm run smoke` | 在没有 GitHub 凭据时验证注册与加载 |
 | `npm run check:line-endings` | 拒绝 CRLF 和混合行尾 |
 
+integration 门禁会让全部 13 个公开工具在两个时代都通过真实 SDK `Client.callTool`：legacy 经过项目 stdio wrapper，modern 经过显式 pin `2026-07-28` 的生产 direct-fetch HTTP handler。它会验证注册 output schema、关键 Markdown/structured 结果、trust boundary、错误/降级语义、modern wire headers，以及 `create_issue_set` 的默认 dry-run 行为。fixture 对任何真实 Issue 写入立即失败，并阻断外部 fetch/socket。构建产物的 Inspector 进程外覆盖单独追踪，因此不会把这套本进程矩阵误述为 Inspector 结果。
+
 CI 会在 Node 22 和 Node 24 上执行完整产品检查与当前契约比较，并用独立 Node 24 job 重放一次不可变基线。Node 20 已结束维护，因此不属于受支持运行时；本地贡献者只需安装一个受支持版本，兼容矩阵由 GitHub Actions 负责。
 
 普通测试、`contracts:check` 与 `contracts:verify-baseline` 永远不会改写基线。重放命令和仅供维护者使用的 `contracts:generate` 都会验证固定 tag/commit，在系统临时目录按历史 lockfile 安装并构建 checkout；安装会关闭 lifecycle scripts、audit 与 funding 输出，再由 cwd 位于 checkout 外的有界短生命周期子进程通过真实 `tools/list` 和 `resources/list` 读取公开契约。该子进程只继承操作系统路径、临时目录、locale 与动态库 allowlist；凭据、业务配置、`NODE_OPTIONS` 和本地状态路径都不会进入。Windows 在历史句柄释放后以有界重试完成清理。命令需要访问 npm registry，但不会调用 GitHub API 或模型服务。只有 `contracts:generate` 会写 tracked JSON，并把差异留给 PR 审查。
