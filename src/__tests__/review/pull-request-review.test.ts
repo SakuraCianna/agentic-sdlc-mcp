@@ -505,6 +505,41 @@ describe("scanPatchForSecrets", () => {
   });
 
   it.each([
+    [
+      "scanner provenance helper",
+      [
+        "+const workflow = `extra_args: ${typeof value === \"number\" ? value : `'${value.replaceAll(\"'\", \"''\")}'`}`;",
+        "+const result = await verifySecretScannerProvenance(",
+        '+  "https://example.test/actions/runs/1/job/2",',
+      ].join("\n"),
+    ],
+    [
+      "secret scanner workflow fixture path",
+      [
+        "+const workflows = {",
+        '+  ".github/workflows/secret-scan.yml":',
+        "+    `uses: gitleaks/gitleaks-action@${PINNED_ACTION_SHA}` ,",
+        "+};",
+      ].join("\n"),
+    ],
+  ])("does not treat %s metadata as runtime credential construction", (_name, patch) => {
+    expect(scanPatchForSecrets("src/__tests__/security/provenance.test.ts", patch)).toEqual(
+      []
+    );
+  });
+
+  it("resumes credential detection after nested scanner-fixture templates", () => {
+    const patch = [
+      "+const workflow = `extra_args: ${typeof value === \"number\" ? value : `'${value.replaceAll(\"'\", \"''\")}'`}`;",
+      "+const token = prefix + signature;",
+    ].join("\n");
+
+    expect(scanPatchForSecrets("src/config.ts", patch)).toContainEqual(
+      expect.objectContaining({ category: "DynamicSecretConstruction", severity: "high" })
+    );
+  });
+
+  it.each([
     "+const tokenPattern = /[A-Z]+%?/;",
     "+const tokenPattern = () => /access[_-]+token/i;",
     "+const tokenPattern = /access\\/[a-z]+/i;",

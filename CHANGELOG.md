@@ -10,7 +10,7 @@ All notable changes to this project are documented here. Release history is also
 - Added a semantic compatibility gate for tool/resource removal, input narrowing or default drift, output guarantee loss, annotation or MIME drift, with explicit-only baseline updates and Node 22/24 CI coverage.
 - Added a separate Node 24 read-only replay that rebuilds the pinned v1.9.0 checkout and byte-compares fresh discovery with the tracked baseline, while the Node 22/24 matrix keeps the faster current-contract comparison.
 - Added boundary coverage for JSON Schema unions, object enums, boolean schemas, `integer`/`number` subtyping, composition/constraint drift, prototype-named keys, future boolean annotations, CLI path/provenance rejection, real deadlines, cancellation races, evidence-state degradation, bounded pagination, and temporary worktree cleanup.
-- Raised the global coverage regression floors to 94% statements, 89% branches, 94% functions, and 95% lines after expanding the suite to 1143 tests; the current full-suite baseline is 95.65% statements, 91.56% branches, 95.93% functions, and 96.25% lines.
+- Raised the global coverage regression floors to 94% statements, 89% branches, 94% functions, and 95% lines after expanding the suite to 1146 tests; the current full-suite baseline is 95.44% statements, 91.34% branches, 95.93% functions, and 96.06% lines.
 
 ### Changed
 
@@ -19,7 +19,7 @@ All notable changes to this project are documented here. Release history is also
 ### Fixed
 
 - Stopped `prepare_work_item` from treating LLM character/token budgets or benign phrases such as Secret Santa and "secret sauce" as credential evidence and incorrectly escalating ordinary feature work to critical risk.
-- Stopped the pull-request secret heuristic from treating operators and quantifiers inside credential-detection regex literals as runtime credential construction, without exempting dynamically built values that use metadata-like names, and stopped counting one typed TypeScript assignment twice at both `:` and `=`.
+- Stopped the pull-request secret heuristic from treating operators and quantifiers inside credential-detection regex literals, scanner provenance helpers, or secret-scanner workflow fixture paths as runtime credential construction. Nested template-expression state now resumes correctly before following statements, so real dynamically built credentials still fail high, and typed TypeScript assignments are no longer counted twice at both `:` and `=`.
 - Prevented historical MCP discovery from retaining Windows checkout handles by running it in a bounded child process whose cwd stays outside the checkout, passing only an OS-runtime environment allowlist, and applying bounded cleanup retries before removing the detached worktree.
 - Prevented evidence collection from silently exiting before its deadline, from starting after an immediate parent cancellation, or from accepting non-finite timeout values.
 - Prevented invalid GitHub pagination sizes such as `perPage=0` from causing an unbounded request loop.

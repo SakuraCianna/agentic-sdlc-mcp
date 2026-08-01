@@ -499,6 +499,7 @@ type SecretLexicalMode = "code" | "block_comment" | "single" | "double" | "templ
 interface SecretLexicalState {
   mode: SecretLexicalMode;
   escaped: boolean;
+  templateExpressionDepths: number[];
 }
 
 function maskSecretCodeLine(line: string, state: SecretLexicalState): string {
@@ -517,7 +518,7 @@ function maskSecretCodeLine(line: string, state: SecretLexicalState): string {
       }
       continue;
     }
-    if (state.mode !== "code") {
+    if (state.mode === "single" || state.mode === "double") {
       code += " ";
       if (state.escaped) {
         state.escaped = false;
@@ -525,10 +526,25 @@ function maskSecretCodeLine(line: string, state: SecretLexicalState): string {
         state.escaped = true;
       } else if (
         (state.mode === "single" && character === "'") ||
-        (state.mode === "double" && character === '"') ||
-        (state.mode === "template" && character === "`")
+        (state.mode === "double" && character === '"')
       ) {
         state.mode = "code";
+      }
+      continue;
+    }
+    if (state.mode === "template") {
+      code += " ";
+      if (state.escaped) {
+        state.escaped = false;
+      } else if (character === "\\") {
+        state.escaped = true;
+      } else if (character === "`") {
+        state.mode = "code";
+      } else if (character === "$" && next === "{") {
+        code += " ";
+        index += 1;
+        state.mode = "code";
+        state.templateExpressionDepths.push(0);
       }
       continue;
     }
@@ -542,6 +558,22 @@ function maskSecretCodeLine(line: string, state: SecretLexicalState): string {
         character === "'" ? "single" : character === '"' ? "double" : "template";
       state.escaped = false;
       code += " ";
+    } else if (character === "{" && state.templateExpressionDepths.length > 0) {
+      const depthIndex = state.templateExpressionDepths.length - 1;
+      state.templateExpressionDepths[depthIndex] =
+        (state.templateExpressionDepths[depthIndex] ?? 0) + 1;
+      code += character;
+    } else if (character === "}" && state.templateExpressionDepths.length > 0) {
+      const depthIndex = state.templateExpressionDepths.length - 1;
+      const depth = state.templateExpressionDepths[depthIndex] ?? 0;
+      if (depth === 0) {
+        state.templateExpressionDepths.pop();
+        state.mode = "template";
+        code += " ";
+      } else {
+        state.templateExpressionDepths[depthIndex] = depth - 1;
+        code += character;
+      }
     } else {
       code += character;
     }
@@ -565,16 +597,28 @@ function maskSecretCommentsLine(line: string, state: SecretLexicalState): string
       }
       continue;
     }
-    if (state.mode !== "code") {
+    if (state.mode === "single" || state.mode === "double") {
       content += character;
       if (state.escaped) state.escaped = false;
       else if (character === "\\") state.escaped = true;
       else if (
         (state.mode === "single" && character === "'") ||
-        (state.mode === "double" && character === '"') ||
-        (state.mode === "template" && character === "`")
+        (state.mode === "double" && character === '"')
       ) {
         state.mode = "code";
+      }
+      continue;
+    }
+    if (state.mode === "template") {
+      content += character;
+      if (state.escaped) state.escaped = false;
+      else if (character === "\\") state.escaped = true;
+      else if (character === "`") state.mode = "code";
+      else if (character === "$" && next === "{") {
+        content += next;
+        index += 1;
+        state.mode = "code";
+        state.templateExpressionDepths.push(0);
       }
       continue;
     }
@@ -590,6 +634,19 @@ function maskSecretCommentsLine(line: string, state: SecretLexicalState): string
       if (character === "'" || character === '"' || character === "`") {
         state.mode = character === "'" ? "single" : character === '"' ? "double" : "template";
         state.escaped = false;
+      } else if (character === "{" && state.templateExpressionDepths.length > 0) {
+        const depthIndex = state.templateExpressionDepths.length - 1;
+        state.templateExpressionDepths[depthIndex] =
+          (state.templateExpressionDepths[depthIndex] ?? 0) + 1;
+      } else if (character === "}" && state.templateExpressionDepths.length > 0) {
+        const depthIndex = state.templateExpressionDepths.length - 1;
+        const depth = state.templateExpressionDepths[depthIndex] ?? 0;
+        if (depth === 0) {
+          state.templateExpressionDepths.pop();
+          state.mode = "template";
+        } else {
+          state.templateExpressionDepths[depthIndex] = depth - 1;
+        }
       }
     }
   }
@@ -599,7 +656,7 @@ function maskSecretCommentsLine(line: string, state: SecretLexicalState): string
 interface ScannedSecretLine extends NewSideLine {
   code: string;
   semantic: string;
-  modeAfter: SecretLexicalMode;
+  lexicallyOpenAfter: boolean;
 }
 
 interface SecretStatement {
@@ -688,7 +745,7 @@ function buildSecretStatements(lines: ScannedSecretLine[]): SecretStatement[] {
     }
     const trimmedCode = code.trimEnd();
     const continues =
-      line.modeAfter !== "code" ||
+      line.lexicallyOpenAfter ||
       bracketDepth(code) > 0 ||
       /(?:[=+%.,?:|&\\]|\b(?:return|yield))\s*$/.test(trimmedCode) ||
       /^\s*(?:[=+%]|\.(?:append|concat|format|join)\b)/.test(nextMeaningful?.code ?? "");
@@ -747,7 +804,7 @@ function assignmentTargetStart(code: string, operatorIndex: number): number {
 }
 
 function isCredentialMetadataTarget(normalizedTarget: string): boolean {
-  return /(?:apikey|authorization(?:header)?|token|secret|password|credential)(?:bucket|cache|config|count|expir(?:y|es?)|factory|id|index|length|manager|metadata|names?|options|parser|policy|prefix|provider|service|status|store|strength|suffix|ttl|type|validation|validator|izer|ization)$/.test(
+  return /(?:apikey|authorization(?:header)?|token|secret|password|credential)(?:bucket|cache|config|count|expir(?:y|es?)|factory|id|index|length|manager|metadata|names?|options|parser|policy|prefix|provider|scan(?:json|toml|ya?ml)?|scanner(?:evidence|provenance|report|result|status)?|service|status|store|strength|suffix|ttl|type|validation|validator|izer|ization)$/.test(
     normalizedTarget
   );
 }
@@ -901,17 +958,31 @@ export function scanPatchForSecrets(
   const patchLines = newSidePatchLines(patch);
   const scannedLines: ScannedSecretLine[] = [];
   let activeHunk = -1;
-  let codeState: SecretLexicalState = { mode: "code", escaped: false };
-  let semanticState: SecretLexicalState = { mode: "code", escaped: false };
+  let codeState: SecretLexicalState = {
+    mode: "code",
+    escaped: false,
+    templateExpressionDepths: [],
+  };
+  let semanticState: SecretLexicalState = {
+    mode: "code",
+    escaped: false,
+    templateExpressionDepths: [],
+  };
   for (const line of patchLines) {
     if (line.hunk !== activeHunk) {
       activeHunk = line.hunk;
-      codeState = { mode: "code", escaped: false };
-      semanticState = { mode: "code", escaped: false };
+      codeState = { mode: "code", escaped: false, templateExpressionDepths: [] };
+      semanticState = { mode: "code", escaped: false, templateExpressionDepths: [] };
     }
     const code = maskSecretCodeLine(line.text, codeState);
     const semantic = maskSecretCommentsLine(line.text, semanticState);
-    scannedLines.push({ ...line, code, semantic, modeAfter: codeState.mode });
+    scannedLines.push({
+      ...line,
+      code,
+      semantic,
+      lexicallyOpenAfter:
+        codeState.mode !== "code" || codeState.templateExpressionDepths.length > 0,
+    });
   }
 
   const findingGroups = new Map<
