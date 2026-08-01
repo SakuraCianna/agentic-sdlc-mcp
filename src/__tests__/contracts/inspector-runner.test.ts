@@ -135,9 +135,17 @@ describe("Inspector contract runner", () => {
     const child = spawnSync(
       process.execPath,
       ["--input-type=module", "--eval", script],
-      { encoding: "utf8", env: environment, windowsHide: true }
+      {
+        encoding: "utf8",
+        env: environment,
+        maxBuffer: 1024 * 1024,
+        timeout: 5_000,
+        windowsHide: true,
+      }
     );
 
+    expect(child.error).toBeUndefined();
+    expect(child.signal).toBeNull();
     expect(child.status).toBe(0);
     expect(child.stdout).toBe("");
     expect(child.stderr).toBe("");
