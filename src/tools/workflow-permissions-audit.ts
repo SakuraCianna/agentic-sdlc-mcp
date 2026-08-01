@@ -15,7 +15,7 @@
  * actually tried against it.
  */
 
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import {
   STRUCTURED_CONTENT_TRUST_META,
@@ -402,7 +402,7 @@ Flags:
 
 Returns: per-file findings by severity and a least_privilege/needs_review/over_permissioned conclusion.`,
       inputSchema: WorkflowPermissionsAuditInputSchema,
-      outputSchema: WorkflowPermissionsAuditOutputSchema,
+      outputSchema: z.object(WorkflowPermissionsAuditOutputSchema),
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,

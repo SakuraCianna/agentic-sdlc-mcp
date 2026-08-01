@@ -376,12 +376,14 @@ describe("registerRepoContextTool", () => {
 
   it("declares README and package.json summaries in outputSchema and returns them through the registered handler", async () => {
     let handler: (params: any) => Promise<any> = async () => undefined;
-    let outputSchema: Record<string, { safeParse: (value: unknown) => { success: boolean } }> = {};
+    let outputSchema: {
+      safeParse: (value: unknown) => { success: boolean };
+    } | undefined;
     const mockServer = {
       registerTool: vi.fn(
         (
           _name: string,
-          config: { outputSchema: typeof outputSchema },
+          config: { outputSchema: NonNullable<typeof outputSchema> },
           fn: (params: any) => Promise<any>
         ) => {
           outputSchema = config.outputSchema;
@@ -422,10 +424,7 @@ describe("registerRepoContextTool", () => {
       maxInstructionChars: 1000,
     });
 
-    expect(outputSchema.readmeSummary.safeParse(result.structuredContent.readmeSummary).success).toBe(true);
-    expect(
-      outputSchema.packageJsonSummary.safeParse(result.structuredContent.packageJsonSummary).success
-    ).toBe(true);
+    expect(outputSchema?.safeParse(result.structuredContent).success).toBe(true);
     expect(result.structuredContent.readmeSummary).toContain("Run npm install");
     expect(result.structuredContent.packageJsonSummary).toContain("name: test-repo");
   });

@@ -10,11 +10,16 @@ describe("SERVER_INFO", () => {
       name: string;
       version: string;
       dependencies: Record<string, string>;
+      devDependencies: Record<string, string>;
     };
 
     expect(SERVER_INFO.name).toBe(packageJson.name);
     expect(SERVER_INFO.version).toBe("1.9.0");
     expect(SERVER_INFO.version).toBe(packageJson.version);
-    expect(packageJson.dependencies["@modelcontextprotocol/sdk"]).toBe("^1.29.0");
+    expect(packageJson.dependencies["@modelcontextprotocol/sdk"]).toBeUndefined();
+    expect(packageJson.dependencies["@modelcontextprotocol/server"]).toBe("2.0.0");
+    expect(packageJson.dependencies["@modelcontextprotocol/node"]).toBe("2.0.0");
+    expect(packageJson.dependencies["@modelcontextprotocol/express"]).toBe("2.0.0");
+    expect(packageJson.devDependencies["@modelcontextprotocol/client"]).toBe("2.0.0");
   });
 });

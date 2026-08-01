@@ -5,7 +5,7 @@
  * read standards and templates without calling a tool.
  */
 
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { TOOL_NAMES } from "../catalog.js";
 
 const AGENTIC_SDLC_STANDARD = `# Agentic SDLC Standard

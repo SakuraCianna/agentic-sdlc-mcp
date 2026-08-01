@@ -14,7 +14,7 @@
  * hidden -- callers should not have to trust a silent guess.
  */
 
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import {
   STRUCTURED_CONTENT_TRUST_META,
@@ -1070,7 +1070,7 @@ Args:
 
 Returns: Phase-by-phase SDLC plan tailored to the (inferred or explicit) work type, plus structured output including workType/confidence/reasoning/needsClarification, and \`issueDrafts\` -- structured issue drafts (title/body/labels/phase/acceptanceCriteria/riskLevel) directly usable as \`create_issue_set\`'s \`issues\` input.`,
       inputSchema: PlanFromContextInputSchema,
-      outputSchema: PlanFromContextOutputSchema,
+      outputSchema: z.object(PlanFromContextOutputSchema),
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,

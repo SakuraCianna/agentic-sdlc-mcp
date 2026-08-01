@@ -7,7 +7,7 @@
 
 import { createHash } from "node:crypto";
 import type { Octokit } from "@octokit/rest";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 import {
@@ -844,10 +844,10 @@ export function registerSdlcEvidencePacketTool(server: McpServer): void {
 
 Repository text is treated as untrusted data. Caller assertions remain unverified. Markdown is rendered from the structured packet and high-confidence prompt injection is omitted from the Markdown channel.`,
       inputSchema: SdlcEvidencePacketInputSchema,
-      outputSchema: {
+      outputSchema: z.object({
         ...EvidencePacketSchema.shape,
         trustBoundary: StructuredContentTrustBoundarySchema.optional(),
-      },
+      }),
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,

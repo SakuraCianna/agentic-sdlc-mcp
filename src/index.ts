@@ -11,7 +11,7 @@
  */
 import "dotenv/config";
 
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { createAgenticSdlcServer } from "./server.js";
 
 // Config (exits early if GITHUB_TOKEN missing — skipped in smoke mode)

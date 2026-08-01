@@ -5,7 +5,7 @@
  * Splits an SDLC plan into GitHub issues. dryRun defaults to TRUE.
  */
 
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import {
   STRUCTURED_CONTENT_TRUST_META,
@@ -371,7 +371,7 @@ Args:
 
 Returns: Created issue numbers + URLs + labels (live) or a preview + warnings (dry run).`,
       inputSchema: CreateIssueSetInputSchema,
-      outputSchema: CreateIssueSetOutputSchema,
+      outputSchema: z.object(CreateIssueSetOutputSchema),
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,

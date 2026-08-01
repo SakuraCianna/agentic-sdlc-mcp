@@ -10,11 +10,14 @@ All notable changes to this project are documented here. Release history is also
 - Added a semantic compatibility gate for tool/resource removal, input narrowing or default drift, output guarantee loss, annotation or MIME drift, with explicit-only baseline updates and Node 22/24 CI coverage.
 - Added a separate Node 24 read-only replay that rebuilds the pinned v1.9.0 checkout and byte-compares fresh discovery with the tracked baseline, while the Node 22/24 matrix keeps the faster current-contract comparison.
 - Added boundary coverage for JSON Schema unions, object enums, boolean schemas, `integer`/`number` subtyping, composition/constraint drift, prototype-named keys, future boolean annotations, CLI path/provenance rejection, real deadlines, cancellation races, evidence-state degradation, bounded pagination, and temporary worktree cleanup.
-- Raised the global coverage regression floors to 94% statements, 89% branches, 94% functions, and 95% lines after expanding the suite to 1146 tests; the current full-suite baseline is 95.44% statements, 91.34% branches, 95.93% functions, and 96.06% lines.
+- Raised the global coverage regression floors to 94% statements, 89% branches, 94% functions, and 95% lines; after the SDK v2 migration, the current 1152-test full-suite baseline is 95.46% statements, 91.36% branches, 95.93% functions, and 96.08% lines.
 
 ### Changed
 
 - Locked `@modelcontextprotocol/sdk` 1.30.0 as the v1.x rollback bridge before the v2 migration, bringing its stdio buffer, Content-Type, SSE keep-alive, and timer lifecycle fixes without enabling the 2026 wire protocol. The resolved `@hono/node-server` remains 1.19.15 and its unused `serve-static` advisory remains tracked as one moderate audit finding.
+- Migrated the runtime to the stable MCP TypeScript SDK 2.0.0 split packages: `server`, `node`, and `express` remain production dependencies while the real integration client is development-only. This slice intentionally keeps the 2025-era initialize flow; 2026 protocol opt-in remains a separate change.
+- Made every registered tool use complete Standard Schema objects at the v2 boundary and kept the public 13-tool/5-resource contract compatible. The only reviewed schema drift is the official root dialect upgrade from draft-07 to JSON Schema 2020-12; any other `$schema`, reference, or composition change remains fail-closed.
+- Kept immutable contract replay compatible with both the historical v1 package layout and the current v2 split layout without passing nominal SDK objects across dependency roots.
 
 ### Fixed
 
@@ -30,6 +33,7 @@ All notable changes to this project are documented here. Release history is also
 - Kept credential-context secrets, credentials, private/API keys, qualified compact/camelCase tokens, credential-qualified uppercase token identifiers, and explicit key/secret/password environment suffixes in the high-signal secrets domain, with paired positive and negative regression coverage.
 - Kept exact structured `secret(s)` and `credential(s)` Issue labels as high-confidence risk signals without treating the same bare words anywhere in free text as equivalent evidence.
 - Clarified that `riskProfile` is an explainable implementation-planning estimate, not proof of a vulnerability, leaked credential, or exploitable finding.
+- Reconfirmed that MCP SDK v2's Node adapter reaches `@hono/node-server@1.19.15` only through `getRequestListener`; the project still exposes no static-file route or `serve-static` import. npm audit therefore retains two moderate advisory entries without a destructive transport replacement or false all-clear claim.
 
 ## [1.9.0] - 2026-07-28
 

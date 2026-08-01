@@ -5,7 +5,7 @@
  * Uses bounded pagination for all three alert endpoints.
  */
 
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { resolveRepo, getOctokit, handleGitHubError } from "../github/client.js";
 import { collectBounded } from "../github/pull-request-evidence.js";
@@ -366,7 +366,7 @@ Args:
 
 Returns: Alert summary, severity breakdown, recommended fix order, suggested issues.`,
       inputSchema: SecurityTriageInputSchema,
-      outputSchema: SecurityTriageOutputSchema,
+      outputSchema: z.object(SecurityTriageOutputSchema),
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,

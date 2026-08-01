@@ -543,6 +543,73 @@ describe("input schema compatibility boundaries", () => {
     );
   });
 
+  it("accepts the SDK v2 root dialect upgrade from draft-07 to 2020-12", () => {
+    const result = compare(
+      (raw) => {
+        raw.tools[0]!.inputSchema.$schema =
+          "http://json-schema.org/draft-07/schema#";
+        raw.tools[0]!.outputSchema!.$schema =
+          "http://json-schema.org/draft-07/schema#";
+      },
+      (raw) => {
+        raw.tools[0]!.inputSchema.$schema =
+          "https://json-schema.org/draft/2020-12/schema";
+        raw.tools[0]!.outputSchema!.$schema =
+          "https://json-schema.org/draft/2020-12/schema";
+      }
+    );
+
+    expect(result.breaking).toEqual([]);
+    expect(result.nonBreaking).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "input_schema_dialect_declared",
+          path: "tools.contract_probe.inputSchema.$schema",
+        }),
+        expect.objectContaining({
+          code: "output_schema_dialect_declared",
+          path: "tools.contract_probe.outputSchema.$schema",
+        }),
+      ])
+    );
+  });
+
+  it.each([
+    {
+      name: "declaration without a baseline dialect",
+      baseline: undefined,
+      current: "https://json-schema.org/draft/2020-12/schema",
+    },
+    {
+      name: "draft-07 removal",
+      baseline: "http://json-schema.org/draft-07/schema#",
+      current: undefined,
+    },
+    {
+      name: "2020-12 downgrade",
+      baseline: "https://json-schema.org/draft/2020-12/schema",
+      current: "http://json-schema.org/draft-07/schema#",
+    },
+    {
+      name: "unrecognised target dialect",
+      baseline: "http://json-schema.org/draft-07/schema#",
+      current: "https://example.test/schema",
+    },
+  ])("requires review for $name", ({ baseline, current }) => {
+    const result = compare(
+      (raw) => {
+        raw.tools[0]!.inputSchema.$schema = baseline;
+      },
+      (raw) => {
+        raw.tools[0]!.inputSchema.$schema = current;
+      }
+    );
+
+    expect(result.breaking).toContainEqual(
+      expect.objectContaining({ code: "input_schema_composition_changed" })
+    );
+  });
+
   it.each(["$schema", "$recursiveRef", "$dynamicRef"])(
     "requires review when %s changes",
     (keyword) => {

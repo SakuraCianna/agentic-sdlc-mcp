@@ -116,6 +116,11 @@ const MANUAL_REVIEW_SCHEMA_KEYWORDS = [
   "contentSchema",
 ] as const;
 
+const JSON_SCHEMA_2020_12_DIALECT =
+  "https://json-schema.org/draft/2020-12/schema";
+const JSON_SCHEMA_DRAFT_07_DIALECT =
+  "http://json-schema.org/draft-07/schema#";
+
 function compareStableStrings(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
@@ -287,6 +292,29 @@ function addBreaking(
   message: string
 ): void {
   changes.push({ code, path, message });
+}
+
+function acceptRootDialectUpgrade(
+  baseline: JsonValue | undefined,
+  current: JsonValue | undefined,
+  path: string,
+  direction: "input" | "output",
+  comparison: McpContractComparison
+): boolean {
+  if (
+    baseline !== JSON_SCHEMA_DRAFT_07_DIALECT ||
+    current !== JSON_SCHEMA_2020_12_DIALECT ||
+    !/^tools\.[^.]+\.(inputSchema|outputSchema)$/.test(path)
+  ) {
+    return false;
+  }
+
+  comparison.nonBreaking.push({
+    code: `${direction}_schema_dialect_declared`,
+    path: `${path}.$schema`,
+    message: `The ${direction} schema dialect was upgraded from draft-07 to 2020-12.`,
+  });
+  return true;
 }
 
 function compareInputConstraints(
@@ -575,6 +603,18 @@ function compareInputSchema(
   }
 
   for (const key of MANUAL_REVIEW_SCHEMA_KEYWORDS) {
+    if (
+      key === "$schema" &&
+      acceptRootDialectUpgrade(
+        baseline[key],
+        current[key],
+        path,
+        "input",
+        comparison
+      )
+    ) {
+      continue;
+    }
     if (canonical(baseline[key]) !== canonical(current[key])) {
       addBreaking(
         comparison.breaking,
@@ -797,6 +837,18 @@ function compareOutputSchema(
   );
 
   for (const key of MANUAL_REVIEW_SCHEMA_KEYWORDS) {
+    if (
+      key === "$schema" &&
+      acceptRootDialectUpgrade(
+        baseline[key],
+        current[key],
+        path,
+        "output",
+        comparison
+      )
+    ) {
+      continue;
+    }
     if (canonical(baseline[key]) !== canonical(current[key])) {
       addBreaking(
         comparison.breaking,

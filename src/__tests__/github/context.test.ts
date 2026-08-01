@@ -464,6 +464,19 @@ describe("detectTechStack", () => {
     expect(stack).toEqual(expect.arrayContaining(["Express", "Zod", "TypeScript", "Vitest"]));
   });
 
+  it("detects split MCP v2 packages as one technology", () => {
+    const stack = detectTechStack({
+      dependencies: {
+        "@modelcontextprotocol/server": "2.0.0",
+        "@modelcontextprotocol/node": "2.0.0",
+        "@modelcontextprotocol/express": "2.0.0",
+      },
+      devDependencies: { "@modelcontextprotocol/client": "2.0.0" },
+    });
+
+    expect(stack.filter((entry) => entry === "MCP SDK")).toEqual(["MCP SDK"]);
+  });
+
   it("ignores unrecognised dependency names", () => {
     const stack = detectTechStack({ dependencies: { "some-random-lib": "^1.0.0" } });
     expect(stack).toEqual([]);

@@ -1,4 +1,4 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { McpServer } from "@modelcontextprotocol/server";
 
 import { registerResources } from "./resources/index.js";
 import { registerAgentHandoffTool } from "./tools/agent-handoff.js";

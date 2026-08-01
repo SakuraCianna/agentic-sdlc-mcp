@@ -5,7 +5,7 @@
  * compatibility and the legacy check-run summary fields.
  */
 
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import type { Octokit } from "@octokit/rest";
 import { z } from "zod";
 import {
@@ -1099,7 +1099,7 @@ Args:
 
 Returns: A structured evidence packet, blockers, warnings, next actions, and a conservative conclusion.`,
       inputSchema: QualityGateInputSchema,
-      outputSchema: QualityGateOutputSchema,
+      outputSchema: z.object(QualityGateOutputSchema),
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
