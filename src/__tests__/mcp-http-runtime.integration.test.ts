@@ -72,6 +72,37 @@ describe("real MCP HTTP request lifecycle", () => {
     });
   };
 
+  const postJsonWithHeaders = (
+    baseUrl: string,
+    headers: Record<string, string>,
+    body: string
+  ): Promise<{ status: number; text: string }> => {
+    const url = new URL("/mcp", baseUrl);
+    return new Promise((resolve, reject) => {
+      const req = request({
+        hostname: url.hostname,
+        port: url.port,
+        path: url.pathname,
+        method: "POST",
+        headers: {
+          accept: "application/json, text/event-stream",
+          "content-type": "application/json",
+          "content-length": Buffer.byteLength(body).toString(),
+          ...headers,
+        },
+      }, (res) => {
+        res.setEncoding("utf8");
+        let text = "";
+        res.on("data", (chunk: string) => {
+          text += chunk;
+        });
+        res.once("end", () => resolve({ status: res.statusCode ?? 0, text }));
+      });
+      req.once("error", reject);
+      req.end(body);
+    });
+  };
+
   it("isolates concurrent stateless requests with one server per request", async () => {
     const serverFactory = vi.fn(createAgenticSdlcServer);
     const app = createMcpHttpApp(serverFactory);
@@ -169,6 +200,32 @@ describe("real MCP HTTP request lifecycle", () => {
     const text = await oversized.text();
     expect(text).toContain("Request body too large");
     expect(text).not.toContain("sensitive-payload");
+    expect(serverFactory).not.toHaveBeenCalled();
+  });
+
+  it("rejects untrusted Host and Origin before parsing an oversized JSON body", async () => {
+    const serverFactory = vi.fn(createAgenticSdlcServer);
+    const { baseUrl } = await startApp(createMcpHttpApp(serverFactory));
+    const oversizedBody = JSON.stringify({ padding: "sensitive-payload".repeat(8_000) });
+
+    const untrustedHost = await postJsonWithHeaders(
+      baseUrl,
+      { host: "attacker.example" },
+      oversizedBody
+    );
+    expect(untrustedHost.status).toBe(403);
+    expect(untrustedHost.text).not.toContain("Request body too large");
+    expect(untrustedHost.text).not.toContain("sensitive-payload");
+
+    const untrustedOrigin = await postJsonWithHeaders(
+      baseUrl,
+      { origin: "https://attacker.example" },
+      oversizedBody
+    );
+    expect(untrustedOrigin.status).toBe(403);
+    expect(untrustedOrigin.text).toContain("Forbidden origin");
+    expect(untrustedOrigin.text).not.toContain("Request body too large");
+    expect(untrustedOrigin.text).not.toContain("sensitive-payload");
     expect(serverFactory).not.toHaveBeenCalled();
   });
 

@@ -6,7 +6,7 @@
  * so a missing scope on one API doesn't blank out the other's findings).
  */
 
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import {
   STRUCTURED_CONTENT_TRUST_META,
@@ -361,7 +361,7 @@ Args:
 
 Returns: Required reviews / status checks / force-push / deletion settings from both classic protection and rulesets, findings by severity, verification gaps, and a protected/partially_protected/unprotected/unknown conclusion.`,
       inputSchema: BranchProtectionStatusInputSchema,
-      outputSchema: BranchProtectionStatusOutputSchema,
+      outputSchema: z.object(BranchProtectionStatusOutputSchema),
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,

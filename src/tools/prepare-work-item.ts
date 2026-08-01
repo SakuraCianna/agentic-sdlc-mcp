@@ -4,7 +4,7 @@
  * Handler extracted as `handlePrepareWorkItem` for testing.
  */
 
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import {
   STRUCTURED_CONTENT_TRUST_META,
@@ -513,7 +513,7 @@ Args:
 
 Returns: Structured risk profile and source evidence, issue/derived acceptance criteria, defensive requirements, negative scenarios, verified repository commands, rollback/observability plans, bounded history metadata, and Markdown safe for agent consumption. Issue and comment text remain untrusted evidence.`,
       inputSchema: PrepareWorkItemInputSchema,
-      outputSchema: PrepareWorkItemOutputSchema,
+      outputSchema: z.object(PrepareWorkItemOutputSchema),
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,

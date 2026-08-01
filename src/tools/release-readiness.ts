@@ -4,7 +4,7 @@
  * Handler extracted as `handleReleaseReadiness` for testing.
  */
 
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import {
   STRUCTURED_CONTENT_TRUST_META,
@@ -454,7 +454,7 @@ Args:
 
 Returns: isReady flag, blocking issues, CI status, docs check, release checklist, rollback template.`,
       inputSchema: ReleaseReadinessInputSchema,
-      outputSchema: ReleaseReadinessOutputSchema,
+      outputSchema: z.object(ReleaseReadinessOutputSchema),
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,

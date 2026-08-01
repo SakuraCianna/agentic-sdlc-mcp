@@ -147,6 +147,11 @@ const TECH_DEPENDENCY_MAP: Record<string, string> = {
   rollup: "Rollup",
   esbuild: "esbuild",
   "@modelcontextprotocol/sdk": "MCP SDK",
+  "@modelcontextprotocol/client": "MCP SDK",
+  "@modelcontextprotocol/core": "MCP SDK",
+  "@modelcontextprotocol/express": "MCP SDK",
+  "@modelcontextprotocol/node": "MCP SDK",
+  "@modelcontextprotocol/server": "MCP SDK",
   zod: "Zod",
 };
 

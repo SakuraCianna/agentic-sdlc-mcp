@@ -5,7 +5,7 @@
  * security-focused mode inspects actual patch lines for suspicious patterns.
  */
 
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import {
   STRUCTURED_CONTENT_TRUST_META,
@@ -882,7 +882,7 @@ Args:
 
 Returns: Sorted findings by severity, test coverage signal, ownership routing gaps, release risk, and conclusion.`,
       inputSchema: ReviewPrInputSchema,
-      outputSchema: ReviewPrOutputSchema,
+      outputSchema: z.object(ReviewPrOutputSchema),
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,

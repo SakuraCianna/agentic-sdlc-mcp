@@ -1,3 +1,4 @@
+import { access } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -6,6 +7,78 @@ const MAX_CONTRACT_TIMEOUT_MS = 120_000;
 
 function moduleUrl(projectRoot, ...segments) {
   return pathToFileURL(path.join(projectRoot, ...segments)).href;
+}
+
+async function packageExists(projectRoot, packageName) {
+  try {
+    await access(
+      path.join(
+        projectRoot,
+        "node_modules",
+        "@modelcontextprotocol",
+        packageName,
+        "package.json"
+      )
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function loadContractSdk(projectRoot) {
+  if (await packageExists(projectRoot, "client")) {
+    const clientModule = await import(
+      moduleUrl(
+        projectRoot,
+        "node_modules",
+        "@modelcontextprotocol",
+        "client",
+        "dist",
+        "index.mjs"
+      )
+    );
+    return {
+      Client: clientModule.Client,
+      InMemoryTransport: clientModule.InMemoryTransport,
+    };
+  }
+
+  if (await packageExists(projectRoot, "sdk")) {
+    const [clientModule, transportModule] = await Promise.all([
+      import(
+        moduleUrl(
+          projectRoot,
+          "node_modules",
+          "@modelcontextprotocol",
+          "sdk",
+          "dist",
+          "esm",
+          "client",
+          "index.js"
+        )
+      ),
+      import(
+        moduleUrl(
+          projectRoot,
+          "node_modules",
+          "@modelcontextprotocol",
+          "sdk",
+          "dist",
+          "esm",
+          "inMemory.js"
+        )
+      ),
+    ]);
+    return {
+      Client: clientModule.Client,
+      InMemoryTransport: transportModule.InMemoryTransport,
+    };
+  }
+
+  throw new Error(
+    `No supported MCP TypeScript SDK installation found under ${projectRoot}.`
+  );
 }
 
 function assertContractTimeout(timeoutMs) {
@@ -62,31 +135,9 @@ async function listAll(client, method) {
 export async function collectRawMcpContract(projectRoot, options = {}) {
   const timeoutMs = resolveContractTimeout(options.timeoutMs);
   const normalizedRoot = path.resolve(projectRoot);
-  const [{ Client }, { InMemoryTransport }, { createAgenticSdlcServer }] =
+  const [{ Client, InMemoryTransport }, { createAgenticSdlcServer }] =
     await Promise.all([
-      import(
-        moduleUrl(
-          normalizedRoot,
-          "node_modules",
-          "@modelcontextprotocol",
-          "sdk",
-          "dist",
-          "esm",
-          "client",
-          "index.js"
-        )
-      ),
-      import(
-        moduleUrl(
-          normalizedRoot,
-          "node_modules",
-          "@modelcontextprotocol",
-          "sdk",
-          "dist",
-          "esm",
-          "inMemory.js"
-        )
-      ),
+      loadContractSdk(normalizedRoot),
       import(moduleUrl(normalizedRoot, "dist", "server.js")),
     ]);
 

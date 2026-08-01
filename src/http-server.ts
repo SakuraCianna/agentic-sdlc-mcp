@@ -1,9 +1,9 @@
 import type { Server } from "node:http";
 
-import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js";
-import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { Express, NextFunction, Request, Response } from "express";
+import { localhostHostValidation } from "@modelcontextprotocol/express";
+import { NodeStreamableHTTPServerTransport } from "@modelcontextprotocol/node";
+import type { McpServer } from "@modelcontextprotocol/server";
+import express, { type Express, type NextFunction, type Request, type Response } from "express";
 
 import { createAgenticSdlcServer } from "./server.js";
 
@@ -11,6 +11,7 @@ export type McpServerFactory = () => McpServer;
 
 export const DEFAULT_MCP_HTTP_HOST = "127.0.0.1";
 export const DEFAULT_MCP_HTTP_PORT = 3000;
+const MAX_MCP_HTTP_JSON_BYTES = 100 * 1024;
 
 const LOCAL_ORIGIN_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]"]);
 const closingServers = new WeakMap<Server, Promise<void>>();
@@ -76,13 +77,16 @@ function safeHttpError(error: unknown, _req: Request, res: Response, _next: Next
 export function createMcpHttpApp(
   createServer: McpServerFactory = createAgenticSdlcServer
 ): Express {
-  // SDK factory applies localhost Host-header validation for DNS rebinding protection.
-  const app = createMcpExpressApp({ host: DEFAULT_MCP_HTTP_HOST });
+  // Reject untrusted network headers before reading request bodies, then retain
+  // the bounded JSON contract used by the legacy adapter.
+  const app = express();
+  app.use(localhostHostValidation());
   app.use(validateLocalOrigin);
+  app.use(express.json({ limit: MAX_MCP_HTTP_JSON_BYTES }));
 
   app.post("/mcp", async (req: Request, res: Response, next: NextFunction) => {
     let requestServer: McpServer | undefined;
-    let transport: StreamableHTTPServerTransport | undefined;
+    let transport: NodeStreamableHTTPServerTransport | undefined;
     let closed = false;
     const closeRequest = async (): Promise<void> => {
       if (closed) return;
@@ -95,7 +99,7 @@ export function createMcpHttpApp(
 
     try {
       requestServer = createServer();
-      transport = new StreamableHTTPServerTransport({
+      transport = new NodeStreamableHTTPServerTransport({
         sessionIdGenerator: undefined,
         enableJsonResponse: true,
       });

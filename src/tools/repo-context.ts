@@ -5,7 +5,7 @@
  * open issues and PRs.
  */
 
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import {
   STRUCTURED_CONTENT_TRUST_META,
@@ -225,7 +225,7 @@ Args:
 
 Returns: Markdown summary of the repository context, plus structured content. Missing files (README, package.json, agent instructions) degrade gracefully rather than failing the whole call.`,
       inputSchema: RepoContextInputSchema,
-      outputSchema: RepoContextOutputSchema,
+      outputSchema: z.object(RepoContextOutputSchema),
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,

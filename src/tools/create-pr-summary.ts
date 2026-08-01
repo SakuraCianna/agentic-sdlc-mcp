@@ -5,7 +5,7 @@
  * Uses paginateAll for PR file listing.
  */
 
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { adaptPrSummaryEvidence } from "../evidence/adapters.js";
 import { EvidenceItemSchema, type EvidenceItem } from "../evidence/model.js";
@@ -285,7 +285,7 @@ Args:
 
 Returns: Markdown PR summary + structured metadata.`,
       inputSchema: CreatePrSummaryInputSchema,
-      outputSchema: CreatePrSummaryOutputSchema,
+      outputSchema: z.object(CreatePrSummaryOutputSchema),
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
