@@ -1,0 +1,12 @@
+{
+  "name": "agentic-sdlc-mcp-conformance-pilot",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Pinned MCP Conformance dependency for the legacy HTTP pilot.",
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/conformance": "0.1.16"
+  }
+}
