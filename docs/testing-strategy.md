@@ -29,7 +29,7 @@
 
 ## 动态运行感知的边界
 
-`src/__tests__/fixtures/mcp-client.ts` 是内存协议测试的共享入口。它连接生产 server factory 和 SDK 内存 transport，不监听端口、不访问网络，但会执行真实 MCP 初始化、schema 校验、注册路由和序列化流程。工具运行测试只 mock GitHub 客户端边界，因此能捕获“单元 handler 正确但注册/schema/协议默认值错误”的问题。HTTP 生命周期测试另行绑定 `127.0.0.1` 随机端口，验证并发请求隔离与清理、Host/Origin 拒绝、GET/DELETE `405`、畸形/过大/内部错误的有界响应、端口解析和幂等关闭；测试 setup 允许 loopback/本地 IPC，但在连接前拒绝所有外部 fetch 和 socket。
+`src/__tests__/fixtures/mcp-client.ts` 是协议测试的共享入口。它连接生产 server factory、项目的 stdio wrapper 和 SDK 内存 transport，不监听端口、不访问网络，但会执行真实 MCP 初始化/发现、schema 校验、注册路由和序列化流程。工具运行测试只 mock GitHub 客户端边界，因此能捕获“单元 handler 正确但注册/schema/协议默认值错误”的问题。HTTP 生命周期测试另行绑定 `127.0.0.1` 随机端口，验证并发请求隔离与清理、Host/Origin 拒绝、GET/DELETE `405`、畸形/过大/内部错误的有界响应、端口解析和幂等关闭；测试 setup 允许 loopback/本地 IPC，但在连接前拒绝所有外部 fetch 和 socket。
 
 涉及远程 HTTP、OAuth、多租户 request context 或取消/超时的能力落地后，应增加真实 HTTP transport 的本地端到端套件；在此之前，不得用内存 transport 测试声称已经验证网络层安全。
 
@@ -40,6 +40,8 @@ v1.10 在现有单元、handler、真实 SDK client 和 loopback HTTP 测试之�
 1. **SDK/era parity**：先把 v1 单包迁移到稳定 SDK v2，但保持 2025 legacy wire；parity 通过后再为本地 stdio/loopback 显式启用 2025 fallback 与 `2026-07-28` modern era。package migration 与 wire opt-in 分 PR，modern 测试必须显式 pin 版本，不能从依赖版本推断。
 2. **Inspector/Conformance 黑盒**：使用精确固定的 Inspector 2，从进程外通过 stdio/loopback HTTP 验证发布构建产物，只消费机器可读 JSON 与稳定 exit class；Conformance 0.1.16 先作为 legacy 非阻塞 pilot。二者都不能被描述成官方认证，也不能替代显式 modern client 的 required 测试。
 3. **Agent evaluation**：required CI 使用固定 GitHub fixture 的真实 MCP tool call 和 recorded trace scorer；可选 live model-in-loop 必须记录 provider、model、版本、时间和场景 digest。recorded trace 只能证明 scorer/fixture/协议路径可重复，不能证明未来任意模型仍会做同样选择。
+
+T3 已让生产 stdio 和 loopback HTTP 显式支持 2025/2026 双 era：legacy client 走 `initialize`，modern client 必须 pin `2026-07-28` 并走 `server/discover`。direct-fetch、真实 loopback 和构建后的 stdio 子进程均验证 13 tools/5 resources parity；modern `resultType`、`ttlMs`、`cacheScope` 与 per-request metadata 只由 SDK wire layer 产生。版本不匹配、header/body 跨时代冲突、未知方法、factory 异常和取消均有负向覆盖。2025 stateless HTTP 因没有 session/client identity，无法安全地把独立取消 POST 关联到原请求；两个时代均显式证明异步 factory 期间的预取消/handler shutdown 499（即使 factory 不释放也会立即结算），以及迟到 server 会被关闭；modern 还覆盖 factory resolve 与 close 相邻微任务的 handoff，关闭获胜后不允许再进入原始 `connect`。这些边界不能被误述为客户端取消必然停止任何不可中止的上游工作。stdio 子进程启动真实 `dist/index.js`，使用独立临时 home/storage、空 dotenv、credential/`NODE_OPTIONS` canary 和非 loopback fetch/socket guard，不依赖真实 home、凭据或外部网络；watch 模式排除这一项必须依赖构建产物的测试。
 
 公共工具契约从不可变 `v1.9.0` tag/commit 生成，记录 source SHA，并按语义比较 breaking/additive 变化。禁止从升级后的当前工作树伪造旧 baseline，也禁止在普通测试中自动更新；更新必须由单独命令执行，让 PR 显示工具/resource 删除、schema required/类型变化、annotations 与描述变化。大段 inline snapshot 不能替代 output schema 对真实 `structuredContent` 的逐工具验证。
 
@@ -53,7 +55,7 @@ Inspector 2 与 Conformance 的 engine/依赖树属于测试工具边界：各�
 
 风险分类回归必须成对覆盖误报和漏报。尤其要区分 LLM 字符/token 预算与 credential token、Secret Santa/secret sauce 等普通短语与真实凭据处理，以及文档中的防御性描述与已确认暴露；精确的结构化 `secret(s)`/`credential(s)` label 必须独立于自由文本规则验证。`riskProfile` 表示可解释的实施规划风险，不得被测试、文档或调用方描述成已确认漏洞。确定性模式只用于高置信、可解释信号，不能单独替代结构化 trust boundary、工具权限校验、人工 gate 或对抗性 evaluation。
 
-取消与分页属于跨工具公共边界。timeout 测试必须覆盖父级预取消、运行中取消、非 `Error` reason、operation 同步失败、真实进程中仅剩 deadline 句柄，以及 `NaN/Infinity`；不能用 `unref()` 让进程在 deadline 前静默退出。分页测试必须覆盖短页、精确上限、`maxItems=0` 和非法 `perPage`，GitHub 每页范围固定为 1–100，避免零页大小导致无限请求。证据适配器按 CI/review/release/security 的 verified/failed/pending/unverified/not-applicable 与 partial 组合做表驱动回归。
+取消与分页属于跨工具公共边界。timeout 测试必须覆盖父级预取消、运行中取消、非 `Error` reason、operation 同步失败、真实进程中仅剩 deadline 句柄，以及 `NaN/Infinity`；不能用 `unref()` 让进程在 deadline 前静默退出。协议取消必须按 era/transport 分开证明，不能把 2025 stateless HTTP 的客户端本地取消外推为 server abort。分页测试必须覆盖短页、精确上限、`maxItems=0` 和非法 `perPage`，GitHub 每页范围固定为 1–100，避免零页大小导致无限请求。证据适配器按 CI/review/release/security 的 verified/failed/pending/unverified/not-applicable 与 partial 组合做表驱动回归。
 
 ## Fixture 与长期维护
 
@@ -73,7 +75,7 @@ Inspector 2 与 Conformance 的 engine/依赖树属于测试工具边界：各�
 
 ## 覆盖率门槛
 
-`npm run test:coverage` 当前执行全局最低门槛：statements 94%、branches 89%、functions 94%、lines 95%，并输出 text、LCOV 与 `coverage/coverage-summary.json`。SDK v2 迁移后的当前基线为 1153 个测试、95.46% statements / 91.36% branches / 95.93% functions / 96.08% lines；门槛刻意保留 Node 22/24 插桩余量。新增边界覆盖包括扫描器 Workflow 精确 provenance、无关 Workflow 负例、重命名前路径、双扫描器逐 signal 隔离、自定义 Gitleaks/TruffleHog 配置、动态/绝对/穿越/歧义参数拒绝、合法空格/括号仓库路径、Actions API 失败、旧 provenance 缺口清理、输入不可变、非法 URL/YAML/workflow AST、不可用 base Workflow 内容、嵌套模板词法状态、scanner provenance/workflow fixture 元数据误判、GitHub Issue/PR 混合元数据归一化、HTTP Host/Origin 前置于有界 JSON parsing，以及封闭 nullable `anyOf` 中可选字段新增仍进入人工复核。真实动态 credential 与 header sink 的正向控制保持 fail-high。
+`npm run test:coverage` 当前执行全局最低门槛：statements 94%、branches 89%、functions 94%、lines 95%，并输出 text、LCOV 与 `coverage/coverage-summary.json`。双 era 启用后的当前基线为 1177 个测试、95.22% statements / 91.16% branches / 95.57% functions / 95.88% lines；门槛刻意保留 Node 22/24 插桩余量。新增边界覆盖包括扫描器 Workflow 精确 provenance、无关 Workflow 负例、重命名前路径、双扫描器逐 signal 隔离、自定义 Gitleaks/TruffleHog 配置、动态/绝对/穿越/歧义参数拒绝、合法空格/括号仓库路径、Actions API 失败、旧 provenance 缺口清理、输入不可变、非法 URL/YAML/workflow AST、不可用 base Workflow 内容、嵌套模板词法状态、scanner provenance/workflow fixture 元数据误判、GitHub Issue/PR 混合元数据归一化、HTTP Host/Origin 前置于有界 JSON parsing、双时代 negotiation/取消/关闭、pending factory 结算与 modern handoff 同 tick 竞态、跨时代 header/body 冲突和有界 factory 错误，以及封闭 nullable `anyOf` 中可选字段新增仍进入人工复核。真实动态 credential 与 header sink 的正向控制保持 fail-high。
 
 门槛用于阻止回退，不是完成定义。新增高风险模块应优先达到更高的局部覆盖，尤其是权限、策略、证据截断和写入边界。提高门槛前先观察完整套件的稳定基线并保留合理余量；降低门槛、扩大 exclude 或删除断言必须在 PR 中单独解释，不能作为通过 CI 的快捷方式。
 

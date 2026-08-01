@@ -308,7 +308,9 @@ GitHub 权限和端点要求可能变化。出现权限错误时，请核对 [Gi
 
 ## 本地 HTTP profile
 
-stdio 是默认且推荐的本地传输方式。需要 Streamable HTTP 的本机客户端可以在源码构建后显式启用：
+stdio 是默认且推荐的本地传输方式。两个本地入口均使用官方 SDK v2 的时代路由：2025 客户端继续通过 `initialize` 握手，显式协商 `2026-07-28` 的客户端则使用 `server/discover`。两个时代均暴露相同的 13 个工具和 5 个资源。
+
+需要 Streamable HTTP 的本机客户端可以在源码构建后显式启用：
 
 ```powershell
 $env:TRANSPORT = "http"
@@ -316,7 +318,9 @@ $env:PORT = "3000"
 node dist/index.js
 ```
 
-服务端点为 `http://127.0.0.1:3000/mcp`。它只监听 loopback，校验 `Host` 和调用方提供的 `Origin`；每个 POST 使用隔离的无状态 server/transport；不支持的 GET/DELETE session 操作会被拒绝；错误细节受到限制，并支持关闭信号。
+服务端点为 `http://127.0.0.1:3000/mcp`。它只监听 loopback，在解析不超过 100 KiB 的请求体前校验 `Host` 和调用方提供的 `Origin`；每个 POST 使用隔离的无状态 server/transport；不支持的 GET/DELETE session 操作会被拒绝；错误细节受到限制，关闭时会中止仍在执行的请求。
+
+2025 无状态 HTTP profile 没有 session 或客户端身份，无法把单独发送的 `notifications/cancelled` POST 与之前的请求可靠关联。客户端仍会观察到本地取消，但原服务端操作可能自然执行完成。两个 stdio 时代和 2026 HTTP 都会把取消传递到服务端请求。如果 legacy 调用必须支持服务端取消，请优先使用 stdio。
 
 不要把该端点暴露到其他机器，也不要直接通过反向代理对外提供。当前不计划远程 OAuth 或多租户托管。如果未来重新立项，必须先满足单独的[远程部署重新立项准入条件](docs/remote-deployment-considerations.md)；当前本地服务不能直接作为安全远程部署基础。
 
