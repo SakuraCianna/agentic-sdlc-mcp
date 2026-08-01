@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { describe, expect, it } from "vitest";
 
+import { createContractCollectorEnvironment } from "../../scripts/lib/pinned-mcp-contract.mjs";
 import { TOOL_NAMES } from "../catalog.js";
 import {
   LEGACY_PROTOCOL_VERSION,
@@ -48,6 +49,7 @@ function isolatedChildEnvironment(root: string): Record<string, string> {
     ? home.slice(drive.length)
     : home;
   return {
+    ...createContractCollectorEnvironment(),
     HOME: home,
     USERPROFILE: home,
     HOMEDRIVE: drive,
