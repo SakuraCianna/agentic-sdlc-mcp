@@ -22,8 +22,8 @@ const SERVER_SCRIPT = path.join(
   "run-stdio-server.mjs"
 );
 const SECRET_CANARIES = {
-  GITHUB_TOKEN: "must-not-reach-stdio-child",
-  OPENAI_API_KEY: "must-not-reach-stdio-child",
+  GITHUB_TOKEN: "placeholder-parent-github-token",
+  OPENAI_API_KEY: "placeholder-parent-openai-key",
   NODE_OPTIONS: "--must-not-reach-stdio-child",
 } as const;
 

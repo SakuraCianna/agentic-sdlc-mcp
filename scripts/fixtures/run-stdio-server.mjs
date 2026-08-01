@@ -50,7 +50,7 @@ Socket.prototype.connect = function guardedConnect(...args) {
   return Reflect.apply(originalSocketConnect, this, args);
 };
 
-process.env.GITHUB_TOKEN = "__stdio_fixture_placeholder__";
+process.env.GITHUB_TOKEN = "placeholder-stdio-github-token";
 process.env.DOTENV_CONFIG_PATH = path.join(expectedHome, "empty.env");
 process.env.DOTENV_CONFIG_QUIET = "true";
 
