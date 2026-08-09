@@ -21,6 +21,36 @@ interface PublishWorkflow {
   };
 }
 
+interface CiWorkflow {
+  jobs?: Record<string, { steps?: WorkflowStep[] }>;
+}
+
+describe("CI workflow action pins", () => {
+  it("uses the same immutable checkout and setup-node commits in every job", async () => {
+    const workflowPath = new URL("../../.github/workflows/ci.yml", import.meta.url);
+    const source = await readFile(workflowPath, "utf8");
+    const workflow = parse(source) as CiWorkflow;
+    const uses = Object.values(workflow.jobs ?? {})
+      .flatMap((job) => job.steps ?? [])
+      .map((step) => step.uses)
+      .filter((value): value is string => value !== undefined);
+
+    expect(uses.filter((value) => value.startsWith("actions/checkout@"))).toEqual(
+      Array(3).fill(
+        "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
+      )
+    );
+    expect(uses.filter((value) => value.startsWith("actions/setup-node@"))).toEqual(
+      Array(3).fill(
+        "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020"
+      )
+    );
+    expect(source).not.toMatch(
+      /uses:\s+actions\/(?:checkout|setup-node)@v/iu
+    );
+  });
+});
+
 describe("npm publish workflow", () => {
   it("publishes only a validated release target with immutable OIDC dependencies", async () => {
     const workflowPath = new URL("../../.github/workflows/publish.yml", import.meta.url);
@@ -31,12 +61,12 @@ describe("npm publish workflow", () => {
     const setupNode = steps.find(
       (step) =>
         step.uses ===
-        "actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e"
+        "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020"
     );
     const checkout = steps.find(
       (step) =>
         step.uses ===
-        "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0"
+        "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
     );
     const verifyIndex = steps.findIndex(
       (step) => step.name === "Verify release target and metadata"
@@ -70,7 +100,7 @@ describe("npm publish workflow", () => {
     const checkout = steps.find(
       (step) =>
         step.uses ===
-        "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0"
+        "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
     );
     const verifyIndex = steps.findIndex(
       (step) => step.name === "Verify release target and metadata"
