@@ -657,6 +657,7 @@ interface ScannedSecretLine extends NewSideLine {
   code: string;
   semantic: string;
   lexicallyOpenAfter: boolean;
+  packageLockPackageMemberKey?: string;
 }
 
 interface SecretStatement {
@@ -665,13 +666,68 @@ interface SecretStatement {
   code: string;
   semantic: string;
   added: boolean[];
-  containsAddedLine: boolean;
   truncated: boolean;
+  credentialRelevant: boolean;
+  packageLockPackageMemberKey: string | null;
 }
 
 const MAX_SECRET_STATEMENT_LINES = 100;
 const MAX_SECRET_STATEMENT_CHARS = 64_000;
+const MAX_SECRET_STATEMENT_OPERATORS = 100;
+const MAX_SECRET_OPERATOR_WORK = 256_000;
 const MAX_SECRET_FINDING_GROUPS = 20;
+
+function braceDelta(code: string): number {
+  let delta = 0;
+  for (const character of code) {
+    if (character === "{") delta += 1;
+    else if (character === "}") delta -= 1;
+  }
+  return delta;
+}
+
+function markOldPackageLockMembers(
+  lines: ScannedSecretLine[],
+  filename: string
+): void {
+  if (!/(?:^|\/)(?:npm-shrinkwrap|package-lock)\.json$/iu.test(filename)) return;
+  let depth = 0;
+  let dependencyDepths: number[] = [];
+  let activeHunk = lines[0]?.hunk ?? 0;
+  for (const line of lines) {
+    if (line.hunk !== activeHunk) {
+      depth = 0;
+      dependencyDepths = [];
+      activeHunk = line.hunk;
+    }
+    const match = line.semantic.match(
+      /^\s*[{,]?\s*("(?:\\.|[^"\\])*")\s*:\s*/u
+    );
+    if (match?.[1]) {
+      const key = parseJsonString(match[1]);
+      const keyOffset = match[0].indexOf(match[1]);
+      const keyDepth = depth + braceDelta(line.code.slice(0, keyOffset));
+      const valueOffset = match[0].length;
+      const valueCode = line.code.slice(valueOffset).trimStart();
+      if (key !== null && valueCode.startsWith("{")) {
+        const explicitPackagePath =
+          /^node_modules\//u.test(key) ||
+          /^@[a-z0-9._-]+\/[a-z0-9][a-z0-9._-]*$/u.test(key);
+        if (explicitPackagePath || dependencyDepths.includes(keyDepth)) {
+          line.packageLockPackageMemberKey = key;
+        }
+      }
+      if (key === "dependencies" && valueCode.startsWith("{")) {
+        const valueDepth = depth + braceDelta(line.code.slice(0, valueOffset));
+        dependencyDepths.push(valueDepth + 1);
+      }
+    }
+    depth = Math.max(0, depth + braceDelta(line.code));
+    dependencyDepths = dependencyDepths.filter(
+      (dependencyDepth) => depth >= dependencyDepth
+    );
+  }
+}
 
 function bracketDepth(code: string): number {
   let depth = 0;
@@ -684,16 +740,165 @@ function bracketDepth(code: string): number {
   return depth;
 }
 
-function buildSecretStatements(lines: ScannedSecretLine[]): SecretStatement[] {
+function parseJsonString(value: string): string | null {
+  try {
+    const parsed: unknown = JSON.parse(value.trim());
+    return typeof parsed === "string" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function isStandaloneJsonCredentialKey(value: string, filename: string): boolean {
+  const parsed = parseJsonString(value);
+  return parsed !== null && isJsonCredentialTarget(filename, parsed);
+}
+
+interface JsonStringValue {
+  value: string;
+  start: number;
+  end: number;
+}
+
+function jsonStringValues(expression: string): JsonStringValue[] {
+  const values: JsonStringValue[] = [];
+  for (let index = 0; index < expression.length; index += 1) {
+    if (expression[index] !== '"') continue;
+    let escaped = false;
+    let end = -1;
+    for (let cursor = index + 1; cursor < expression.length; cursor += 1) {
+      const character = expression[cursor] ?? "";
+      if (escaped) {
+        escaped = false;
+      } else if (character === "\\") {
+        escaped = true;
+      } else if (character === '"') {
+        end = cursor + 1;
+        break;
+      }
+    }
+    if (end < 0) break;
+    const parsed = parseJsonString(expression.slice(index, end));
+    let next = end;
+    while (/\s/u.test(expression[next] ?? "")) next += 1;
+    if (parsed !== null && expression[next] !== ":") {
+      values.push({ value: parsed, start: index, end });
+    }
+    index = end - 1;
+  }
+  return values;
+}
+
+function jsonCredentialMemberKeyExists(
+  expression: string,
+  filename: string,
+  ignoredPackageMemberKey?: string | null
+): boolean {
+  for (let index = 0; index < expression.length; index += 1) {
+    if (expression[index] !== '"') continue;
+    let escaped = false;
+    let end = -1;
+    for (let cursor = index + 1; cursor < expression.length; cursor += 1) {
+      const character = expression[cursor] ?? "";
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === '"') {
+        end = cursor + 1;
+        break;
+      }
+    }
+    if (end < 0) break;
+    const parsed = parseJsonString(expression.slice(index, end));
+    let next = end;
+    while (/\s/u.test(expression[next] ?? "")) next += 1;
+    if (
+      parsed !== null &&
+      expression[next] === ":" &&
+      parsed !== ignoredPackageMemberKey &&
+      isJsonCredentialTarget(filename, parsed)
+    ) {
+      return true;
+    }
+    index = end - 1;
+  }
+  return false;
+}
+
+function decodedJsonMemberKey(
+  semantic: string,
+  code: string,
+  colonIndex: number
+): string | null {
+  const targetStart = assignmentTargetStart(code, colonIndex);
+  return parseJsonString(semantic.slice(targetStart, colonIndex));
+}
+
+function secretOperatorAnalysisExceedsLimit(
+  code: string,
+  operatorIndexes: readonly number[]
+): boolean {
+  return (
+    operatorIndexes.length > MAX_SECRET_STATEMENT_OPERATORS ||
+    code.length * operatorIndexes.length > MAX_SECRET_OPERATOR_WORK
+  );
+}
+
+function jsonSecretStatementContinues(
+  code: string,
+  semantic: string,
+  nextMeaningfulCode: string | undefined,
+  colonIndexes: readonly number[],
+  filename: string,
+  ignoredPackageMemberKey: string | null
+): boolean {
+  if (colonIndexes.length === 0) {
+    if (!/^\s*:/u.test(nextMeaningfulCode ?? "")) return false;
+    const standaloneKey = parseJsonString(semantic);
+    return standaloneKey !== null && isJsonCredentialTarget(filename, standaloneKey);
+  }
+  for (const colonIndex of colonIndexes) {
+    const memberKey = decodedJsonMemberKey(semantic, code, colonIndex);
+    if (
+      memberKey === null ||
+      memberKey === ignoredPackageMemberKey ||
+      !isJsonCredentialTarget(filename, memberKey)
+    ) {
+      continue;
+    }
+    const valueEnd = jsonMemberExpressionEnd(code, colonIndex + 1);
+    const semanticValue = semantic.slice(colonIndex + 1, valueEnd).trim();
+    if (semanticValue.length === 0) return true;
+    if (bracketDepth(code.slice(colonIndex + 1, valueEnd)) > 0) return true;
+  }
+  return false;
+}
+
+function buildSecretStatements(
+  lines: ScannedSecretLine[],
+  jsonFilename?: string
+): SecretStatement[] {
+  const lineDelimited = jsonFilename !== undefined;
   const statements: SecretStatement[] = [];
   let raw = "";
   let code = "";
   let semantic = "";
   let added: boolean[] = [];
   let lineCount = 0;
-  let containsAddedLine = false;
   let truncated = false;
+  let credentialRelevant = false;
+  let packageLockPackageMemberKey: string | null = null;
   let activeHunk = lines[0]?.hunk ?? 0;
+  const nextMeaningfulByIndex: Array<ScannedSecretLine | undefined> = Array.from({
+    length: lines.length,
+  });
+  let nextMeaningfulLine: ScannedSecretLine | undefined;
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index];
+    if (!line) continue;
+    if (nextMeaningfulLine?.hunk !== line.hunk) nextMeaningfulLine = undefined;
+    nextMeaningfulByIndex[index] = nextMeaningfulLine;
+    if (line.code.trim().length > 0) nextMeaningfulLine = line;
+  }
 
   const flush = (): void => {
     if (semantic.trim().length > 0) {
@@ -703,8 +908,16 @@ function buildSecretStatements(lines: ScannedSecretLine[]): SecretStatement[] {
         code,
         semantic,
         added,
-        containsAddedLine,
         truncated,
+        credentialRelevant:
+          credentialRelevant ||
+          (jsonFilename !== undefined &&
+            jsonCredentialMemberKeyExists(
+              semantic,
+              jsonFilename,
+              packageLockPackageMemberKey
+            )),
+        packageLockPackageMemberKey,
       });
     }
     raw = "";
@@ -712,8 +925,9 @@ function buildSecretStatements(lines: ScannedSecretLine[]): SecretStatement[] {
     semantic = "";
     added = [];
     lineCount = 0;
-    containsAddedLine = false;
     truncated = false;
+    credentialRelevant = false;
+    packageLockPackageMemberKey = null;
   };
 
   for (let index = 0; index < lines.length; index += 1) {
@@ -723,6 +937,17 @@ function buildSecretStatements(lines: ScannedSecretLine[]): SecretStatement[] {
       flush();
       activeHunk = line.hunk;
     }
+    packageLockPackageMemberKey ??= line.packageLockPackageMemberKey ?? null;
+    if (
+      jsonFilename !== undefined &&
+      jsonCredentialMemberKeyExists(
+        line.semantic,
+        jsonFilename,
+        packageLockPackageMemberKey
+      )
+    ) {
+      credentialRelevant = true;
+    }
     const capacity = Math.max(0, MAX_SECRET_STATEMENT_CHARS - raw.length - 1);
     const length = Math.min(line.text.length, capacity);
     raw += `${line.text.slice(0, length)}\n`;
@@ -731,17 +956,15 @@ function buildSecretStatements(lines: ScannedSecretLine[]): SecretStatement[] {
     for (let charIndex = 0; charIndex < length; charIndex += 1) added.push(line.added);
     added.push(false);
     if (length < line.text.length) truncated = true;
-    containsAddedLine ||= line.added;
     lineCount += 1;
 
-    let nextMeaningful: ScannedSecretLine | undefined;
-    for (let nextIndex = index + 1; nextIndex < lines.length; nextIndex += 1) {
-      const candidate = lines[nextIndex];
-      if (!candidate || candidate.hunk !== line.hunk) break;
-      if (candidate.code.trim().length > 0) {
-        nextMeaningful = candidate;
-        break;
-      }
+    const nextMeaningful = nextMeaningfulByIndex[index];
+    if (
+      lineDelimited &&
+      /^\s*:/u.test(nextMeaningful?.code ?? "") &&
+      isStandaloneJsonCredentialKey(semantic, jsonFilename ?? "")
+    ) {
+      credentialRelevant = true;
     }
     const trimmedCode = code.trimEnd();
     const continues =
@@ -749,7 +972,27 @@ function buildSecretStatements(lines: ScannedSecretLine[]): SecretStatement[] {
       bracketDepth(code) > 0 ||
       /(?:[=+%.,?:|&\\]|\b(?:return|yield))\s*$/.test(trimmedCode) ||
       /^\s*(?:[=+%]|\.(?:append|concat|format|join)\b)/.test(nextMeaningful?.code ?? "");
-    const terminated = /;\s*$/.test(line.code) || !continues;
+    // JSON member values can start after a newline, and credential arrays or
+    // objects need bounded grouping. Neutral container members stay line-local
+    // so a whole lockfile is not misclassified as one unterminated statement.
+    const jsonColonIndexes = lineDelimited
+      ? assignmentOperatorIndexes(code).filter((operatorIndex) => code[operatorIndex] === ":")
+      : [];
+    const jsonContinues = lineDelimited
+      ? secretOperatorAnalysisExceedsLimit(code, jsonColonIndexes)
+        ? continues
+        : jsonSecretStatementContinues(
+            code,
+            semantic,
+            nextMeaningful?.code,
+            jsonColonIndexes,
+            jsonFilename ?? "",
+            packageLockPackageMemberKey
+          )
+      : false;
+    const terminated = lineDelimited
+      ? !jsonContinues
+      : /;\s*$/.test(line.code) || !continues;
     const limitReached =
       lineCount >= MAX_SECRET_STATEMENT_LINES || raw.length >= MAX_SECRET_STATEMENT_CHARS;
     if (!terminated && limitReached) truncated = true;
@@ -795,6 +1038,22 @@ function assignmentExpressionEnd(code: string, start: number): number {
   return code.length;
 }
 
+function jsonMemberExpressionEnd(code: string, start: number): number {
+  let depth = 0;
+  for (let index = start; index < code.length; index += 1) {
+    const character = code[index] ?? "";
+    if (character === "(" || character === "[" || character === "{") {
+      depth += 1;
+    } else if (character === ")" || character === "]" || character === "}") {
+      if (depth === 0) return index;
+      depth -= 1;
+    } else if (depth === 0 && character === ",") {
+      return index;
+    }
+  }
+  return code.length;
+}
+
 function assignmentTargetStart(code: string, operatorIndex: number): number {
   let start = 0;
   for (const delimiter of [";", ",", "{", "}"]) {
@@ -811,10 +1070,49 @@ function isCredentialMetadataTarget(normalizedTarget: string): boolean {
 
 function isCredentialTarget(target: string): boolean {
   const normalized = target.toLowerCase().replace(/[^a-z0-9]/g, "");
-  if (!normalized || isCredentialMetadataTarget(normalized)) return false;
-  return /(?:apikey|authorization(?:header|token)?|clientsecret|credentials?|password|privatekey|secrets?|tokens?)/.test(
-    normalized
+  if (
+    !normalized ||
+    isCredentialMetadataTarget(normalized)
+  ) {
+    return false;
+  }
+  const words = target
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/u)
+    .filter(Boolean);
+  const accessKeyTarget =
+    /accesskeyid\d*$/u.test(normalized) ||
+    /awsaccesskey\d*$/u.test(normalized);
+  const tokenTarget =
+    /(?:^|[^A-Za-z0-9\/-])tokens?\d*(?=$|[^A-Za-z0-9])/iu.test(target) ||
+    /(?:^|[^A-Za-z0-9])tokens?(?=[A-Z])/u.test(target) ||
+    /[A-Za-z0-9](?:Token|Tokens)\d*(?=$|[^A-Za-z0-9])/u.test(target) ||
+    /(?:api|auth|access|bearer|client|github|jwt|oauth|refresh|session|slack)[\/-]tokens?\d*(?=$|[^A-Za-z0-9])/iu.test(
+      target
+    );
+  return (
+    accessKeyTarget ||
+    tokenTarget ||
+    words.some((word) =>
+      /^(?:apikey\d*|authorization(?:header|token)?\d*|clientsecret\d*|credentials?\d*|password\d*|privatekey\d*|secrets?\d*)$/u.test(
+        word
+      )
+    ) ||
+    words.some(
+      (word, index) =>
+        word === "api" && /^(?:keys?|tokens?)\d*$/u.test(words[index + 1] ?? "")
+    ) ||
+    words.some(
+      (word, index) =>
+        (word === "client" && /^secrets?\d*$/u.test(words[index + 1] ?? "")) ||
+        (word === "private" && /^keys?\d*$/u.test(words[index + 1] ?? ""))
+    )
   );
+}
+
+function isJsonCredentialTarget(_filename: string, target: string): boolean {
+  return isCredentialTarget(target);
 }
 
 function assignedIdentifier(target: string): string | null {
@@ -949,6 +1247,51 @@ function assignmentIsInCode(match: RegExpMatchArray, codeLine: string): boolean 
   return (codeLine[operatorIndex] ?? " ").trim().length > 0;
 }
 
+function secretLiteralNamesInLine(
+  text: string,
+  codeLine: string,
+  includeQuoted = true
+): string[] {
+  const names: string[] = [];
+  const seenValueSpans = new Set<string>();
+  for (const { name, pattern } of SECRET_ASSIGNMENTS) {
+    let offset = 0;
+    while (offset < text.length) {
+      const match = text.slice(offset).match(pattern);
+      if (!match || match.index === undefined) break;
+      const matchOffset = offset + match.index;
+      if (assignmentIsInCode(match, codeLine.slice(offset))) {
+        const quotedValue = match.slice(1, 4).find((capture) => capture !== undefined);
+        const unquotedValue = match[4];
+        const value = quotedValue ?? unquotedValue;
+        const valueStart = value ? matchOffset + match[0].lastIndexOf(value) : -1;
+        const valueSpan = value ? `${valueStart}:${valueStart + value.length}` : "";
+        if (
+          value &&
+          !seenValueSpans.has(valueSpan) &&
+          !isPlaceholderSecret(value) &&
+          ((includeQuoted && quotedValue !== undefined) ||
+            (unquotedValue !== undefined && isHighConfidenceUnquotedSecret(value)))
+        ) {
+          names.push(name);
+          seenValueSpans.add(valueSpan);
+        }
+      }
+      offset = matchOffset + Math.max(1, match[0].length);
+    }
+  }
+  return names;
+}
+
+function knownUnquotedSecretNamesInCode(codeLine: string): string[] {
+  const names: string[] = [];
+  if (/\bAKIA[0-9A-Z]{16}\b/u.test(codeLine)) names.push("AWS access key assignment");
+  if (/\bghp_[A-Za-z0-9]{16,}\b/u.test(codeLine)) {
+    names.push("credential assignment");
+  }
+  return names;
+}
+
 export function scanPatchForSecrets(
   filename: string,
   patch?: string
@@ -1004,13 +1347,36 @@ export function scanPatchForSecrets(
     findingGroups.set(key, { finding: item, count: 1 });
   };
 
-  const statements = buildSecretStatements(scannedLines);
+  const isJsonDocument = /\.jsonc?$/iu.test(normalizedFilename);
+  if (isJsonDocument) markOldPackageLockMembers(scannedLines, normalizedFilename);
+  const statements = buildSecretStatements(
+    scannedLines,
+    isJsonDocument ? normalizedFilename : undefined
+  );
+  const hunksWithMeaningfulAdditions = new Set(
+    scannedLines
+      .filter((line) => line.added && line.semantic.trim().length > 0)
+      .map((line) => line.hunk)
+  );
   const credentialAliasesByHunk = new Map<number, Set<string>>();
   for (const statement of statements) {
     const aliases = credentialAliasesByHunk.get(statement.hunk) ?? new Set<string>();
     credentialAliasesByHunk.set(statement.hunk, aliases);
     let dynamicConstructionRecorded = false;
-    if (statement.truncated && statement.containsAddedLine) {
+    const recordedJsonLiteralSpans = new Set<string>();
+    const operatorIndexes = assignmentOperatorIndexes(statement.code);
+    const operatorAnalysisLimited = secretOperatorAnalysisExceedsLimit(
+      statement.code,
+      operatorIndexes
+    );
+    const statementHasMeaningfulAddition = statement.added.some(
+      (isAdded, index) => isAdded && /\S/u.test(statement.semantic[index] ?? "")
+    );
+    if (
+      (statement.truncated || operatorAnalysisLimited) &&
+      (statementHasMeaningfulAddition ||
+        (statement.credentialRelevant && hunksWithMeaningfulAdditions.has(statement.hunk)))
+    ) {
       recordFinding(
         finding(
           "high",
@@ -1018,19 +1384,32 @@ export function scanPatchForSecrets(
           "security",
           `An added statement in \`${normalizedFilename}\` exceeded the bounded secret heuristic.`,
           [normalizedFilename],
-          `The statement exceeded the ${MAX_SECRET_STATEMENT_LINES}-line or ${MAX_SECRET_STATEMENT_CHARS.toLocaleString("en-US")}-character limit, so the patch-local heuristic cannot safely inspect all credential construction after the limit.`,
+          operatorAnalysisLimited
+            ? `The statement exceeded the ${MAX_SECRET_STATEMENT_OPERATORS}-operator or ${MAX_SECRET_OPERATOR_WORK.toLocaleString("en-US")}-work-unit analysis limit, so the patch-local heuristic stopped before repeated member scans could become unbounded.`
+            : `The statement exceeded the ${MAX_SECRET_STATEMENT_LINES}-line or ${MAX_SECRET_STATEMENT_CHARS.toLocaleString("en-US")}-character limit, so the patch-local heuristic cannot safely inspect all credential construction after the limit.`,
           "Split the statement into reviewable units and require trusted scanner or SAST evidence plus manual review before merging."
         )
       );
     }
-    for (const operatorIndex of assignmentOperatorIndexes(statement.code)) {
+    if (operatorAnalysisLimited) continue;
+    for (const operatorIndex of operatorIndexes) {
       const targetStart = assignmentTargetStart(statement.code, operatorIndex);
-      const expressionEnd = assignmentExpressionEnd(statement.code, operatorIndex + 1);
+      const expressionEnd = isJsonDocument
+        ? jsonMemberExpressionEnd(statement.code, operatorIndex + 1)
+        : assignmentExpressionEnd(statement.code, operatorIndex + 1);
       const target = statement.raw.slice(targetStart, operatorIndex);
       const expression = statement.semantic.slice(operatorIndex + 1, expressionEnd);
       const codeExpression = statement.code.slice(operatorIndex + 1, expressionEnd);
       const codeTarget = statement.code.slice(targetStart, operatorIndex);
       const usesCredentialAlias = targetUsesCredentialAlias(target, aliases);
+      const jsonMemberKey = isJsonDocument
+        ? decodedJsonMemberKey(statement.semantic, statement.code, operatorIndex)
+        : null;
+      const hasCredentialTarget = isJsonDocument
+        ? jsonMemberKey !== null &&
+          jsonMemberKey !== statement.packageLockPackageMemberKey &&
+          isJsonCredentialTarget(normalizedFilename, jsonMemberKey)
+        : isCredentialTarget(target);
       const meaningfulAdded = statement.added
         .slice(targetStart, expressionEnd)
         .some((isAdded, offset) => {
@@ -1038,9 +1417,51 @@ export function scanPatchForSecrets(
           const absolute = targetStart + offset;
           return /\S/.test(statement.semantic[absolute] ?? "");
         });
+
+      if (isJsonDocument && meaningfulAdded) {
+        const targetMeaningfulAdded = statement.added
+          .slice(targetStart, operatorIndex)
+          .some((isAdded, offset) => {
+            if (!isAdded) return false;
+            return /\S/.test(statement.semantic[targetStart + offset] ?? "");
+          });
+        for (const literal of jsonStringValues(expression)) {
+          const literalStart = operatorIndex + 1 + literal.start;
+          const literalMeaningfulAdded = statement.added
+            .slice(literalStart, operatorIndex + 1 + literal.end)
+            .some((isAdded, offset) => {
+              if (!isAdded) return false;
+              return /\S/.test(statement.semantic[literalStart + offset] ?? "");
+            });
+          if (!targetMeaningfulAdded && !literalMeaningfulAdded) continue;
+          if (isPlaceholderSecret(literal.value)) continue;
+          const literalName = hasCredentialTarget
+            ? "credential assignment"
+            : /^AKIA[0-9A-Z]{16}$/u.test(literal.value)
+              ? "AWS access key assignment"
+              : null;
+          if (literalName !== null) {
+            const literalSpan = `${literalStart}:${operatorIndex + 1 + literal.end}`;
+            if (recordedJsonLiteralSpans.has(literalSpan)) continue;
+            recordedJsonLiteralSpans.add(literalSpan);
+            recordFinding(
+              finding(
+              "high",
+              "SecretLikeAssignment",
+              "security",
+              `Possible ${literalName} added in \`${normalizedFilename}\`.`,
+              [normalizedFilename],
+              "The added JSON member assigns a non-placeholder literal to a credential-like name or known credential format.",
+              "Confirm this is not a real credential; if it is, remove and rotate it, then load it from a secret store or environment variable."
+              )
+            );
+          }
+        }
+      }
+
       if (
         meaningfulAdded &&
-        (usesCredentialAlias || isCredentialTarget(target)) &&
+        (usesCredentialAlias || hasCredentialTarget) &&
         (usesCredentialAlias ||
           isDynamicSecretExpression(expression, codeExpression) ||
           isDynamicSecretExpression(target, codeTarget))
@@ -1103,38 +1524,28 @@ export function scanPatchForSecrets(
   }
 
   for (const line of scannedLines) {
-    const codeLine = line.code;
     if (!line.added) continue;
-    for (const { name, pattern } of SECRET_ASSIGNMENTS) {
-      let offset = 0;
-      while (offset < line.text.length) {
-        const match = line.text.slice(offset).match(pattern);
-        if (!match || match.index === undefined) break;
-        const matchOffset = offset + match.index;
-        if (assignmentIsInCode(match, codeLine.slice(offset))) {
-          const quotedValue = match.slice(1, 4).find((capture) => capture !== undefined);
-          const unquotedValue = match[4];
-          const value = quotedValue ?? unquotedValue;
-          if (
-            value &&
-            !isPlaceholderSecret(value) &&
-            (quotedValue !== undefined || isHighConfidenceUnquotedSecret(value))
-          ) {
-            recordFinding(
-              finding(
-                "high",
-                "SecretLikeAssignment",
-                "security",
-                `Possible ${name} added in \`${normalizedFilename}\`.`,
-                [normalizedFilename],
-                "The added patch line assigns a non-placeholder literal to a credential-like name.",
-                "Confirm this is not a real credential; if it is, remove and rotate it, then load it from a secret store or environment variable."
-              )
-            );
-          }
-        }
-        offset = matchOffset + Math.max(1, match[0].length);
-      }
+    const assignmentNames = secretLiteralNamesInLine(
+      line.text,
+      line.code,
+      !isJsonDocument
+    );
+    const names =
+      isJsonDocument && assignmentNames.length === 0
+        ? knownUnquotedSecretNamesInCode(line.code)
+        : assignmentNames;
+    for (const name of names) {
+      recordFinding(
+        finding(
+          "high",
+          "SecretLikeAssignment",
+          "security",
+          `Possible ${name} added in \`${normalizedFilename}\`.`,
+          [normalizedFilename],
+          "The added patch line assigns a non-placeholder literal to a credential-like name.",
+          "Confirm this is not a real credential; if it is, remove and rotate it, then load it from a secret store or environment variable."
+        )
+      );
     }
   }
 

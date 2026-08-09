@@ -310,12 +310,15 @@ describe("scanPatchForSecrets", () => {
   });
 
   it("detects a quoted JSON credential key while ignoring assignments inside strings", () => {
-    expect(
-      scanPatchForSecrets(
-        "config/service.json",
-        '+  "apiKey": "live_1234567890abcdef",'
-      )
-    ).toContainEqual(expect.objectContaining({ category: "SecretLikeAssignment" }));
+    const findings = scanPatchForSecrets(
+      "config/service.json",
+      '+  "apiKey": "live_1234567890abcdef",'
+    );
+    expect(findings).toContainEqual(
+      expect.objectContaining({ category: "SecretLikeAssignment" })
+    );
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.description).not.toContain("matching occurrences");
     expect(
       scanPatchForSecrets(
         "src/example.ts",
@@ -655,6 +658,573 @@ describe("scanPatchForSecrets", () => {
     ].join("\n");
 
     expect(scanPatchForSecrets("src/config.ts", patch)).toContainEqual(
+      expect.objectContaining({ category: "SecretScanEvidenceIncomplete", severity: "high" })
+    );
+  });
+
+  it("treats JSON as line-delimited data without weakening per-line secret checks", () => {
+    const patch = [
+      "+{",
+      ...Array.from(
+        { length: 150 },
+        (_, index) => `+  \"dependency-${index}\": \"1.0.${index}\",`
+      ),
+      "+}",
+    ].join("\n");
+
+    expect(scanPatchForSecrets("tools/example/package-lock.json", patch)).toEqual([]);
+    expect(
+      scanPatchForSecrets(
+        "config/service.json",
+        `+  \"apiKey\": \"${["live", "1234567890abcdef"].join("_")}\",`
+      )
+    ).toContainEqual(expect.objectContaining({ category: "SecretLikeAssignment" }));
+  });
+
+  it.each([
+    ["config/service.json", '+  "apiKey":\n+    "$TOKEN_PREFIX-$TOKEN_SUFFIX",'],
+    [
+      "config/service.jsonc",
+      '+  "apiKeys": [\n+    "$TOKEN_PREFIX-$TOKEN_SUFFIX"\n+  ],',
+    ],
+  ])("keeps a bounded multiline JSON credential value together in %s", (filename, patch) => {
+    expect(scanPatchForSecrets(filename, patch)).toContainEqual(
+      expect.objectContaining({ category: "DynamicSecretConstruction", severity: "high" })
+    );
+  });
+
+  it("continues a credential container after an earlier neutral member on the same line", () => {
+    const patch = [
+      '+{"displayName": "demo", "apiKey": [',
+      '+  "$TOKEN_PREFIX-$TOKEN_SUFFIX"',
+      "+]}",
+    ].join("\n");
+
+    expect(scanPatchForSecrets("config/service.json", patch)).toContainEqual(
+      expect.objectContaining({ category: "DynamicSecretConstruction", severity: "high" })
+    );
+  });
+
+  it("keeps a JSON credential key together when its separator starts the next line", () => {
+    const patch = [
+      '+  "apiKey"',
+      "+    :",
+      '+    "$TOKEN_PREFIX-$TOKEN_SUFFIX",',
+    ].join("\n");
+
+    expect(scanPatchForSecrets("config/service.json", patch)).toContainEqual(
+      expect.objectContaining({ category: "DynamicSecretConstruction", severity: "high" })
+    );
+  });
+
+  it("detects a literal when a JSON credential key, separator, and value use separate lines", () => {
+    const literal = ["live", "1234567890abcdef"].join("_");
+    const patch = ['+  "apiKey"', "+    :", `+    "${literal}",`].join("\n");
+
+    expect(scanPatchForSecrets("config/service.json", patch)).toContainEqual(
+      expect.objectContaining({ category: "SecretLikeAssignment", severity: "high" })
+    );
+  });
+
+  it.each([
+    [
+      "literal",
+      `+{"api\\u004bey": "${["live", "1234567890abcdef"].join("_")}"}`,
+      "SecretLikeAssignment",
+    ],
+    [
+      "dynamic",
+      '+  "api\\u004bey"\n+    :\n+    "$TOKEN_PREFIX-$TOKEN_SUFFIX",',
+      "DynamicSecretConstruction",
+    ],
+  ])("decodes an escaped JSON credential key before %s checks", (_kind, patch, category) => {
+    expect(scanPatchForSecrets("config/service.json", patch)).toContainEqual(
+      expect.objectContaining({ category, severity: "high" })
+    );
+  });
+
+  it("keeps placeholder suppression after decoding a JSON credential key", () => {
+    expect(
+      scanPatchForSecrets(
+        "config/service.json",
+        '+  "api\\u004bey": "example-token-value",'
+      )
+    ).toEqual([]);
+  });
+
+  it.each([
+    [
+      "array",
+      `+{"apiKeys": ["${["live", "1234567890abcdef"].join("_")}"]}`,
+    ],
+    [
+      "object",
+      `+{"credentials": {\n+  "primary": "${["live", "abcdef1234567890"].join("_")}"\n+}}`,
+    ],
+    [
+      "AWS value",
+      `+{"apiKeys": ["${["AKIA", "1234567890ABCDEF"].join("")}"]}`,
+    ],
+  ])("detects non-placeholder literal leaves in a JSON credential %s", (_kind, patch) => {
+    expect(scanPatchForSecrets("config/service.json", patch)).toContainEqual(
+      expect.objectContaining({ category: "SecretLikeAssignment", severity: "high" })
+    );
+  });
+
+  it.each([
+    ['+{"apiKeys": ["example-token-value"]}'],
+    ['+{"credentials": {"primary": "dummy-token-value"}}'],
+  ])("keeps placeholder suppression inside a JSON credential container", (patch) => {
+    expect(scanPatchForSecrets("config/service.json", patch)).toEqual([]);
+  });
+
+  it("detects a split AWS access-key identifier assignment", () => {
+    const literal = ["AKIA", "1234567890ABCDEF"].join("");
+    const patch = ['+  "awsAccessKeyId"', "+    :", `+    "${literal}",`].join("\n");
+
+    expect(scanPatchForSecrets("config/service.json", patch)).toContainEqual(
+      expect.objectContaining({ category: "SecretLikeAssignment", severity: "high" })
+    );
+  });
+
+  it.each([
+    ["GitHub token", ["ghp", "1234567890abcdef"].join("_")],
+    ["AWS access key", ["AKIA", "1234567890ABCDEF"].join("")],
+  ])("detects a high-confidence unquoted %s in malformed JSON", (_kind, literal) => {
+    expect(scanPatchForSecrets("config/service.json", `+{"apiKey":${literal}}`)).toContainEqual(
+      expect.objectContaining({ category: "SecretLikeAssignment", severity: "high" })
+    );
+  });
+
+  it("detects an unquoted AWS key behind a neutral JSON member", () => {
+    const literal = ["AKIA", "1234567890ABCDEF"].join("");
+    expect(scanPatchForSecrets("config/service.json", `+{"value":${literal}}`)).toContainEqual(
+      expect.objectContaining({ category: "SecretLikeAssignment", severity: "high" })
+    );
+  });
+
+  it("does not duplicate a nested JSON credential literal", () => {
+    const literal = ["live", "1234567890abcdef"].join("_");
+    const findings = scanPatchForSecrets(
+      "config/service.json",
+      `+{"credentials":{"apiKey":"${literal}"}}`
+    ).filter((finding) => finding.category === "SecretLikeAssignment");
+
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.description).not.toContain("matching occurrences");
+  });
+
+  it.each([
+    "accessKeyDescription",
+    "accessKeyboardShortcut",
+    "accessKeyLabel",
+  ])("does not treat the UI field %s as a credential target", (field) => {
+    expect(
+      scanPatchForSecrets(
+        "config/ui.json",
+        `+{"${field}":"Keyboard shortcut for Save"}`
+      )
+    ).toEqual([]);
+  });
+
+  it.each([
+    "+element.accessKey = modifier + key;",
+    "+const accessKeyboardShortcut = modifier + key;",
+    "+const config = { accessKey: modifier + key };",
+  ])("does not treat a DOM or UI access-key target as a credential: %s", (patch) => {
+    expect(scanPatchForSecrets("src/keyboard.ts", patch)).toEqual([]);
+  });
+
+  it("does not treat a bare JSON accessKey as a credential", () => {
+    expect(
+      scanPatchForSecrets(
+        "config/ui.json",
+        '+{"accessKey":"Keyboard shortcut for Save"}'
+      )
+    ).toEqual([]);
+  });
+
+  it("keeps an AWS access-key identifier target in scope", () => {
+    expect(
+      scanPatchForSecrets(
+        "src/aws.ts",
+        "+const awsAccessKeyId = prefix + accountId + signature;"
+      )
+    ).toContainEqual(
+      expect.objectContaining({ category: "DynamicSecretConstruction", severity: "high" })
+    );
+  });
+
+  it.each(["node_modules/js-tokens", "node_modules/jsonwebtoken"])(
+    "does not treat the package-lock member %s as a credential container",
+    (packagePath) => {
+      const patch = [
+        `+  "${packagePath}": {`,
+        '+    "version": "9.0.1",',
+        '+    "resolved": "https://registry.npmjs.org/example/-/example-9.0.1.tgz",',
+        '+    "integrity": "sha512-ordinary-package-integrity"',
+        "+  }",
+      ].join("\n");
+
+      expect(scanPatchForSecrets("package-lock.json", patch)).toEqual([]);
+    }
+  );
+
+  it.each(["config/apiKey", "auth/token", "apiKey/"])(
+    "does not let a slash-bearing credential key %s bypass JSON scanning",
+    (field) => {
+      const literal = ["live", "1234567890abcdef"].join("_");
+      expect(
+        scanPatchForSecrets("config/service.json", `+{"${field}":"${literal}"}`)
+      ).toContainEqual(
+        expect.objectContaining({ category: "SecretLikeAssignment", severity: "high" })
+      );
+    }
+  );
+
+  it("does not treat an old-style package-lock dependency as a credential container", () => {
+    const patch = [
+      '+  "dependencies": {',
+      '+    "js-tokens": {',
+      '+      "version": "9.0.1",',
+      '+      "resolved": "https://registry.npmjs.org/js-tokens/-/js-tokens-9.0.1.tgz",',
+      '+      "integrity": "sha512-ordinary-package-integrity"',
+      "+    }",
+      "+  }",
+    ].join("\n");
+
+    expect(scanPatchForSecrets("package-lock.json", patch)).toEqual([]);
+  });
+
+  it("does not let package metadata hide a credential container", () => {
+    const patch = [
+      '+{"apikey": {',
+      '+  "version": "1.0.0",',
+      '+  "resolved": "https://registry.invalid/example.tgz",',
+      '+  "value": "$TOKEN_PREFIX-$TOKEN_SUFFIX"',
+      "+}}",
+    ].join("\n");
+
+    expect(scanPatchForSecrets("package-lock.json", patch)).toContainEqual(
+      expect.objectContaining({ category: "DynamicSecretConstruction", severity: "high" })
+    );
+  });
+
+  it("keeps a large package-lock package member out of credential budgets", () => {
+    const patch = [
+      '+  "node_modules/js-tokens": {',
+      '+    "version": "9.0.1",',
+      ...Array.from(
+        { length: 101 },
+        (_, index) => `+    "dependency-${index}": "1.0.${index}",`
+      ),
+      '+    "integrity": "sha512-ordinary-package-integrity"',
+      "+  }",
+    ].join("\n");
+
+    expect(scanPatchForSecrets("package-lock.json", patch)).toEqual([]);
+  });
+
+  it("does not treat a node_modules auth-token package as a credential container", () => {
+    const patch = [
+      '+  "node_modules/@octokit/auth-token": {',
+      '+    "version": "6.0.0",',
+      '+    "resolved": "https://registry.npmjs.org/@octokit/auth-token/-/auth-token-6.0.0.tgz",',
+      '+    "integrity": "sha512-ordinary-package-integrity"',
+      "+  }",
+    ].join("\n");
+
+    expect(scanPatchForSecrets("package-lock.json", patch)).toEqual([]);
+  });
+
+  it("does not treat an old scoped auth-token package as a credential container", () => {
+    const patch = [
+      '+  "@octokit/auth-token": {',
+      '+    "version": "6.0.0",',
+      '+    "resolved": "https://registry.npmjs.org/@octokit/auth-token/-/auth-token-6.0.0.tgz",',
+      '+    "integrity": "sha512-ordinary-package-integrity"',
+      "+  }",
+    ].join("\n");
+
+    expect(scanPatchForSecrets("package-lock.json", patch)).toEqual([]);
+  });
+
+  it.each(["package-lock.json", "npm-shrinkwrap.json"])(
+    "does not treat an old unscoped auth-token package as a credential container in %s",
+    (filename) => {
+      const patch = [
+        '+  "dependencies": {',
+        '+    "auth-token": {',
+        '+      "version": "6.0.0",',
+        '+      "resolved": "https://registry.npmjs.org/auth-token/-/auth-token-6.0.0.tgz",',
+        '+      "integrity": "sha512-ordinary-package-integrity"',
+        "+    }",
+        "+  }",
+      ].join("\n");
+
+      expect(scanPatchForSecrets(filename, patch)).toEqual([]);
+    }
+  );
+
+  it("still scans credential fields inside an old package-lock package member", () => {
+    const patch = [
+      '+  "dependencies": {',
+      '+    "auth-token": {',
+      '+      "version": "6.0.0",',
+      '+      "apiKey": "$TOKEN_PREFIX-$TOKEN_SUFFIX"',
+      "+    }",
+      "+  }",
+    ].join("\n");
+
+    expect(scanPatchForSecrets("package-lock.json", patch)).toContainEqual(
+      expect.objectContaining({ category: "DynamicSecretConstruction", severity: "high" })
+    );
+  });
+
+  it("does not carry old-lock dependency structure across diff hunks", () => {
+    const patch = [
+      "@@ -1,0 +1,2 @@",
+      "+{",
+      '+  "dependencies": {',
+      "@@ -100,0 +102,1 @@",
+      '+"auth-token":{"value":"$TOKEN_PREFIX-$TOKEN_SUFFIX"}',
+    ].join("\n");
+
+    expect(scanPatchForSecrets("package-lock.json", patch)).toContainEqual(
+      expect.objectContaining({ category: "DynamicSecretConstruction", severity: "high" })
+    );
+  });
+
+  it("fails high for an ambiguous old-lock package fragment without its parent", () => {
+    const patch =
+      '+"auth-token":{"version":"6.0.0","resolved":"https://registry.invalid/auth-token.tgz"}';
+
+    expect(scanPatchForSecrets("package-lock.json", patch)).toContainEqual(
+      expect.objectContaining({ category: "SecretLikeAssignment", severity: "high" })
+    );
+  });
+
+  it("does not let a node_modules prefix bypass an ordinary JSON credential key", () => {
+    const literal = ["live", "1234567890abcdef"].join("_");
+    expect(
+      scanPatchForSecrets(
+        "config/service.json",
+        `+{"node_modules/apiKey":"${literal}"}`
+      )
+    ).toContainEqual(
+      expect.objectContaining({ category: "SecretLikeAssignment", severity: "high" })
+    );
+  });
+
+  it.each([
+    ["node_modules/apiKey", ["live", "1234567890abcdef"].join("_")],
+    ["@scope/auth-token", ["live", "1234567890abcdef"].join("_")],
+    ["node_modules/apiKey", "$TOKEN_PREFIX-$TOKEN_SUFFIX"],
+  ])("does not let a scalar package-shaped key %s bypass lockfile scanning", (field, value) => {
+    const findings = scanPatchForSecrets(
+      "package-lock.json",
+      `+{"${field}":"${value}"}`
+    );
+
+    expect(findings).toContainEqual(
+      expect.objectContaining({ severity: "high" })
+    );
+  });
+
+  it("keeps an auth-token key in ordinary JSON credential scope", () => {
+    const literal = ["live", "1234567890abcdef"].join("_");
+    expect(
+      scanPatchForSecrets("config/service.json", `+{"auth-token":"${literal}"}`)
+    ).toContainEqual(
+      expect.objectContaining({ category: "SecretLikeAssignment", severity: "high" })
+    );
+  });
+
+  it.each(["apiKey1", "awsAccessKeyId1"])(
+    "keeps a numbered credential target %s in scope",
+    (field) => {
+      const literal = ["live", "1234567890abcdef"].join("_");
+      expect(
+        scanPatchForSecrets("config/service.json", `+{"${field}":"${literal}"}`)
+      ).toContainEqual(
+        expect.objectContaining({ category: "SecretLikeAssignment", severity: "high" })
+      );
+    }
+  );
+
+  it("does not carry a credential-named JSON array value into the next member", () => {
+    const patch = [
+      '+    "apiKey"',
+      "+    ,",
+      '+    "displayName": "$LABEL_PREFIX-$LABEL_SUFFIX"',
+    ].join("\n");
+
+    expect(scanPatchForSecrets("config/service.json", patch)).toEqual([]);
+  });
+
+  it("does not grow a neutral JSONC separator through comment-only lines", () => {
+    const patch = [
+      '+  "displayName"',
+      "+    :",
+      ...Array.from({ length: 99 }, (_, index) => `+    // explanation ${index}`),
+      '+    "ordinary-value",',
+    ].join("\n");
+
+    expect(scanPatchForSecrets("config/service.jsonc", patch)).toEqual([]);
+  });
+
+  it("handles long JSONC comment runs without quadratic lookahead", () => {
+    const patch = Array.from(
+      { length: 20_000 },
+      (_, index) => `+// generated explanation ${index}`
+    ).join("\n");
+
+    expect(scanPatchForSecrets("config/generated.jsonc", patch)).toEqual([]);
+  });
+
+  it("does not carry a credential scalar into a following neutral container", () => {
+    const patch = [
+      '+{"apiKey": "example-token-value", "metadata": {',
+      ...Array.from({ length: 99 }, (_, index) => `+  "entry-${index}": ${index},`),
+      "+}}",
+    ].join("\n");
+
+    expect(scanPatchForSecrets("config/service.json", patch)).toEqual([]);
+  });
+
+  it("still fails closed for one oversized JSON line", () => {
+    const patch = `+  \"metadata\": \"${"x".repeat(70_000)}\"`;
+
+    expect(scanPatchForSecrets("config/generated.json", patch)).toContainEqual(
+      expect.objectContaining({ category: "SecretScanEvidenceIncomplete", severity: "high" })
+    );
+  });
+
+  it("fails closed when a JSON credential container reaches the line bound", () => {
+    const patch = [
+      '+  "apiKeys": [',
+      ...Array.from({ length: 99 }, (_, index) => `+    "value-${index}",`),
+      "+  ]",
+    ].join("\n");
+
+    expect(scanPatchForSecrets("config/generated.json", patch)).toContainEqual(
+      expect.objectContaining({ category: "SecretScanEvidenceIncomplete", severity: "high" })
+    );
+  });
+
+  it("fails closed before deeply scanning a JSON statement with too many operators", () => {
+    const openings = Array.from({ length: 500 }, (_, index) => `"layer-${index}": {`).join("");
+    const patch = `+{"apiKey": {${openings}"leaf": "ordinary-value"${"}".repeat(502)}}`;
+
+    const findings = scanPatchForSecrets("config/generated.json", patch);
+    expect(findings).toContainEqual(
+      expect.objectContaining({ category: "SecretScanEvidenceIncomplete", severity: "high" })
+    );
+    expect(findings[0]?.reason).toContain("100-operator");
+  });
+
+  it("fails closed when bounded JSON operator work is exhausted below the count limit", () => {
+    const padding = "x".repeat(55_000);
+    const patch = `+{"apiKey": {"one": {"two": {"three": {"four": "${padding}"}}}}}`;
+
+    const findings = scanPatchForSecrets("config/generated.json", patch);
+    expect(findings).toContainEqual(
+      expect.objectContaining({ category: "SecretScanEvidenceIncomplete", severity: "high" })
+    );
+    expect(findings[0]?.reason).toContain("256,000-work-unit");
+  });
+
+  it("propagates an operator-limited context key to an added JSON value", () => {
+    const members = Array.from({ length: 101 }, (_, index) => `"entry-${index}": ${index}`);
+    const literal = ["live", "1234567890abcdef"].join("_");
+    const patch = ` {${members.join(", ")}, "apiKey":\n+  "${literal}"}`;
+
+    expect(scanPatchForSecrets("config/generated.json", patch)).toContainEqual(
+      expect.objectContaining({ category: "SecretScanEvidenceIncomplete", severity: "high" })
+    );
+  });
+
+  it("propagates a work-limited context key to an added JSON value", () => {
+    const padding = "x".repeat(55_000);
+    const literal = ["live", "1234567890abcdef"].join("_");
+    const patch = ` {"padding": "${padding}", "one": 1, "two": 2, "three": 3, "apiKey":\n+  "${literal}"}`;
+
+    expect(scanPatchForSecrets("config/generated.json", patch)).toContainEqual(
+      expect.objectContaining({ category: "SecretScanEvidenceIncomplete", severity: "high" })
+    );
+  });
+
+  it("propagates a character-truncated context container to an added JSON value", () => {
+    const padding = "x".repeat(65_000);
+    const literal = ["live", "1234567890abcdef"].join("_");
+    const patch = ` {"apiKey": ["${padding}",\n+  "${literal}"]}`;
+
+    expect(scanPatchForSecrets("config/generated.json", patch)).toContainEqual(
+      expect.objectContaining({ category: "SecretScanEvidenceIncomplete", severity: "high" })
+    );
+  });
+
+  it("does not taint a hard-limited context hunk for a comment-only addition", () => {
+    const padding = "x".repeat(65_000);
+    const patch = ` {"metadata": "${padding}"}\n+// formatting note only`;
+
+    expect(scanPatchForSecrets("config/generated.jsonc", patch)).toEqual([]);
+  });
+
+  it("does not taint an unrelated addition after hard-limited neutral context", () => {
+    const padding = "x".repeat(65_000);
+    const patch = ` {"metadata": "${padding}"}\n+{"displayName":"demo"}`;
+
+    expect(scanPatchForSecrets("config/generated.json", patch)).toEqual([]);
+  });
+
+  it("does not taint an unrelated addition after a standalone token label", () => {
+    const patch = [
+      ' "token"',
+      ` /*${"x".repeat(65_000)}*/`,
+      '+{"displayName":"demo"}',
+    ].join("\n");
+
+    expect(scanPatchForSecrets("config/generated.jsonc", patch)).toEqual([]);
+  });
+
+  it("propagates a line-limited context container to an added JSON value", () => {
+    const literal = ["live", "1234567890abcdef"].join("_");
+    const patch = [
+      ' {"apiKey": [',
+      ...Array.from({ length: 99 }, (_, index) => `   "ordinary-${index}",`),
+      `+  "${literal}"]}`,
+    ].join("\n");
+
+    expect(scanPatchForSecrets("config/generated.json", patch)).toContainEqual(
+      expect.objectContaining({ category: "SecretScanEvidenceIncomplete", severity: "high" })
+    );
+  });
+
+  it("fails closed when a split context key crosses the JSONC line bound", () => {
+    const literal = ["live", "1234567890abcdef"].join("_");
+    const patch = [
+      ' "apiKey"',
+      ...Array.from({ length: 99 }, (_, index) => ` // context ${index}`),
+      "+:",
+      `+"${literal}"`,
+    ].join("\n");
+
+    expect(scanPatchForSecrets("config/generated.jsonc", patch)).toContainEqual(
+      expect.objectContaining({ category: "SecretScanEvidenceIncomplete", severity: "high" })
+    );
+  });
+
+  it("fails closed when a split context key crosses the JSONC character bound", () => {
+    const literal = ["live", "1234567890abcdef"].join("_");
+    const patch = [
+      ' "apiKey"',
+      ` /*${"x".repeat(65_000)}*/`,
+      "+:",
+      `+"${literal}"`,
+    ].join("\n");
+
+    expect(scanPatchForSecrets("config/generated.jsonc", patch)).toContainEqual(
       expect.objectContaining({ category: "SecretScanEvidenceIncomplete", severity: "high" })
     );
   });
