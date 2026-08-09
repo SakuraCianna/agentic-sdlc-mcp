@@ -47,6 +47,8 @@ T4 的 `mcp-tool-contract.integration.test.ts` 使用同一张 13 工具 case �
 
 T5 的 `run-inspector-contracts.mjs` 使用隔离 lockfile 中精确固定的 Inspector 2.0.0，以显式 ad-hoc stdio target 调用正式 `dist/index.js`。它只消费 `--format json` stdout 与 JSON error envelope，验证 server version、legacy `2025-11-25` initialize、13 tools、5 resources 的逐项 read、显式 `dryRun:true` 且 created 为 0 的 `create_issue_set`，以及 invalid schema/unknown resource URI 的稳定机器退出与错误码。所有 `tools/call` 都只指向 `create_issue_set` 且显式保持 dry-run。runner 通过 Inspector 官方 `-e` 向目标传固定环境 allowlist，并要求真正的 `dist/index.js` 子进程写入临时 harness marker，避免只保护 Inspector 父进程的假阳性。它不改写 HOME，但通过未发布的 Node `--import` 护栏屏蔽全局产品配置路径，清除真实 GitHub 凭据、隔离 Inspector storage/OAuth/client state，并为纯 stdio 验证禁用全部 fetch/TCP（本地 IPC path 除外）；placeholder 与继承 canary 不得进入 stdout、stderr 或制品。该门禁证明 Inspector legacy CLI 与当前构建产物兼容，不是官方认证，也不替代 T3/T4 对 modern `server/discover` 的显式 SDK 证据。
 
+T6 复用同一 runner，在 `127.0.0.1:0` 启动生产 HTTP adapter，并让 Inspector 以 canonical `/mcp` target、`--transport http`、`--stored-auth-only` 非交互执行同一 discovery/read/dry-run 契约及 invalid schema、unknown tool、closed-listener 错误路径。HTTP discovery 会与独立 stdio Inspector 的完整 tools/resources JSON 比较，覆盖 schema、annotations 与 metadata，而不只比较名称/URI。隔离 401 loopback fixture 使用空 OAuth store，并故意把 auto-open 设为 true；门禁要求 Inspector 立即返回 `3/auth_required`，且预加载的 browser-spawn marker 不得出现，证明 `--stored-auth-only` 没有进入交互 OAuth。HTTP harness 只允许精确 IPv4 loopback，拒绝 `localhost`、DNS/欺骗 hostname 与公网；成功和失败路径都关闭 listener/child。Inspector 2.0.0 在 Windows 的错误命令收尾可能于正确 JSON 后触发一个已知 libuv closing assertion；runner 只接受精确 Windows status、精确 JSON code 和精确两行 stderr，并保留 raw exit/class，Linux 或任何额外输出仍失败。Conformance 0.1.16 使用隔离 lockfile 对 legacy `2025-11-25` active suite 运行非阻塞 pilot，固定 30 个场景、5 个直接通过和 25 个带 reason/owner/remove condition 的预期缺口；新增失败与 stale baseline 都失败。artifact 仅保留可审查 check 字段，剥离 raw `details`/timestamp，不含凭据、Issue 正文或私有仓库数据。成功摘要只在 server close 成功后生成，cleanup 错误不会被吞掉；非零 runner 输出不会原样写入 CI 日志。该 pilot 不是官方认证，也不会驱动添加假 production prompt/tool/resource；modern required 证据仍由 T3/T4 显式 SDK v2 client 提供。
+
 公共工具契约从不可变 `v1.9.0` tag/commit 生成，记录 source SHA，并按语义比较 breaking/additive 变化。禁止从升级后的当前工作树伪造旧 baseline，也禁止在普通测试中自动更新；更新必须由单独命令执行，让 PR 显示工具/resource 删除、schema required/类型变化、annotations 与描述变化。大段 inline snapshot 不能替代 output schema 对真实 `structuredContent` 的逐工具验证。
 
 T1 的 `contracts/mcp/v1.9.0.json` 固定到 release commit `3e1cdbb2d591ba482903f53579f1f76cc95ff1c4`。`npm run contracts:check` 构建当前 server，通过真实 SDK client discovery 做快速只读语义比较，并验证本地 tag/SHA；`npm run contracts:verify-baseline` 在独立 Node 24 CI job 从系统临时目录重放历史 checkout，逐字证明 tracked JSON 可重复；`npm run contracts:generate` 是唯一写入入口。历史安装使用 lockfile 与 `--ignore-scripts --no-audit --no-fund`，需要 npm registry，但不得调用 GitHub API/模型服务、读取 GitHub/model 凭据或启动公网监听。历史 discovery 在短生命周期 Node 子进程内执行，子进程 cwd 位于 checkout 外且只继承进程启动所需的系统路径、临时目录、locale 与动态库环境变量；业务配置、凭据、`NODE_OPTIONS`、storage 与 OAuth state 都不会进入子进程。Windows 在模块句柄释放后再注销 worktree，并以有界重试删除依赖树。discovery 有 15 秒 deadline，路径 containment 与 Git worktree 注册状态都会被校验。
@@ -79,7 +81,9 @@ Inspector 2 与 Conformance 的 engine/依赖树属于测试工具边界：各�
 
 ## 覆盖率门槛
 
-`npm run test:coverage` 当前执行全局最低门槛：statements 94%、branches 89%、functions 94%、lines 95%，并输出 text、LCOV 与 `coverage/coverage-summary.json`。当前基线为 1188 个测试、96.33% statements / 91.27% branches / 97.01% functions / 97.08% lines；门槛刻意保留 Node 22/24 插桩余量。新增边界覆盖包括扫描器 Workflow 精确 provenance、无关 Workflow 负例、重命名前路径、双扫描器逐 signal 隔离、自定义 Gitleaks/TruffleHog 配置、动态/绝对/穿越/歧义参数拒绝、合法空格/括号仓库路径、Actions API 失败、旧 provenance 缺口清理、输入不可变、非法 URL/YAML/workflow AST、不可用 base Workflow 内容、嵌套模板词法状态、scanner provenance/workflow fixture 元数据误判、GitHub Issue/PR 混合元数据归一化、HTTP Host/Origin 前置于有界 JSON parsing、双时代 negotiation/取消/关闭、pending factory 结算与 modern handoff 同 tick 竞态、跨时代 header/body 冲突、有界 factory 错误、全工具双时代真实调用，以及 Inspector 环境/JSON/退出/网络边界。真实动态 credential 与 header sink 的正向控制保持 fail-high。
+`npm run test:coverage` 当前执行全局最低门槛：statements 94%、branches 89%、functions 94%、lines 95%，并输出 text、LCOV 与 `coverage/coverage-summary.json`。当前基线为 1304 个测试、96.37% statements / 91.22% branches / 97.09% functions / 97.14% lines；门槛刻意保留 Node 22/24 插桩余量。新增边界覆盖包括扫描器 Workflow 精确 provenance、无关 Workflow 负例、重命名前路径、双扫描器逐 signal 隔离、自定义 Gitleaks/TruffleHog 配置、动态/绝对/穿越/歧义参数拒绝、合法空格/括号仓库路径、Actions API 失败、旧 provenance 缺口清理、输入不可变、非法 URL/YAML/workflow AST、不可用 base Workflow 内容、嵌套模板词法状态、scanner provenance/workflow fixture 元数据误判、JSON/lockfile 普通成员分隔扫描、新旧 package-lock 与 npm-shrinkwrap 包成员形状、真实 node_modules/scoped package member 负例、package metadata 不能自证豁免、package-shaped scalar 不豁免、跨 hunk 结构隔离、转义与斜杠凭据键、编号凭据目标、中立键后的已知裸密钥格式、凭据键/值/容器跨行分组、quoted/unquoted scalar 与 array/object literal、placeholder、嵌套 literal 去重、UI/DOM `accessKey` 负例、多行/嵌套 ternary operator 识别、Ruby predicate/Rust postfix question mark 分隔、Swift/PHP/Dart/Elixir question-mark syntax、C/C++ ternary comma-expression/decimal literal、多行 credential ternary 延续、同行多 member continuation、凭据相关同 hunk context taint、split context key 的 100 行/64 KiB fail-closed、20,000 行 JSONC 线性 lookahead，以及单行/凭据容器/operator/work 上限 fail-closed、GitHub Issue/PR 混合元数据归一化、HTTP Host/Origin 前置于有界 JSON parsing、双时代 negotiation/取消/关闭、pending factory 结算与 modern handoff 同 tick 竞态、跨时代 header/body 冲突、有界 factory 错误、全工具双时代真实调用，以及 Inspector stdio/HTTP/认证/完整 discovery、Conformance artifact 与网络/退出/cleanup 边界。真实动态 credential 与 header sink 的正向控制保持 fail-high。
+
+旧版 lockfile 的局部 diff 如果没有包含其 `dependencies` 父对象，补充启发式无法证明该 member 的结构位置，会保守保留 credential finding；这是避免由不连续或恶意 hunk 伪造父结构而关闭扫描的 fail-high 取舍。完整 lockfile、`node_modules/...` 键、scoped package 键，以及同一 hunk 内可验证的旧 `dependencies` 结构均有独立负例。
 
 门槛用于阻止回退，不是完成定义。新增高风险模块应优先达到更高的局部覆盖，尤其是权限、策略、证据截断和写入边界。提高门槛前先观察完整套件的稳定基线并保留合理余量；降低门槛、扩大 exclude 或删除断言必须在 PR 中单独解释，不能作为通过 CI 的快捷方式。
 
@@ -95,6 +99,9 @@ npm run contracts:check
 npm run contracts:verify-baseline
 npm run contracts:inspector:install
 npm run contracts:inspector:stdio
+npm run contracts:inspector:http
+npm run contracts:conformance:install
+npm run contracts:conformance:pilot
 npm run smoke
 npm run check:line-endings
 ```

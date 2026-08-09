@@ -100,6 +100,7 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             tools/inspector/package-lock.json
+            tools/conformance/package-lock.json
 
       - name: Install product dependencies
         run: npm ci
@@ -107,5 +108,22 @@ jobs:
       - name: Install pinned Inspector without lifecycle scripts
         run: npm run contracts:inspector:install
 
+      - name: Install pinned Conformance runner without lifecycle scripts
+        run: npm run contracts:conformance:install
+
       - name: Verify stdio through Inspector 2
         run: npm run contracts:inspector:stdio
+
+      - name: Verify loopback HTTP through Inspector 2
+        run: npm run contracts:inspector:http
+
+      - name: Run legacy MCP Conformance pilot
+        run: npm run contracts:conformance:pilot
+
+      - name: Upload sanitized Conformance checks
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: conformance-v0.1.16-node-24
+          path: artifacts/conformance/v0.1.16/checks.json
+          if-no-files-found: error
+          retention-days: 14
