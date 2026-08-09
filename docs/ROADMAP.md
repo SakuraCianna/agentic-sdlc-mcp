@@ -1544,6 +1544,8 @@ interface ToolDependencies {
 
 > **T5 进展（2026-08-01）：** Inspector 2.0.0 已由隔离 lockfile 精确固定，并通过显式 ad-hoc stdio target 从进程外启动正式 `dist/index.js`。本地 Windows Node 24 已通过 53 files/1188 tests 和 Inspector 黑盒，PR #64 的 Linux Node 24 Inspector job 与 Node 22/24 产品矩阵、不可变基线、Gitleaks 均通过。门禁验证 legacy `2025-11-25` initialize、server version、13 tools、5 resources 的逐项 read、显式 `create_issue_set dryRun:true` 且 created 为 0，以及 invalid schema/unknown resource URI 的机器退出与错误码；所有 `tools/call` 都只指向 dry-run 工具。runner 使用官方 `-e` 把固定环境传给目标，真实 server 未写临时 harness marker 时会失败；它不改写 HOME、不读取默认 Inspector catalog，独立 storage/OAuth/client state，屏蔽产品全局配置文件，清除真实 GitHub 凭据，并在纯 stdio 检查中禁用全部 fetch/TCP。该结果不是 MCP 官方认证，也不证明 modern `server/discover`。
 
+> **T7 进展（2026-08-09）：** 已建立 provider-neutral 的 scenario/trace schema、7 类稳定 finding、分数/critical 双门槛和版本化 SHA-256 digest。required/allowed/forbidden、顺序、最大调用数、live write 与安全 gate 均有确定性正反例；trace 强制区分 `scripted`、`recorded-agent`、`live-model`。checked-in draft 2020-12 JSON Schema 与 Zod 结构由测试精确比对，普通 `npm run eval:score` 没有自动更新 golden/schema 的路径。T8–T11 的 12 个真实 MCP client 场景、注入矩阵、预算和故障注入仍待完成。
+
 目标：验证“agent 是否能正确发现、选择和组合工具”，而不只验证 TypeScript handler。将协议契约、客户端兼容、响应预算和稳定 evaluation 建成独立质量阶段。
 
 当前代码缺口：
@@ -1552,7 +1554,7 @@ interface ToolDependencies {
 - 已完成稳定 SDK v2 分包迁移、2025-era initialize parity、本地 2025/2026 双 era 与 13 工具双时代矩阵；T2/T3/T4 的 Node 22/24 CI 均已通过。
 - 已有固定 v1.9.0 的 tool/resource discovery manifest、backward-compatibility gate，以及 structuredContent/Markdown 的 13 工具双 era 调用矩阵。
 - 真实 MCP tool call 集成测试已覆盖全部 13 个工具、代表性 schema/GitHub 错误和可恢复降级；Inspector stdio/HTTP 的进程外调用与 Conformance 0.1.16 artifact pilot 已完成。
-- 没有 provider-neutral 的工具选择、多工具组合、trace scorer 与稳定答案 evaluation。
+- 已完成 provider-neutral scenario/trace schema 与确定性 trace scorer；T8/T9 的工具选择、多工具组合和稳定答案场景仍待完成。
 - evidence/handoff 已有局部预算，但没有跨工具统一的 API calls、items、字符/bytes、延迟测量和故障注入报告。
 
 #### 1. MCP 契约、兼容性与 evaluation

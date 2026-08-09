@@ -5,6 +5,7 @@ interface PackageMetadata {
   name: string;
   version: string;
   mcpName?: string;
+  files?: string[];
 }
 
 interface RegistryEnvironmentVariable {
@@ -49,6 +50,8 @@ describe("MCP Registry metadata", () => {
     const registryPackage = server.packages?.[0];
 
     expect(pkg.mcpName).toBe("io.github.SakuraCianna/agentic-sdlc-mcp");
+    expect(pkg.files).toContain("evaluation/schema.json");
+    expect(pkg.files).not.toContain("evaluation");
     expect(server.$schema).toBe(
       "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json"
     );

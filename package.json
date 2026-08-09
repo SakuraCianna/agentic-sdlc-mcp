@@ -10,6 +10,7 @@
   },
   "files": [
     "dist",
+    "evaluation/schema.json",
     "README.md",
     "server.json",
     ".env.example"
@@ -29,6 +30,8 @@
     "test:integration": "vitest run src/__tests__/config.integration.test.ts src/__tests__/mcp-protocol.integration.test.ts src/__tests__/mcp-era.integration.test.ts src/__tests__/mcp-tool-runtime.integration.test.ts src/__tests__/mcp-tool-contract.integration.test.ts src/__tests__/mcp-http-runtime.integration.test.ts src/__tests__/mcp-stdio-process.integration.test.ts",
     "pretest:coverage": "npm run build",
     "test:coverage": "vitest run --coverage",
+    "preeval:score": "npm run build",
+    "eval:score": "vitest run src/__tests__/evaluation/scorer.test.ts",
     "contracts:generate": "npm run build && node scripts/generate-mcp-contract.mjs --tag v1.9.0 --expected-commit 3e1cdbb2d591ba482903f53579f1f76cc95ff1c4 --release-url https://github.com/SakuraCianna/agentic-sdlc-mcp/releases/tag/v1.9.0 --output contracts/mcp/v1.9.0.json --update",
     "contracts:check": "npm run build && node scripts/check-mcp-contract.mjs",
     "contracts:verify-baseline": "npm run build && node scripts/verify-mcp-baseline.mjs",
