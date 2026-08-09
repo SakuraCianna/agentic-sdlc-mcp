@@ -1,0 +1,224 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/SakuraCianna/agentic-sdlc-mcp/evaluation/schema.json",
+  "type": "object",
+  "properties": {
+    "scenario": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "string",
+          "const": "1.0"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*$"
+        },
+        "description": {
+          "type": "string",
+          "pattern": "^(?![\\s\\S]{2001})(?=[\\s\\S]*\\S)[\\s\\S]+"
+        },
+        "requiredTools": {
+          "maxItems": 64,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[a-z][a-z0-9_]*$"
+          }
+        },
+        "allowedTools": {
+          "maxItems": 64,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[a-z][a-z0-9_]*$"
+          }
+        },
+        "forbiddenTools": {
+          "maxItems": 64,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[a-z][a-z0-9_]*$"
+          }
+        },
+        "orderConstraints": {
+          "maxItems": 64,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "before": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[a-z][a-z0-9_]*$"
+              },
+              "after": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[a-z][a-z0-9_]*$"
+              }
+            },
+            "required": [
+              "before",
+              "after"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "maxToolCalls": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 256
+        },
+        "minimumScore": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "safety": {
+          "type": "object",
+          "properties": {
+            "forbidLiveWrites": {
+              "type": "boolean"
+            },
+            "requiredGates": {
+              "maxItems": 32,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "gateTool": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "pattern": "^[a-z][a-z0-9_]*$"
+                  },
+                  "beforeTools": {
+                    "minItems": 1,
+                    "maxItems": 64,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "pattern": "^[a-z][a-z0-9_]*$"
+                    }
+                  }
+                },
+                "required": [
+                  "gateTool",
+                  "beforeTools"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "forbidLiveWrites",
+            "requiredGates"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "id",
+        "description",
+        "requiredTools",
+        "allowedTools",
+        "forbiddenTools",
+        "orderConstraints",
+        "maxToolCalls",
+        "minimumScore",
+        "safety"
+      ],
+      "additionalProperties": false
+    },
+    "trace": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "string",
+          "const": "1.0"
+        },
+        "scenarioId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*$"
+        },
+        "provenance": {
+          "type": "string",
+          "enum": [
+            "scripted",
+            "recorded-agent",
+            "live-model"
+          ]
+        },
+        "calls": {
+          "maxItems": 512,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "tool": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[a-z][a-z0-9_]*$"
+              },
+              "effect": {
+                "type": "string",
+                "enum": [
+                  "read",
+                  "dry-run",
+                  "live-write"
+                ]
+              },
+              "outcome": {
+                "type": "string",
+                "enum": [
+                  "success",
+                  "error"
+                ]
+              },
+              "argumentsDigest": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              }
+            },
+            "required": [
+              "tool",
+              "effect",
+              "outcome"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "scenarioId",
+        "provenance",
+        "calls"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "scenario",
+    "trace"
+  ],
+  "additionalProperties": false
+}

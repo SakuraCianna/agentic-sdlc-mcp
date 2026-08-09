@@ -6,6 +6,7 @@ All notable changes to this project are documented here. Release history is also
 
 ### Added
 
+- Added the provider-neutral T7 evaluation foundation: bounded scenario/trace schemas, explicit scripted/recorded-agent/live-model provenance, a deterministic machine-readable scorer for tool selection/order/write/gate violations, versioned SHA-256 digests, and a checked-in JSON Schema drift gate exposed through `npm run eval:score`.
 - Added an immutable v1.9.0 MCP discovery manifest, generated from its pinned release commit through real `tools/list` and `resources/list` calls in an isolated detached worktree.
 - Added a semantic compatibility gate for tool/resource removal, input narrowing or default drift, output guarantee loss, annotation or MIME drift, with explicit-only baseline updates and Node 22/24 CI coverage.
 - Added a separate Node 24 read-only replay that rebuilds the pinned v1.9.0 checkout and byte-compares fresh discovery with the tracked baseline, while the Node 22/24 matrix keeps the faster current-contract comparison.
@@ -15,7 +16,7 @@ All notable changes to this project are documented here. Release history is also
 - Added an Inspector 2.0.0 stdio black-box gate with an isolated lockfile. It launches the real built entry through an explicit ad-hoc target, verifies legacy initialization, 13 tools, five resource reads, a zero-write issue preview, and machine-readable invalid-schema/unknown-resource failures without inheriting credentials or allowing external network access.
 - Added an Inspector 2.0.0 loopback HTTP gate against the production adapter, including complete stdio/HTTP discovery JSON parity, an empty-store 401 `stored-auth-only`/no-browser proof, canonical-target validation, exact loopback network isolation, reliable child/listener cleanup, and machine-readable invalid-schema, unknown-tool, and closed-listener failures.
 - Added a pinned Conformance 0.1.16 legacy pilot with a sanitized `checks.json` artifact. Its 25 expected gaps each carry a reason, owner, and removal condition; five scenarios currently pass directly, while new failures and stale baseline entries fail the run.
-- Raised the global coverage regression floors to 94% statements, 89% branches, 94% functions, and 95% lines; after adding the full tool matrix, Inspector/Conformance runner boundaries, and bounded JSON secret-scanner regressions, the current 1305-test baseline is 96.37% statements, 91.22% branches, 97.09% functions, and 97.14% lines.
+- Raised the global coverage regression floors to 94% statements, 89% branches, 94% functions, and 95% lines; after adding the full tool matrix, Inspector/Conformance runner boundaries, bounded secret-scanner regressions, and the T7 evaluation scorer, the current 1327-test baseline is 96.46% statements, 91.26% branches, 97.17% functions, and 97.22% lines.
 
 ### Changed
 
