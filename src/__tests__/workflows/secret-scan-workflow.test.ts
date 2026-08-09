@@ -20,7 +20,7 @@ describe("secret scan workflow", () => {
 
     expect(workflow.permissions).toEqual({ contents: "read" });
     expect(job?.name).toBe("gitleaks");
-    expect(uses).toContain("actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0");
+    expect(uses).toContain("actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1");
     expect(uses).toContain("gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e");
     expect(scannerStep?.env).toMatchObject({
       GITLEAKS_CONFIG: ".gitleaks.toml",
