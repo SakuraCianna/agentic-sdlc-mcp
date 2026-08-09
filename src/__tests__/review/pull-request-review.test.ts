@@ -507,6 +507,232 @@ describe("scanPatchForSecrets", () => {
     expect(scanPatchForSecrets("src/security/risk-classifier.ts", patch)).toEqual([]);
   });
 
+  it("does not treat a multiline ternary colon as a credential assignment", () => {
+    const patch = [
+      "+const reason = limited",
+      "+  ? `The credential scan exceeded ${operatorLimit}`",
+      "+  : `The credential construction exceeded ${workLimit}`;",
+    ].join("\n");
+
+    expect(scanPatchForSecrets("src/review/scanner.ts", patch)).toEqual([]);
+  });
+
+  it("does not self-report a multiline ternary inside scanner finding metadata", () => {
+    const patch = [
+      "+recordFinding(",
+      "+  finding(",
+      '+    "high",',
+      '+    "SecretScanEvidenceIncomplete",',
+      '+    "security",',
+      "+    `An added credential statement exceeded the bound.`,",
+      "+    [normalizedFilename],",
+      "+    operatorAnalysisLimited",
+      "+      ? `The credential scan exceeded ${operatorLimit}.`",
+      "+      : `The credential construction exceeded ${workLimit}.`,",
+      '+    "Split the credential statement before merging."',
+      "+  )",
+      "+);",
+    ].join("\n");
+
+    expect(scanPatchForSecrets("src/review/scanner.ts", patch)).toEqual([]);
+  });
+
+  it("still flags credential construction inside a ternary assignment", () => {
+    const patch =
+      "+const apiKey = enabled ? prefix + signature : fallback;";
+
+    expect(scanPatchForSecrets("src/config.ts", patch)).toContainEqual(
+      expect.objectContaining({ category: "DynamicSecretConstruction", severity: "high" })
+    );
+  });
+
+  it("flags credential construction inside a multiline ternary assignment", () => {
+    const patch = [
+      "+const apiKey = enabled",
+      "+  ? prefix + signature",
+      "+  : fallback;",
+    ].join("\n");
+
+    expect(scanPatchForSecrets("src/config.ts", patch)).toContainEqual(
+      expect.objectContaining({ category: "DynamicSecretConstruction", severity: "high" })
+    );
+  });
+
+  it("does not let a Ruby predicate hide a following credential member", () => {
+    const patch =
+      "+config = { enabled: valid?, apiKey: prefix + signature }";
+
+    expect(scanPatchForSecrets("src/config.rb", patch)).toContainEqual(
+      expect.objectContaining({ category: "DynamicSecretConstruction", severity: "high" })
+    );
+  });
+
+  it("does not let a continued Ruby predicate hide a following credential member", () => {
+    const patch =
+      "+config = { enabled: valid? && active, apiKey: prefix + signature }";
+
+    expect(scanPatchForSecrets("src/config.rb", patch)).toContainEqual(
+      expect.objectContaining({ category: "DynamicSecretConstruction", severity: "high" })
+    );
+  });
+
+  it.each([
+    "project.gemspec",
+    "config.ru",
+    "fastlane/Fastfile",
+    "Vagrantfile",
+    "Guardfile",
+    "Podfile",
+  ])("recognizes Ruby predicate syntax in %s", (filename) => {
+    const patch =
+      "+config = { enabled: valid? && active, apiKey: prefix + signature }";
+
+    expect(scanPatchForSecrets(filename, patch)).toContainEqual(
+      expect.objectContaining({ category: "DynamicSecretConstruction", severity: "high" })
+    );
+  });
+
+  it("does not treat a Ruby predicate as a ternary credential expression", () => {
+    const patch =
+      "+config = { enabled: valid?, displayName: prefix + suffix }";
+
+    expect(scanPatchForSecrets("src/config.rb", patch)).toEqual([]);
+  });
+
+  it("does not let a Rust postfix question mark hide a following credential member", () => {
+    const patch =
+      "+let config = Config { parsed: input.parse()?, api_key: prefix + signature };";
+
+    expect(scanPatchForSecrets("src/config.rs", patch)).toContainEqual(
+      expect.objectContaining({ category: "DynamicSecretConstruction", severity: "high" })
+    );
+  });
+
+  it("does not let a cast after a Rust postfix question mark hide a credential", () => {
+    const patch =
+      "+let config = Config { parsed: input.parse()? as usize, api_key: prefix + signature };";
+
+    expect(scanPatchForSecrets("src/config.rs", patch)).toContainEqual(
+      expect.objectContaining({ category: "DynamicSecretConstruction", severity: "high" })
+    );
+  });
+
+  it("does not let Swift optional try hide a following credential member", () => {
+    const patch = [
+      '+let config = ["parsed": try? parse(), "apiKey":',
+      "+  prefix + signature]",
+    ].join("\n");
+
+    expect(scanPatchForSecrets("src/Config.swift", patch)).toContainEqual(
+      expect.objectContaining({ category: "DynamicSecretConstruction", severity: "high" })
+    );
+  });
+
+  it("does not let a Swift conditional cast hide a following credential member", () => {
+    const patch =
+      '+let config = ["parsed": value as? String, "apiKey": prefix + signature]';
+
+    expect(scanPatchForSecrets("src/Config.swift", patch)).toContainEqual(
+      expect.objectContaining({ category: "DynamicSecretConstruction", severity: "high" })
+    );
+  });
+
+  it("still flags Swift credential construction inside a multiline ternary", () => {
+    const patch = [
+      "+let apiKey = enabled",
+      "+  ? prefix + signature",
+      "+  : fallback",
+    ].join("\n");
+
+    expect(scanPatchForSecrets("src/Config.swift", patch)).toContainEqual(
+      expect.objectContaining({ category: "DynamicSecretConstruction", severity: "high" })
+    );
+  });
+
+  it("does not let a PHP nullsafe expression hide a named credential argument", () => {
+    const patch = [
+      "+buildConfig(parsed: $object?->value, apiKey:",
+      '+  "{$prefix}{$signature}");',
+    ].join("\n");
+
+    expect(scanPatchForSecrets("src/config.php", patch)).toContainEqual(
+      expect.objectContaining({ category: "DynamicSecretConstruction", severity: "high" })
+    );
+  });
+
+  it("still flags PHP credential construction inside a ternary", () => {
+    const patch =
+      '+$apiKey = $enabled ? "{$prefix}{$signature}" : $fallback;';
+
+    expect(scanPatchForSecrets("src/config.php", patch)).toContainEqual(
+      expect.objectContaining({ category: "DynamicSecretConstruction", severity: "high" })
+    );
+  });
+
+  it("does not let a Dart nullable cast hide a following credential member", () => {
+    const patch = [
+      '+final config = {"parsed": value as String? ?? fallback, "apiKey":',
+      '+  "$prefix$signature"};',
+    ].join("\n");
+
+    expect(scanPatchForSecrets("lib/config.dart", patch)).toContainEqual(
+      expect.objectContaining({ category: "DynamicSecretConstruction", severity: "high" })
+    );
+  });
+
+  it("still flags Dart credential construction inside a ternary", () => {
+    const patch =
+      '+final apiKey = enabled ? "$prefix$signature" : fallback;';
+
+    expect(scanPatchForSecrets("lib/config.dart", patch)).toContainEqual(
+      expect.objectContaining({ category: "DynamicSecretConstruction", severity: "high" })
+    );
+  });
+
+  it("does not let an Elixir character literal hide a following credential member", () => {
+    const patch = [
+      "+config = [parsed: ?x, api_key:",
+      '+  "#{prefix}#{signature}"]',
+    ].join("\n");
+
+    expect(scanPatchForSecrets("lib/config.ex", patch)).toContainEqual(
+      expect.objectContaining({ category: "DynamicSecretConstruction", severity: "high" })
+    );
+  });
+
+  it("does not treat an Elixir character literal as credential construction", () => {
+    const patch = "+config = [parsed: ?x, display_name: prefix <> suffix]";
+
+    expect(scanPatchForSecrets("lib/config.exs", patch)).toEqual([]);
+  });
+
+  it("flags C++ credential construction after a comma in a ternary middle operand", () => {
+    const patch =
+      "+const auto apiKey = enabled ? audit(), prefix + signature : fallback;";
+
+    expect(scanPatchForSecrets("src/config.cpp", patch)).toContainEqual(
+      expect.objectContaining({ category: "DynamicSecretConstruction", severity: "high" })
+    );
+  });
+
+  it.each([
+    "+const auto apiKey = enabled ? .5, prefix + signature : fallback;",
+    "+const auto apiKey = enabled?.5, prefix + signature : fallback;",
+  ])("treats a C++ decimal literal after question mark as ternary syntax", (patch) => {
+    expect(scanPatchForSecrets("src/config.cpp", patch)).toContainEqual(
+      expect.objectContaining({ category: "DynamicSecretConstruction", severity: "high" })
+    );
+  });
+
+  it("flags C credential construction in a parenthesized ternary else operand", () => {
+    const patch =
+      "+const char *api_key = enabled ? fallback : (audit(), prefix + signature);";
+
+    expect(scanPatchForSecrets("src/config.c", patch)).toContainEqual(
+      expect.objectContaining({ category: "DynamicSecretConstruction", severity: "high" })
+    );
+  });
+
   it.each([
     [
       "scanner provenance helper",

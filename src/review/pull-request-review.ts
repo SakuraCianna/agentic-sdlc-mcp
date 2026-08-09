@@ -875,7 +875,8 @@ function jsonSecretStatementContinues(
 
 function buildSecretStatements(
   lines: ScannedSecretLine[],
-  jsonFilename?: string
+  jsonFilename?: string,
+  sourceFilename = jsonFilename ?? ""
 ): SecretStatement[] {
   const lineDelimited = jsonFilename !== undefined;
   const statements: SecretStatement[] = [];
@@ -967,16 +968,21 @@ function buildSecretStatements(
       credentialRelevant = true;
     }
     const trimmedCode = code.trimEnd();
+    const nextCode = nextMeaningful?.code ?? "";
     const continues =
       line.lexicallyOpenAfter ||
       bracketDepth(code) > 0 ||
       /(?:[=+%.,?:|&\\]|\b(?:return|yield))\s*$/.test(trimmedCode) ||
-      /^\s*(?:[=+%]|\.(?:append|concat|format|join)\b)/.test(nextMeaningful?.code ?? "");
+      /^\s*(?:[=+%]|\?|\.(?:append|concat|format|join)\b)/.test(nextCode) ||
+      (/^\s*:/.test(nextCode) &&
+        analyzeAssignmentOperators(code, sourceFilename).hasPendingTernary);
     // JSON member values can start after a newline, and credential arrays or
     // objects need bounded grouping. Neutral container members stay line-local
     // so a whole lockfile is not misclassified as one unterminated statement.
     const jsonColonIndexes = lineDelimited
-      ? assignmentOperatorIndexes(code).filter((operatorIndex) => code[operatorIndex] === ":")
+      ? assignmentOperatorIndexes(code, sourceFilename).filter(
+          (operatorIndex) => code[operatorIndex] === ":"
+        )
       : [];
     const jsonContinues = lineDelimited
       ? secretOperatorAnalysisExceedsLimit(code, jsonColonIndexes)
@@ -1007,31 +1013,150 @@ function buildSecretStatements(
   return statements;
 }
 
-function assignmentOperatorIndexes(code: string): number[] {
+function analyzeAssignmentOperators(code: string, filename = ""): {
+  indexes: number[];
+  hasPendingTernary: boolean;
+} {
   const indexes: number[] = [];
-  for (let index = 0; index < code.length; index += 1) {
-    const character = code[index] ?? "";
-    const previous = code[index - 1] ?? "";
-    const next = code[index + 1] ?? "";
+  const syntaxCode = maskRegularExpressionLiterals(code);
+  const nextSignificantByIndex = nextSignificantCharacters(syntaxCode);
+  const ternaryCountsByDepth = new Map<number, number>();
+  let depth = 0;
+  for (let index = 0; index < syntaxCode.length; index += 1) {
+    const character = syntaxCode[index] ?? "";
+    const previous = syntaxCode[index - 1] ?? "";
+    const next = syntaxCode[index + 1] ?? "";
+    if (character === "(" || character === "[" || character === "{") {
+      depth += 1;
+      continue;
+    }
+    if (character === ")" || character === "]" || character === "}") {
+      ternaryCountsByDepth.delete(depth);
+      depth = Math.max(0, depth - 1);
+      continue;
+    }
+    if (
+      isTernaryQuestion(
+        syntaxCode,
+        index,
+        nextSignificantByIndex[index] ?? "",
+        filename
+      )
+    ) {
+      ternaryCountsByDepth.set(depth, (ternaryCountsByDepth.get(depth) ?? 0) + 1);
+      continue;
+    }
+    if (character === ";") {
+      ternaryCountsByDepth.delete(depth);
+      continue;
+    }
     if (character === "=") {
       if (next === "=" || next === ">" || /[=!<>]/.test(previous)) continue;
       indexes.push(index);
     } else if (character === ":") {
+      const ternaryCount = ternaryCountsByDepth.get(depth) ?? 0;
+      if (ternaryCount > 0) {
+        if (ternaryCount === 1) ternaryCountsByDepth.delete(depth);
+        else ternaryCountsByDepth.set(depth, ternaryCount - 1);
+        continue;
+      }
       if (next === "=" || previous === ":" || previous === "?") continue;
       indexes.push(index);
     }
   }
-  return indexes;
+  return {
+    indexes,
+    hasPendingTernary: [...ternaryCountsByDepth.values()].some((count) => count > 0),
+  };
 }
 
-function assignmentExpressionEnd(code: string, start: number): number {
-  let depth = 0;
-  for (let index = start; index < code.length; index += 1) {
+function assignmentOperatorIndexes(code: string, filename = ""): number[] {
+  return analyzeAssignmentOperators(code, filename).indexes;
+}
+
+function nextSignificantCharacters(code: string): string[] {
+  const result = new Array<string>(code.length).fill("");
+  let nextSignificant = "";
+  for (let index = code.length - 1; index >= 0; index -= 1) {
+    result[index] = nextSignificant;
     const character = code[index] ?? "";
+    if (!/\s/u.test(character)) nextSignificant = character;
+  }
+  return result;
+}
+
+function isTernaryQuestion(
+  code: string,
+  index: number,
+  nextSignificant: string,
+  filename = ""
+): boolean {
+  const previous = code[index - 1] ?? "";
+  const next = code[index + 1] ?? "";
+  const optionalChaining = next === "." && !/\d/u.test(code[index + 2] ?? "");
+  const rustPostfix = /\.rs$/iu.test(filename);
+  const rubyPredicate =
+    isRubySourceFilename(filename) &&
+    /[A-Za-z0-9_]/u.test(previous);
+  const swiftOptionalOperator =
+    /\.swift$/iu.test(filename) &&
+    /(?:^|[^A-Za-z0-9_])(?:try|as)\s*$/u.test(
+      code.slice(Math.max(0, index - 12), index)
+    );
+  const phpNullsafeOperator =
+    /\.php$/iu.test(filename) && /^\?\s*->/u.test(code.slice(index, index + 6));
+  const elixirCharacterLiteral = /\.exs?$/iu.test(filename);
+  return (
+    code[index] === "?" &&
+    !rustPostfix &&
+    !rubyPredicate &&
+    !swiftOptionalOperator &&
+    !phpNullsafeOperator &&
+    !elixirCharacterLiteral &&
+    previous !== "?" &&
+    next !== "?" &&
+    !optionalChaining &&
+    next !== ":" &&
+    !/[?,:;)\]}]/u.test(nextSignificant)
+  );
+}
+
+function isRubySourceFilename(filename: string): boolean {
+  const basename = filename.split(/[/\\]/u).at(-1) ?? "";
+  return (
+    /\.(?:gemspec|rake|rb|ru)$/iu.test(basename) ||
+    /^(?:Appraisals|Berksfile|Brewfile|Capfile|Dangerfile|Deliverfile|Fastfile|Gemfile|Guardfile|Podfile|Rakefile|Vagrantfile)$/iu.test(
+      basename
+    )
+  );
+}
+
+function assignmentExpressionEnd(code: string, start: number, filename = ""): number {
+  const syntaxCode = maskRegularExpressionLiterals(code);
+  const nextSignificantByIndex = nextSignificantCharacters(syntaxCode);
+  let depth = 0;
+  let pendingTernaryCount = 0;
+  for (let index = start; index < syntaxCode.length; index += 1) {
+    const character = syntaxCode[index] ?? "";
     if (character === "(" || character === "[" || character === "{") depth += 1;
     else if (character === ")" || character === "]" || character === "}") {
       depth = Math.max(0, depth - 1);
-    } else if (depth === 0 && (character === "," || character === ";")) {
+    } else if (
+      depth === 0 &&
+      isTernaryQuestion(
+        syntaxCode,
+        index,
+        nextSignificantByIndex[index] ?? "",
+        filename
+      )
+    ) {
+      pendingTernaryCount += 1;
+    } else if (depth === 0 && character === ":" && pendingTernaryCount > 0) {
+      pendingTernaryCount -= 1;
+    } else if (
+      depth === 0 &&
+      (character === ";" || (character === "," && pendingTernaryCount === 0))
+    ) {
       return index;
     }
   }
@@ -1351,7 +1476,8 @@ export function scanPatchForSecrets(
   if (isJsonDocument) markOldPackageLockMembers(scannedLines, normalizedFilename);
   const statements = buildSecretStatements(
     scannedLines,
-    isJsonDocument ? normalizedFilename : undefined
+    isJsonDocument ? normalizedFilename : undefined,
+    normalizedFilename
   );
   const hunksWithMeaningfulAdditions = new Set(
     scannedLines
@@ -1364,7 +1490,7 @@ export function scanPatchForSecrets(
     credentialAliasesByHunk.set(statement.hunk, aliases);
     let dynamicConstructionRecorded = false;
     const recordedJsonLiteralSpans = new Set<string>();
-    const operatorIndexes = assignmentOperatorIndexes(statement.code);
+    const operatorIndexes = assignmentOperatorIndexes(statement.code, normalizedFilename);
     const operatorAnalysisLimited = secretOperatorAnalysisExceedsLimit(
       statement.code,
       operatorIndexes
@@ -1396,7 +1522,7 @@ export function scanPatchForSecrets(
       const targetStart = assignmentTargetStart(statement.code, operatorIndex);
       const expressionEnd = isJsonDocument
         ? jsonMemberExpressionEnd(statement.code, operatorIndex + 1)
-        : assignmentExpressionEnd(statement.code, operatorIndex + 1);
+        : assignmentExpressionEnd(statement.code, operatorIndex + 1, normalizedFilename);
       const target = statement.raw.slice(targetStart, operatorIndex);
       const expression = statement.semantic.slice(operatorIndex + 1, expressionEnd);
       const codeExpression = statement.code.slice(operatorIndex + 1, expressionEnd);
