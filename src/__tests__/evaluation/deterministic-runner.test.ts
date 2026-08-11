@@ -21,17 +21,17 @@ describe("deterministic evaluation runner", () => {
 
   it("passes only the minimal environment allowlist to the child", () => {
     const environment = createDeterministicEvaluationEnvironment({
-      ACTIONS_ID_TOKEN_REQUEST_TOKEN: "oidc-secret",
-      ACTIONS_RUNTIME_TOKEN: "actions-secret",
-      BUSINESS_FLAG: "must-not-cross-offline-boundary",
-      FUTURE_PROVIDER_API_KEY: "unknown-provider-secret",
-      GH_TOKEN: "gh-secret",
-      GITHUB_ID_TOKEN: "github-oidc-secret",
-      GITHUB_TOKEN: "github-secret",
-      github_token: "lowercase-github-secret",
-      MODEL_ACCESS_TOKEN: "model-secret",
+      ACTIONS_ID_TOKEN_REQUEST_TOKEN: "<redacted>",
+      ACTIONS_RUNTIME_TOKEN: "<redacted>",
+      BUSINESS_FLAG: "<redacted>",
+      FUTURE_PROVIDER_API_KEY: "<redacted>",
+      GH_TOKEN: "<redacted>",
+      GITHUB_ID_TOKEN: "<redacted>",
+      GITHUB_TOKEN: "<redacted>",
+      github_token: "<redacted>",
+      MODEL_ACCESS_TOKEN: "<redacted>",
       PATH: "fixture-path",
-      PRIVATE_SIGNING_KEY: "signing-secret",
+      PRIVATE_SIGNING_KEY: "<redacted>",
       CI: "true",
       LANG: "en_US.UTF-8",
     });
