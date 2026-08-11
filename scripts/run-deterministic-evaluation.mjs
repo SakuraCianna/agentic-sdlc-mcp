@@ -14,6 +14,7 @@ const GROUP_TESTS = new Map([
       "src/__tests__/evaluation/selection.test.ts",
     ],
   ],
+  ["critical", ["src/__tests__/evaluation/critical.test.ts"]],
 ]);
 const ALLOWED_ENVIRONMENT_NAMES = [
   "CI",
@@ -40,7 +41,9 @@ const ALLOWED_ENVIRONMENT_NAME_SET = new Set(ALLOWED_ENVIRONMENT_NAMES);
 
 export function parseDeterministicEvaluationArgs(args) {
   if (args.length !== 2 || args[0] !== "--group") {
-    throw new Error("Usage: npm run eval:deterministic -- --group selection");
+    throw new Error(
+      `Usage: npm run eval:deterministic -- --group <${[...GROUP_TESTS.keys()].join("|")}>`
+    );
   }
   const group = args[1];
   if (!GROUP_TESTS.has(group)) {

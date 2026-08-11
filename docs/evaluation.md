@@ -44,13 +44,18 @@ scorer 从 100 分开始应用固定 penalty，并把结果限制在 0–100：
 ```powershell
 npm run eval:score
 npm run eval:deterministic -- --group selection
+npm run eval:deterministic -- --group critical
 ```
 
-`eval:score` 构建 TypeScript 后运行固定的正例、反例、阈值、digest、schema drift 和输入上限测试。`eval:deterministic` 当前只接受显式 `selection` group：它只向子进程传递 CI、locale、颜色、系统路径、临时目录等最小安全环境 allowlist，设置 offline 标记，并通过真实 MCP 2.0.0 client/server 内存 transport 重放以下 6 个 versioned 场景：
+`eval:score` 构建 TypeScript 后运行固定的正例、反例、阈值、digest、schema drift 和输入上限测试。`eval:deterministic` 只接受显式注册的 `selection` 或 `critical` group；两者都只向子进程传递 CI、locale、颜色、系统路径、临时目录等最小安全环境 allowlist，设置 offline 标记，并通过真实 MCP 2.0.0 client/server 内存 transport 重放 versioned 场景。
+
+`selection` 包含以下 6 个 recorded-agent 场景：
 
 - repository briefing 与 Issue risk brief；
 - plan→issue preview（`create_issue_set dryRun:true`）；
 - PR quality gate 与 PR standards review；
 - branch protection→workflow permissions governance。
 
-场景使用固定 Octokit fixture 和结构化断言；plan 的 structured `issueDrafts` 必须原样进入 preview，每个场景都必须保持外部 fetch、socket 与 live issue create 为零调用。checked-in trace 的 provenance 是 `recorded-agent`，顶层固定 source revision、记录日期、recorder、Issue #44 evidence URL、脱敏规则、整体 content digest 与 `fixed-fixture` replay mode；每次 replay 从实际调用参数重算 `argumentsDigest`。原始参数和返回内容不会进入 trace。它证明这组 agent 工具选择的历史记录可被确定性重放，不代表当前或未来模型的实时能力。T9–T11 后续才会加入另外 6 个多工具/提示词注入场景、预算测量与 GitHub 故障注入；当前 6 个场景和 scorer 不能替代这些尚未完成的证据，也不等同于模型评测认证。
+`selection` 使用固定 Octokit fixture 和结构化断言；plan 的 structured `issueDrafts` 必须原样进入 preview，每个场景都必须保持外部 fetch、socket 与 live issue create 为零调用。checked-in trace 的 provenance 是 `recorded-agent`，顶层固定 source revision、记录日期、recorder、Issue #44 evidence URL、脱敏规则、整体 content digest 与 `fixed-fixture` replay mode；每次 replay 从实际调用参数重算 `argumentsDigest`。原始参数和返回内容不会进入 trace。它证明这组 agent 工具选择的历史记录可被确定性重放，不代表当前或未来模型的实时能力。
+
+`critical` 当前包含 6 个 `scripted` 多工具场景：security triage→PR review、security triage→release readiness、quality gate→release readiness、release readiness→release evidence、Issue evidence→handoff，以及 degraded Issue evidence→handoff。每个场景都固定两次调用，第二次调用从第一次 `structuredContent` 派生参数或 gate 决策；checked-in trace 固定实际重放参数的 canonical SHA-256。正向 trace 全部 score 100、无 critical finding，逆序、跳 gate、forbidden tool 和 live-write 负控 fail closed，外部 fetch、socket 与 live issue create 保持零调用。它只证明确定性组合与安全规则，不是 recorded-agent 或 live-model 选择能力。T9 的提示词注入来源与 channel parity、T10 预算测量、T11 GitHub 故障注入仍待完成。

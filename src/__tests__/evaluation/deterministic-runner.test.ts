@@ -6,9 +6,12 @@ import {
 } from "../../../scripts/run-deterministic-evaluation.mjs";
 
 describe("deterministic evaluation runner", () => {
-  it("accepts only the explicit selection group", () => {
+  it("accepts only an explicit registered group", () => {
     expect(parseDeterministicEvaluationArgs(["--group", "selection"])).toBe(
       "selection"
+    );
+    expect(parseDeterministicEvaluationArgs(["--group", "critical"])).toBe(
+      "critical"
     );
     expect(() => parseDeterministicEvaluationArgs([])).toThrow(/Usage/u);
     expect(() =>

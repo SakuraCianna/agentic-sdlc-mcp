@@ -1,0 +1,60 @@
+{
+  "schemaVersion": "1.0",
+  "group": "critical",
+  "traces": [
+    {
+      "schemaVersion": "1.0",
+      "scenarioId": "security-review-gate",
+      "provenance": "scripted",
+      "calls": [
+        { "tool": "security_triage", "effect": "read", "outcome": "success", "argumentsDigest": "8aa96eeed3967252af82607c1c50d7a463b92e1a2acb0707d96632482f42c0ab" },
+        { "tool": "review_pr_against_standard", "effect": "read", "outcome": "success", "argumentsDigest": "b6ae244a6b9efb067c88fb069ec49a87c87cf1d814c511c14c495b1339d17c47" }
+      ]
+    },
+    {
+      "schemaVersion": "1.0",
+      "scenarioId": "security-release-gate",
+      "provenance": "scripted",
+      "calls": [
+        { "tool": "security_triage", "effect": "read", "outcome": "success", "argumentsDigest": "8aa96eeed3967252af82607c1c50d7a463b92e1a2acb0707d96632482f42c0ab" },
+        { "tool": "release_readiness_check", "effect": "read", "outcome": "success", "argumentsDigest": "df24beb63183aa4a8645f8e917021130a5fd841f37e1e2fa18d111caa03453b3" }
+      ]
+    },
+    {
+      "schemaVersion": "1.0",
+      "scenarioId": "quality-release-gate",
+      "provenance": "scripted",
+      "calls": [
+        { "tool": "quality_gate_status", "effect": "read", "outcome": "success", "argumentsDigest": "4f96737fe5ad071216c863a5f71faf36971060568bbbe462e766d848ea5d1baf" },
+        { "tool": "release_readiness_check", "effect": "read", "outcome": "success", "argumentsDigest": "470562d74751f125de25c6276d2fdbd5eede740a4f43c8f1fca63d516df3c89b" }
+      ]
+    },
+    {
+      "schemaVersion": "1.0",
+      "scenarioId": "release-evidence-packet",
+      "provenance": "scripted",
+      "calls": [
+        { "tool": "release_readiness_check", "effect": "read", "outcome": "success", "argumentsDigest": "df24beb63183aa4a8645f8e917021130a5fd841f37e1e2fa18d111caa03453b3" },
+        { "tool": "sdlc_evidence_packet", "effect": "read", "outcome": "success", "argumentsDigest": "d84b51875cba13256e5f52991be795d726e24c0c95212ef757ed0dd010f4d621" }
+      ]
+    },
+    {
+      "schemaVersion": "1.0",
+      "scenarioId": "evidence-agent-handoff",
+      "provenance": "scripted",
+      "calls": [
+        { "tool": "sdlc_evidence_packet", "effect": "read", "outcome": "success", "argumentsDigest": "2305c586ba5e92329eb2475dcb07ebfe5dfde7cf4778e1c32290bf49ca53b4cf" },
+        { "tool": "agent_handoff_packet", "effect": "read", "outcome": "success", "argumentsDigest": "1579c662ea750a0f0cfe810f905edfe3e3ee4ee6ea61331c6df0917f8e6530dc" }
+      ]
+    },
+    {
+      "schemaVersion": "1.0",
+      "scenarioId": "degraded-evidence-handoff",
+      "provenance": "scripted",
+      "calls": [
+        { "tool": "sdlc_evidence_packet", "effect": "read", "outcome": "success", "argumentsDigest": "2305c586ba5e92329eb2475dcb07ebfe5dfde7cf4778e1c32290bf49ca53b4cf" },
+        { "tool": "agent_handoff_packet", "effect": "read", "outcome": "success", "argumentsDigest": "52e5ae37bb02c092df4999990df2b39a81de50ba9ee6b2ccdac3572d08f17e11" }
+      ]
+    }
+  ]
+}
