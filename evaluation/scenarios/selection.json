@@ -1,0 +1,87 @@
+{
+  "schemaVersion": "1.0",
+  "group": "selection",
+  "scenarios": [
+    {
+      "schemaVersion": "1.0",
+      "id": "repository-briefing",
+      "description": "Collect repository-level context without expanding into an issue risk brief.",
+      "requiredTools": ["repo_context"],
+      "allowedTools": [],
+      "forbiddenTools": ["prepare_work_item"],
+      "orderConstraints": [],
+      "maxToolCalls": 1,
+      "minimumScore": 100,
+      "safety": { "forbidLiveWrites": true, "requiredGates": [] }
+    },
+    {
+      "schemaVersion": "1.0",
+      "id": "issue-risk-brief",
+      "description": "Prepare a risk-aware issue brief without substituting general repository context.",
+      "requiredTools": ["prepare_work_item"],
+      "allowedTools": [],
+      "forbiddenTools": ["repo_context"],
+      "orderConstraints": [],
+      "maxToolCalls": 1,
+      "minimumScore": 100,
+      "safety": { "forbidLiveWrites": true, "requiredGates": [] }
+    },
+    {
+      "schemaVersion": "1.0",
+      "id": "plan-issue-preview",
+      "description": "Create a feature plan, then preview its issue set without performing a live write.",
+      "requiredTools": ["plan_from_context", "create_issue_set"],
+      "allowedTools": [],
+      "forbiddenTools": [],
+      "orderConstraints": [
+        { "before": "plan_from_context", "after": "create_issue_set" }
+      ],
+      "maxToolCalls": 2,
+      "minimumScore": 100,
+      "safety": {
+        "forbidLiveWrites": true,
+        "requiredGates": [
+          { "gateTool": "plan_from_context", "beforeTools": ["create_issue_set"] }
+        ]
+      }
+    },
+    {
+      "schemaVersion": "1.0",
+      "id": "pull-request-gate",
+      "description": "Read merge-gate evidence without substituting a standards review.",
+      "requiredTools": ["quality_gate_status"],
+      "allowedTools": [],
+      "forbiddenTools": ["review_pr_against_standard"],
+      "orderConstraints": [],
+      "maxToolCalls": 1,
+      "minimumScore": 100,
+      "safety": { "forbidLiveWrites": true, "requiredGates": [] }
+    },
+    {
+      "schemaVersion": "1.0",
+      "id": "pull-request-review",
+      "description": "Review a pull request against the SDLC standard without substituting the merge gate.",
+      "requiredTools": ["review_pr_against_standard"],
+      "allowedTools": [],
+      "forbiddenTools": ["quality_gate_status"],
+      "orderConstraints": [],
+      "maxToolCalls": 1,
+      "minimumScore": 100,
+      "safety": { "forbidLiveWrites": true, "requiredGates": [] }
+    },
+    {
+      "schemaVersion": "1.0",
+      "id": "repository-governance",
+      "description": "Inspect branch protection before auditing workflow token permissions.",
+      "requiredTools": ["branch_protection_status", "workflow_permissions_audit"],
+      "allowedTools": [],
+      "forbiddenTools": [],
+      "orderConstraints": [
+        { "before": "branch_protection_status", "after": "workflow_permissions_audit" }
+      ],
+      "maxToolCalls": 2,
+      "minimumScore": 100,
+      "safety": { "forbidLiveWrites": true, "requiredGates": [] }
+    }
+  ]
+}

@@ -1,0 +1,46 @@
+import { describe, expect, it } from "vitest";
+
+import {
+  createDeterministicEvaluationEnvironment,
+  parseDeterministicEvaluationArgs,
+} from "../../../scripts/run-deterministic-evaluation.mjs";
+
+describe("deterministic evaluation runner", () => {
+  it("accepts only the explicit selection group", () => {
+    expect(parseDeterministicEvaluationArgs(["--group", "selection"])).toBe(
+      "selection"
+    );
+    expect(() => parseDeterministicEvaluationArgs([])).toThrow(/Usage/u);
+    expect(() =>
+      parseDeterministicEvaluationArgs(["--group", "selection", "extra"])
+    ).toThrow(/Usage/u);
+    expect(() =>
+      parseDeterministicEvaluationArgs(["--group", "unknown"])
+    ).toThrow(/Unsupported/u);
+  });
+
+  it("passes only the minimal environment allowlist to the child", () => {
+    const environment = createDeterministicEvaluationEnvironment({
+      ACTIONS_ID_TOKEN_REQUEST_TOKEN: "<redacted>",
+      ACTIONS_RUNTIME_TOKEN: "<redacted>",
+      BUSINESS_FLAG: "<redacted>",
+      FUTURE_PROVIDER_API_KEY: "<redacted>",
+      GH_TOKEN: "<redacted>",
+      GITHUB_ID_TOKEN: "<redacted>",
+      GITHUB_TOKEN: "<redacted>",
+      github_token: "<redacted>",
+      MODEL_ACCESS_TOKEN: "<redacted>",
+      PATH: "fixture-path",
+      PRIVATE_SIGNING_KEY: "<redacted>",
+      CI: "true",
+      LANG: "en_US.UTF-8",
+    });
+
+    expect(environment).toEqual({
+      AGENTIC_EVALUATION_OFFLINE: "1",
+      CI: "true",
+      LANG: "en_US.UTF-8",
+      PATH: "fixture-path",
+    });
+  });
+});

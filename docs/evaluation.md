@@ -1,6 +1,6 @@
 # Agent Evaluation 基础
 
-v1.10 的 Evaluation 层用于离线判断 agent trace 是否满足工具选择、顺序和安全约束。T7 只提供 provider-neutral schema、确定性 scorer 与 digest；它不调用模型、不访问 GitHub，也不执行 trace 中记录的工具。
+v1.10 的 Evaluation 层用于离线判断 agent trace 是否满足工具选择、顺序和安全约束。T7 提供 provider-neutral schema、确定性 scorer 与 digest；T8 保存 6 个真实 Agentic SDLC MCP 使用产生的脱敏 `recorded-agent` selection trace，并使用固定 GitHub fixture 通过真实 MCP client 离线重放。required CI 不调用模型、不访问真实 GitHub，也不执行 live write。
 
 ## 固定输入
 
@@ -43,6 +43,14 @@ scorer 从 100 分开始应用固定 penalty，并把结果限制在 0–100：
 
 ```powershell
 npm run eval:score
+npm run eval:deterministic -- --group selection
 ```
 
-该命令构建 TypeScript 后运行固定的正例、反例、阈值、digest、schema drift 和输入上限测试。T8–T11 后续才会加入 12 个真实 MCP client 场景、提示词注入矩阵、预算测量与 GitHub 故障注入；当前 scorer 不能替代这些尚未完成的证据，也不等同于模型评测认证。
+`eval:score` 构建 TypeScript 后运行固定的正例、反例、阈值、digest、schema drift 和输入上限测试。`eval:deterministic` 当前只接受显式 `selection` group：它只向子进程传递 CI、locale、颜色、系统路径、临时目录等最小安全环境 allowlist，设置 offline 标记，并通过真实 MCP 2.0.0 client/server 内存 transport 重放以下 6 个 versioned 场景：
+
+- repository briefing 与 Issue risk brief；
+- plan→issue preview（`create_issue_set dryRun:true`）；
+- PR quality gate 与 PR standards review；
+- branch protection→workflow permissions governance。
+
+场景使用固定 Octokit fixture 和结构化断言；plan 的 structured `issueDrafts` 必须原样进入 preview，每个场景都必须保持外部 fetch、socket 与 live issue create 为零调用。checked-in trace 的 provenance 是 `recorded-agent`，顶层固定 source revision、记录日期、recorder、Issue #44 evidence URL、脱敏规则、整体 content digest 与 `fixed-fixture` replay mode；每次 replay 从实际调用参数重算 `argumentsDigest`。原始参数和返回内容不会进入 trace。它证明这组 agent 工具选择的历史记录可被确定性重放，不代表当前或未来模型的实时能力。T9–T11 后续才会加入另外 6 个多工具/提示词注入场景、预算测量与 GitHub 故障注入；当前 6 个场景和 scorer 不能替代这些尚未完成的证据，也不等同于模型评测认证。

@@ -1546,6 +1546,8 @@ interface ToolDependencies {
 
 > **T7 进展（2026-08-09）：** 已建立 provider-neutral 的 scenario/trace schema、7 类稳定 finding、分数/critical 双门槛和版本化 SHA-256 digest。required/allowed/forbidden、顺序、最大调用数、live write 与安全 gate 均有确定性正反例；trace 强制区分 `scripted`、`recorded-agent`、`live-model`。checked-in draft 2020-12 JSON Schema 与 Zod 结构由测试精确比对，普通 `npm run eval:score` 没有自动更新 golden/schema 的路径。T8–T11 的 12 个真实 MCP client 场景、注入矩阵、预算和故障注入仍待完成。
 
+> **T8 进展（2026-08-11）：** 已加入 6 个 versioned selection scenario 和真实 Agentic SDLC MCP 使用产生的脱敏 `recorded-agent` trace，覆盖 repository briefing、Issue 风险简报、plan→issue preview、PR gate、PR review 与 branch→workflow governance。Issue #44 保留可审计录制摘要；仓库 trace 只保存工具名/effect/outcome、合成重放参数 SHA-256 与整体 content digest，不保存原始参数/返回内容。required CI 通过真实 MCP 2.0.0 `Client.callTool` 和固定 Octokit fixture 离线重放，plan 的 `issueDrafts` 原样进入 `create_issue_set dryRun:true`；逐场景禁止外部 fetch/socket/live issue create，相似工具互设 forbidden。`npm run eval:deterministic -- --group selection` 仅传递最小安全环境 allowlist 后通过 12 项 runner/场景测试，完整 scorer 的场景通过率为 100%，并用错误相似工具、逆序、跳 gate 和 live-write 控制证明坏 trace 会失败。T9 的 6 个安全关键/注入场景及 T10–T11 仍待完成。
+
 目标：验证“agent 是否能正确发现、选择和组合工具”，而不只验证 TypeScript handler。将协议契约、客户端兼容、响应预算和稳定 evaluation 建成独立质量阶段。
 
 当前代码缺口：
@@ -1554,7 +1556,7 @@ interface ToolDependencies {
 - 已完成稳定 SDK v2 分包迁移、2025-era initialize parity、本地 2025/2026 双 era 与 13 工具双时代矩阵；T2/T3/T4 的 Node 22/24 CI 均已通过。
 - 已有固定 v1.9.0 的 tool/resource discovery manifest、backward-compatibility gate，以及 structuredContent/Markdown 的 13 工具双 era 调用矩阵。
 - 真实 MCP tool call 集成测试已覆盖全部 13 个工具、代表性 schema/GitHub 错误和可恢复降级；Inspector stdio/HTTP 的进程外调用与 Conformance 0.1.16 artifact pilot 已完成。
-- 已完成 provider-neutral scenario/trace schema 与确定性 trace scorer；T8/T9 的工具选择、多工具组合和稳定答案场景仍待完成。
+- 已完成 provider-neutral scenario/trace schema、确定性 trace scorer 与 T8 的 6 个真实 MCP client 工具选择场景；T9 的多工具/注入安全关键场景仍待完成。
 - evidence/handoff 已有局部预算，但没有跨工具统一的 API calls、items、字符/bytes、延迟测量和故障注入报告。
 
 #### 1. MCP 契约、兼容性与 evaluation
