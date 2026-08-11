@@ -1,0 +1,66 @@
+{
+  "schemaVersion": "1.0",
+  "group": "selection",
+  "recording": {
+    "provenance": "recorded-agent",
+    "recordedAt": "2026-08-11",
+    "recorder": "Codex agent using Agentic SDLC MCP",
+    "sourceRevision": "cd77cdaf6a2287c412f3f54550226d0d83b3aaf3",
+    "evidenceUrl": "https://github.com/SakuraCianna/agentic-sdlc-mcp/issues/44#issuecomment-5248456267",
+    "contentDigest": "9a37c0691d5740afaaa67c7748b8bcf66a62fa240d88d054d4dbadc0322d2fed",
+    "sanitization": "Raw arguments and returned content are omitted; canonical SHA-256 digests of sanitized replay arguments are retained.",
+    "replayMode": "fixed-fixture"
+  },
+  "traces": [
+    {
+      "schemaVersion": "1.0",
+      "scenarioId": "repository-briefing",
+      "provenance": "recorded-agent",
+      "calls": [
+        { "tool": "repo_context", "effect": "read", "outcome": "success", "argumentsDigest": "c8ed638ead15a125f2bce750a6808074f4158354f043013056d33effdd350bf3" }
+      ]
+    },
+    {
+      "schemaVersion": "1.0",
+      "scenarioId": "issue-risk-brief",
+      "provenance": "recorded-agent",
+      "calls": [
+        { "tool": "prepare_work_item", "effect": "read", "outcome": "success", "argumentsDigest": "be21184cb37127f5587999cfaa630418b1a2853b14eff732b8d284d8e11082cc" }
+      ]
+    },
+    {
+      "schemaVersion": "1.0",
+      "scenarioId": "plan-issue-preview",
+      "provenance": "recorded-agent",
+      "calls": [
+        { "tool": "plan_from_context", "effect": "read", "outcome": "success", "argumentsDigest": "c4613818c85d3465d4879860f8582158bc1f90cbddfc761d26864c64d859a1e0" },
+        { "tool": "create_issue_set", "effect": "dry-run", "outcome": "success", "argumentsDigest": "b7b3a63941aa3fdc9f411a4b3f9702c0af7936d6cec5e609fa18f961c0667755" }
+      ]
+    },
+    {
+      "schemaVersion": "1.0",
+      "scenarioId": "pull-request-gate",
+      "provenance": "recorded-agent",
+      "calls": [
+        { "tool": "quality_gate_status", "effect": "read", "outcome": "success", "argumentsDigest": "4f96737fe5ad071216c863a5f71faf36971060568bbbe462e766d848ea5d1baf" }
+      ]
+    },
+    {
+      "schemaVersion": "1.0",
+      "scenarioId": "pull-request-review",
+      "provenance": "recorded-agent",
+      "calls": [
+        { "tool": "review_pr_against_standard", "effect": "read", "outcome": "success", "argumentsDigest": "b6ae244a6b9efb067c88fb069ec49a87c87cf1d814c511c14c495b1339d17c47" }
+      ]
+    },
+    {
+      "schemaVersion": "1.0",
+      "scenarioId": "repository-governance",
+      "provenance": "recorded-agent",
+      "calls": [
+        { "tool": "branch_protection_status", "effect": "read", "outcome": "success", "argumentsDigest": "6c159b98ae50c115a02a37d9af84f953b0c86f00415d08eb267bd156c71e2109" },
+        { "tool": "workflow_permissions_audit", "effect": "read", "outcome": "success", "argumentsDigest": "5f2dfc4d341658d268e902ed8c4d3aa0f94facad414f8fd604d571bd547a9128" }
+      ]
+    }
+  ]
+}
