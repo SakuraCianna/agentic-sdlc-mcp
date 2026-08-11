@@ -258,17 +258,52 @@ function hasLabel(labels: string[], pattern: RegExp): boolean {
   return labels.some((label) => pattern.test(label));
 }
 
+function stripUrlTargetsForClassification(value: string): string {
+  const chunks: string[] = [];
+  let visibleStart = 0;
+  let cursor = 0;
+  while (cursor < value.length) {
+    const prefixLength = value.slice(cursor, cursor + 8).toLowerCase() === "https://"
+      ? 8
+      : value.slice(cursor, cursor + 7).toLowerCase() === "http://"
+        ? 7
+        : 0;
+    if (prefixLength === 0) {
+      cursor += 1;
+      continue;
+    }
+    chunks.push(value.slice(visibleStart, cursor));
+    cursor += prefixLength;
+    let parenthesisDepth = 0;
+    while (cursor < value.length) {
+      const character = value[cursor] ?? "";
+      if (/\s/u.test(character) || /[}>"]/u.test(character)) break;
+      if (character === "(") {
+        parenthesisDepth += 1;
+      } else if (character === ")") {
+        if (parenthesisDepth === 0) break;
+        parenthesisDepth -= 1;
+      }
+      cursor += 1;
+    }
+    visibleStart = cursor;
+  }
+  chunks.push(value.slice(visibleStart));
+  return chunks.join("");
+}
+
 export function inferWorkType(pr: ReviewPrMeta, files: PrFile[]): WorkTypeInference {
   const classified = classifyPrFiles(files);
   const labels = normalizedLabels(pr.labels);
   const title = pr.title.trim();
   const body = pr.body ?? "";
+  const semanticBody = stripUrlTargetsForClassification(body);
 
   if (
     hasLabel(labels, /^(?:security|security-fix|vulnerability)$/) ||
     /\b(?:security|vulnerability|cve-\d+|credential exposure)\b/i.test(title) ||
     /\b(?:security(?: hardening| vulnerability)?|credential exposure|threat model|cve-\d+)\b/i.test(
-      body
+      semanticBody
     )
   ) {
     return {
