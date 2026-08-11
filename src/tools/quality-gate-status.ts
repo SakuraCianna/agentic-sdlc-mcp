@@ -483,7 +483,10 @@ function mergePolicyState(evidence: PullRequestEvidence): {
   if (Array.isArray(pullRequestRequirements?.allowedMergeMethods)) {
     unmodeledRules.push("pull_request.allowed_merge_methods");
   }
-  if (pullRequestRequirements?.strictRequiredStatusChecksPolicy) {
+  if (
+    pullRequestRequirements?.strictRequiredStatusChecksPolicy &&
+    (!hasRequiredContexts || evidence.pullRequest.mergeableState === null)
+  ) {
     unmodeledRules.push(
       "required_status_checks.strict_required_status_checks_policy"
     );
@@ -509,14 +512,78 @@ function mergePolicyState(evidence: PullRequestEvidence): {
   };
 }
 
+function hasNonClosingIssueTrailer(body: string | null): boolean {
+  if (!body) return false;
+  let fenceCharacter: "`" | "~" | null = null;
+  let fenceLength = 0;
+  let inHtmlComment = false;
+  for (const line of body.split(/\r?\n/u)) {
+    const trimmed = line.trim();
+    if (fenceCharacter !== null) {
+      let leadingSpaces = 0;
+      while (line[leadingSpaces] === " ") leadingSpaces += 1;
+      const closingCandidate = line.slice(leadingSpaces);
+      if (
+        leadingSpaces <= 3 &&
+        closingCandidate.startsWith(fenceCharacter)
+      ) {
+        let closingLength = 0;
+        while (closingCandidate[closingLength] === fenceCharacter) {
+          closingLength += 1;
+        }
+        if (
+          closingLength >= fenceLength &&
+          closingCandidate.slice(closingLength).trim().length === 0
+        ) {
+          fenceCharacter = null;
+          fenceLength = 0;
+        }
+      }
+      continue;
+    }
+    if (inHtmlComment) {
+      if (trimmed.includes("-->")) inHtmlComment = false;
+      continue;
+    }
+    if (/^(?: {4}|\t)/u.test(line)) continue;
+    if (trimmed.includes("<!--")) {
+      if (!trimmed.includes("-->")) inHtmlComment = true;
+      continue;
+    }
+    const fence = trimmed.match(/^(`{3,}|~{3,})/u)?.[1];
+    if (fence) {
+      const character = fence[0] as "`" | "~";
+      fenceCharacter = character;
+      fenceLength = fence.length;
+      continue;
+    }
+    if (trimmed.startsWith(">")) continue;
+    if (
+      /^(?:part\s+of|related\s+to|refs?|references?)\s+(?:[a-z0-9_.-]+\/[a-z0-9_.-]+)?#\d+\s*[.!]?$/iu.test(
+        trimmed
+      )
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function sourceWarnings(evidence: PullRequestEvidence): string[] {
   const warnings: string[] = [];
   const unverified = new Set(evidence.unverifiedSignals);
+  const hasNonClosingIssueReference = hasNonClosingIssueTrailer(
+    evidence.pullRequest.body
+  );
 
   if (evidence.linkedIssues === null || unverified.has("linked_issues")) {
     warnings.push("linked issue 证据无法验证。 ");
   } else if (evidence.linkedIssues.length === 0) {
-    warnings.push("此 PR 未关联 issue；建议补充可追溯的工作项。 ");
+    warnings.push(
+      hasNonClosingIssueReference
+        ? "PR 正文包含非关闭型 Issue 引用；它可用于追溯，但不会自动关闭 Issue。 "
+        : "此 PR 未关联 issue；建议补充可追溯的工作项。 "
+    );
   }
 
   if (

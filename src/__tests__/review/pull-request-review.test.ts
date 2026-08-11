@@ -266,6 +266,80 @@ describe("inferWorkType", () => {
     ).toBe("bugfix");
   });
 
+  it("does not classify dependency bot help URLs as security work", () => {
+    const result = inferWorkType(
+      pr({
+        title: "build(deps-dev): bump compiler helper",
+        body: [
+          "Bumps a development dependency from 1.0.0 to 1.1.0.",
+          "[Compatibility score](https://docs.github.com/en/code-security/dependabot/dependabot-version-updates)",
+        ].join("\n"),
+      }),
+      [file("package-lock.json")]
+    );
+
+    expect(result.workType).toBe("feature");
+    expect(result.reasoning).not.toMatch(/security-specific/i);
+  });
+
+  it.each([
+    `${"İ".repeat(100)}https://docs.github.com/en/code-security/dependabot`,
+    "https://[::1]/code-security/dependabot",
+    "[local](https://[::1]/code-security/dependabot)",
+    "https://example.test/Foo_(bar)/code-security/dependabot",
+    "[docs](https://example.test/Foo_(bar)/code-security/dependabot)",
+    "https://example.test/owner's/code-security/dependabot",
+  ])("keeps URL-only security words out of classification: %s", (body) => {
+    expect(inferWorkType(pr({ body }), [file("package-lock.json")]).workType).toBe(
+      "feature"
+    );
+  });
+
+  it("keeps genuine dependency vulnerability text classified as security", () => {
+    expect(
+      inferWorkType(
+        pr({ body: "Fixes a security vulnerability tracked as CVE-2026-1234." }),
+        [file("package-lock.json")]
+      ).workType
+    ).toBe("security");
+  });
+
+  it.each([
+    "[advisory](https://example.test)CVE-2026-1234",
+    "[advisory](https://example.test)security vulnerability",
+    "See https://example.test).CVE-2026-1234",
+  ])("keeps security text adjacent to a URL visible: %s", (body) => {
+    expect(inferWorkType(pr({ body }), [file("package-lock.json")]).workType).toBe(
+      "security"
+    );
+  });
+
+  it("classifies a maximum-sized malformed URL body in bounded time", () => {
+    const malformedBody = "](https://a".repeat(5_900).slice(0, 65_536);
+    const startedAt = performance.now();
+
+    const result = inferWorkType(
+      pr({ body: malformedBody }),
+      [file("package-lock.json")]
+    );
+
+    expect(performance.now() - startedAt).toBeLessThan(250);
+    expect(result.workType).toBe("feature");
+  });
+
+  it("classifies many short URLs in bounded time", () => {
+    const repeatedUrls = "https://a.test ".repeat(4_100).slice(0, 65_536);
+    const startedAt = performance.now();
+
+    const result = inferWorkType(
+      pr({ body: repeatedUrls }),
+      [file("package-lock.json")]
+    );
+
+    expect(performance.now() - startedAt).toBeLessThan(250);
+    expect(result.workType).toBe("feature");
+  });
+
   it("classifies refactor signals after bugfix signals", () => {
     const result = inferWorkType(
       pr({ title: "Refactor parser", labels: ["bug", "refactor"] }),

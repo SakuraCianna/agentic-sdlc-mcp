@@ -1548,6 +1548,8 @@ interface ToolDependencies {
 
 > **T8 进展（2026-08-11）：** 已加入 6 个 versioned selection scenario 和真实 Agentic SDLC MCP 使用产生的脱敏 `recorded-agent` trace，覆盖 repository briefing、Issue 风险简报、plan→issue preview、PR gate、PR review 与 branch→workflow governance。Issue #44 保留可审计录制摘要；仓库 trace 只保存工具名/effect/outcome、合成重放参数 SHA-256 与整体 content digest，不保存原始参数/返回内容。required CI 通过真实 MCP 2.0.0 `Client.callTool` 和固定 Octokit fixture 离线重放，plan 的 `issueDrafts` 原样进入 `create_issue_set dryRun:true`；逐场景禁止外部 fetch/socket/live issue create，相似工具互设 forbidden。`npm run eval:deterministic -- --group selection` 仅传递最小安全环境 allowlist 后通过 12 项 runner/场景测试，完整 scorer 的场景通过率为 100%，并用错误相似工具、逆序、跳 gate 和 live-write 控制证明坏 trace 会失败。T9 的 6 个安全关键/注入场景及 T10–T11 仍待完成。
 
+> **真实使用反馈（2026-08-11）：** 使用 Agentic SDLC MCP 审查 #70、#68 和 #69 时复现了三类结论误差，并已纳入成对回归：dependency bot 模板中的安全文档 URL 不再把纯 lockfile 更新判为 security work；strict required checks 在 required context 与 GitHub mergeability 均有权威证据时不再产生伪 `policy_gap`，任一证据缺失仍 fail closed；`Part of #...` 被明确识别为不会自动关闭 Issue 的非关闭型追溯引用，而不是笼统声称 PR 没有关联工作项。正文引用不会被提升为 GitHub verified closing link，也不会改变 gate 权限。
+
 目标：验证“agent 是否能正确发现、选择和组合工具”，而不只验证 TypeScript handler。将协议契约、客户端兼容、响应预算和稳定 evaluation 建成独立质量阶段。
 
 当前代码缺口：

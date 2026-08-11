@@ -419,8 +419,36 @@ describe("evaluateQualityGate PR policy", () => {
     expect(decision.blockers.join(" ")).toMatch(/allowed_merge_methods/i);
   });
 
-  it("fails closed when strict required checks lack authoritative up-to-date evidence", () => {
+  it("models strict required checks when GitHub reports a clean up-to-date PR", () => {
     const evidence = pullRequestEvidence({
+      reviews: {
+        reviewDecision: null,
+        requiredApprovals: null,
+        requireCodeOwnerReviews: false,
+      },
+      ci: ciEvidence({ checkRuns: [signal("build")] }),
+      branchProtection: {
+        classicEnabled: false,
+        rulesetRuleTypes: ["required_status_checks"],
+        requiredStatusContexts: ["build"],
+        requiredStatusChecks: [{ context: "build", appId: null }],
+      },
+    });
+    Object.assign(evidence.branchProtection.pullRequestRuleRequirements, {
+      strictRequiredStatusChecksPolicy: true,
+    });
+
+    const decision = evaluateQualityGate(evidence, DEFAULT_BLOCKING_LABELS);
+
+    expect(decision.conclusion).toBe("passing");
+    expect(decision.blockers.join(" ")).not.toMatch(
+      /strict_required_status_checks_policy/i
+    );
+  });
+
+  it("fails closed when strict required checks lack mergeability evidence", () => {
+    const evidence = pullRequestEvidence({
+      pullRequest: { mergeableState: null },
       reviews: {
         reviewDecision: null,
         requiredApprovals: null,
@@ -946,6 +974,39 @@ describe("warnings and required contexts", () => {
       DEFAULT_BLOCKING_LABELS
     );
 
+    expect(decision.warnings.join(" ")).toMatch(/未关联.*issue/i);
+  });
+
+  it("recognizes a non-closing Part of reference without claiming no traceability", () => {
+    const evidence = pullRequestEvidence({
+      pullRequest: { body: "Part of #44." },
+      linkedIssues: [],
+    });
+    const decision = evaluateQualityGate(evidence, DEFAULT_BLOCKING_LABELS);
+
+    expect(decision.conclusion).toBe("passing");
+    expect(evidence.linkedIssues).toEqual([]);
+    expect(decision.warnings.join(" ")).not.toMatch(/未关联.*issue/i);
+    expect(decision.warnings.join(" ")).toMatch(/非关闭|不会自动关闭/i);
+  });
+
+  it.each([
+    "This is not Part of #44.",
+    "> Part of #44",
+    "```markdown\nPart of #44\n```",
+    "<!--\nPart of #44\n-->",
+    "`Part of #44`",
+    "    Part of #44",
+    "\tPart of #44",
+    "```markdown\nexample\n``` trailing text\nPart of #44\n```",
+    "```markdown\n    ```\nPart of #44\n```",
+    "```markdown\n   \t```\nPart of #44\n```",
+  ])("does not treat untrusted Markdown content as an Issue trailer: %s", (body) => {
+    const evidence = pullRequestEvidence({ pullRequest: { body }, linkedIssues: [] });
+    const decision = evaluateQualityGate(evidence, DEFAULT_BLOCKING_LABELS);
+
+    expect(decision.conclusion).toBe("passing");
+    expect(evidence.linkedIssues).toEqual([]);
     expect(decision.warnings.join(" ")).toMatch(/未关联.*issue/i);
   });
 
