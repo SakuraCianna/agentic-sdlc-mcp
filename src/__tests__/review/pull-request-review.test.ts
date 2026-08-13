@@ -2808,6 +2808,58 @@ describe("evaluatePullRequestReview", () => {
     );
   });
 
+  it("accepts named commands in an infrastructure verification section", () => {
+    const result = evaluatePullRequestReview({
+      pr: pr({
+        body: [
+          "## Verification",
+          "已在 Windows 11 / Node 22 本地执行完整验证链，并由 GitHub-hosted Ubuntu / Node 24 复验。",
+          "- `npm run contracts:check`: 13 tools / 5 resources，0 breaking",
+          "- `npm run eval:ci`: score、selection、critical、budgets、faults 全绿",
+          "## Workflow trigger",
+          "Runs for every pull_request and push to main.",
+          "## Rollback",
+          "Revert the workflow commit and restore the prior required check after a failed run.",
+        ].join("\n"),
+      }),
+      files: [file(".github/workflows/ci.yml"), file("src/__tests__/ci.test.ts")],
+      workType: "infra",
+    });
+
+    expect(
+      result.findings.some((finding) => finding.category === "MissingOperationalVerification")
+    ).toBe(false);
+  });
+
+  it.each([
+    [
+      "Implementation notes\n- `npm run eval:ci`: all green\n## Rollback\nRevert the workflow commit.",
+      "a command outside a verification section",
+    ],
+    [
+      "## Notes\n- `npm run eval:ci`: all green\n## Rollback\nRevert the workflow commit.",
+      "a command in an unrelated section",
+    ],
+    [
+      "## Verification\nnpm is available\n## Rollback\nRevert the workflow commit.",
+      "a CLI name followed by prose",
+    ],
+    [
+      "## Verification\nnpm\n## Rollback\nRevert the workflow commit.",
+      "a CLI name without a command",
+    ],
+  ])("rejects $1 as operational verification", (body) => {
+    const result = evaluatePullRequestReview({
+      pr: pr({ body }),
+      files: [file(".github/workflows/ci.yml"), file("src/__tests__/ci.test.ts")],
+      workType: "infra",
+    });
+
+    expect(result.findings).toContainEqual(
+      expect.objectContaining({ category: "MissingOperationalVerification" })
+    );
+  });
+
   it("returns complete structured fields for every finding", () => {
     const result = evaluatePullRequestReview({
       pr: pr({ body: "tested" }),
