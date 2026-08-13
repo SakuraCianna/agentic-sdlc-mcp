@@ -9,6 +9,10 @@ export function createContractCollectorEnvironment(
   environment?: NodeJS.ProcessEnv
 ): NodeJS.ProcessEnv;
 
+export function createPinnedNpmEnvironment(
+  environment?: NodeJS.ProcessEnv
+): NodeJS.ProcessEnv;
+
 export function isWorktreeListed(
   porcelainOutput: string,
   candidate: string

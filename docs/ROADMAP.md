@@ -1536,7 +1536,7 @@ interface ToolDependencies {
 
 ### v1.10: MCP 契约、Inspector 与 Agent Evaluation
 
-> **状态：执行中（2026-08-01）。** 计划已获批准并合并；#43/#44 已按 T1–T11 更新，#44 已正式标记为 blocked by #43。已复现并修复首批 evaluation 与 PR reviewer 误判。T0 已在最新 main 基线上完成 SDK 1.30 lockfile 桥接，Gitleaks 与 Node 22/24 CI 通过；T1 已从固定的 v1.9.0 release commit 建立 13 tools/5 resources 公共 discovery manifest、显式更新命令与语义兼容门禁，并用 checkout 外 cwd 的短生命周期子进程、有界重试和凭据环境清理解决 Windows 历史 worktree 句柄问题。T2 已迁移到精确固定的 MCP SDK v2.0.0 `server`/`node`/`express` 生产分包与开发期 `client`，保持 2025-era initialize、工具/resource/错误和本地 HTTP 生命周期；真实契约比较只记录根 schema 从 draft-07 到 2020-12 的官方 dialect 升级，其他 schema composition 仍 fail-closed，历史 v1 baseline 也可从同一脚本隔离重放。测试扩展到 1153 个用例，Node 22/24 CI 均通过；loopback HTTP 先执行 Host/Origin 防护，再进入显式 100 KiB JSON parser。安全评审继续对真实动态 credential 与动态、歧义或缺失依赖 fail-closed，公开 MCP 字段与副作用保持不变。`@modelcontextprotocol/node` 仍通过 `getRequestListener` 使用 `@hono/node-server@1.19.15`，没有静态文件服务；production audit 因同一不可达 `serve-static` 公告报告两个 moderate，未为清除数字破坏性替换 transport。详细依赖图、任务拆分和版本边界见 [v1.10.0 实施计划](superpowers/plans/2026-07-29-v1.10.0-contract-evaluation.md)。
+> **状态：已完成（2026-08-13）。** T0–T12 已全部落地；#43/#44 的范围已经交接并关闭。稳定 MCP SDK 2.0.0、本地 2025/2026 双 era、不可变 v1.9.0 契约基线、Inspector/Conformance、12 场景评测、13 项预算、11 项故障矩阵和 required Node 24 发布门禁均已完成。最终全量基线为 65 files / 1526 tests，覆盖率 96.66/91.64/97.46/97.36。required CI 不运行 live-model，也没有引入远程 OAuth、多租户、共享 session store 或公网监听。详细证据见 [v1.10.0 实施计划](superpowers/plans/2026-07-29-v1.10.0-contract-evaluation.md)和[发布说明](releases/v1.10.0.md)。
 
 > **T3 进展（2026-08-01）：** 本地 stdio 与 loopback HTTP 已显式提供 2025/2026 双 era，保留 legacy fallback、Host/Origin/100 KiB body limit、无状态 JSON 响应和 local-only 边界；modern wire metadata 由官方 SDK 生成。本地 Node 24 已通过 51 files/1177 tests、47 条 integration、13 tools/5 resources contract check 与 95.22/91.16/95.57/95.88 coverage，Node 22/24 CI 均通过。2025 stateless HTTP 无 session/client identity，不能把独立取消 POST 安全关联到原请求；跨时代 header/body 冲突会明确拒绝，factory/serving 异常只返回有界 JSON-RPC 500。两个 era 的 async factory pre-abort 与 handler shutdown 即使 factory 不释放也会立即 499，迟到 server 会关闭；modern handoff 同 tick 竞态、启动真实 `dist/index.js` 的隔离 stdio child 和 watch 排除均已有显式测试与文档。
 
@@ -1554,7 +1554,7 @@ interface ToolDependencies {
 
 > **T10 进展（2026-08-13）：** 已为 13 个公开工具建立 versioned budget scenario，通过真实 MCP 2.0.0 client 与固定 Octokit fixture 逐工具测量 GitHub API calls、递归 structured items、Markdown UTF-16 chars、structured JSON UTF-8 bytes 和真实 duration。前四项及 timeout/cancellation 为 hard gate；deadline signal 会传入 `Client.callTool` 并由测试确认 handler 收到取消。固定 mock durations 用 nearest-rank P95 报告并保留余量；token estimate 仅以 Markdown+JSON UTF-8 bytes 除以 4 粗估，不作为模型 tokenizer 或跨模型承诺。`npm run eval:budgets` 覆盖 0/1/limit/limit+1 和取消生命周期，只有 13/13 唯一报告全部通过才发布被 Git 忽略的逐 scenario/tool artifact。
 
-> **T11 进展（2026-08-13）：** 已加入 versioned 的 11-case GitHub fault matrix，通过真实 MCP 2.0.0 client 将 401/403/404/422/429/500、GraphQL partial、timeout/cancellation、301 项截断、主字段缺失与同页重复响应分别绑定到直接工具和不同聚合工具。成功来源继续保留，不完整证据不提升为 clean；任意上游/普通异常原文不进入 MCP 输出，固定安全诊断及 timeout/cancellation 类别仍可行动。PR summary 的 MCP AbortSignal 现传到 metadata/files Octokit 请求；重复 signal 仅在同一 response page 内去重，不改变 300/301 截断。`npm run eval:faults` 只有 11/11 唯一报告全部通过才原子发布忽略的 artifact。T12 CI/release gate 仍待完成。
+> **T11 完成证据（2026-08-13）：** 已加入 versioned 的 11-case GitHub fault matrix，通过真实 MCP 2.0.0 client 将 401/403/404/422/429/500、GraphQL partial、timeout/cancellation、301 项截断、主字段缺失与同页重复响应分别绑定到直接工具和不同聚合工具。成功来源继续保留，不完整证据不提升为 clean；任意上游/普通异常原文不进入 MCP 输出，固定安全诊断及 timeout/cancellation 类别仍可行动。PR summary 的 MCP AbortSignal 现传到 metadata/files Octokit 请求；重复 signal 仅在同一 response page 内去重，不改变 300/301 截断。`npm run eval:faults` 只有 11/11 唯一报告全部通过才原子发布忽略的 artifact；后续 T12 已把该矩阵纳入 CI/release gate。
 
 > **真实使用反馈（2026-08-13）：** 使用 Agentic SDLC MCP 审查 #70、#68、#69、#73 和 #74 时复现了六类结论误差，并已纳入成对回归：dependency bot 模板中的安全文档 URL 不再把纯 lockfile 更新判为 security work；strict required checks 在 required context 与 GitHub mergeability 均有权威证据时不再产生伪 `policy_gap`，任一证据缺失仍 fail closed；`Part of #...` 被明确识别为不会自动关闭 Issue 的非关闭型追溯引用，而不是笼统声称 PR 没有关联工作项；security-focused review 可识别有实质内容的中文威胁、权限、凭据与安全验证章节；大型 strict review 在正文给出可审计的原子范围理由后不再产生无法消除的 `LargeChangeScope`；response `tokenEstimate`/`tokenBudget` 元数据不再视为 credential，真实 API/access token 与 client secret 仍 fail high。正文引用或自由文本仍不会被提升为 GitHub verified 权威证据，也不会改变 gate 权限。
 
@@ -1567,7 +1567,7 @@ interface ToolDependencies {
 - 已有固定 v1.9.0 的 tool/resource discovery manifest、backward-compatibility gate，以及 structuredContent/Markdown 的 13 工具双 era 调用矩阵。
 - 真实 MCP tool call 集成测试已覆盖全部 13 个工具、代表性 schema/GitHub 错误和可恢复降级；Inspector stdio/HTTP 的进程外调用与 Conformance 0.1.16 artifact pilot 已完成。
 - 已完成 provider-neutral scenario/trace schema、确定性 trace scorer、T8 的 6 个真实 MCP client 工具选择场景，以及 T9 的多工具安全链、14-source 注入矩阵与 channel parity。
-- 13 个公开工具已有统一 API calls、items、字符/bytes、延迟/P95、timeout/cancellation 预算报告；跨工具 GitHub 故障注入矩阵已覆盖 11 类确定性边界，T12 仍需接入最终 CI/release gate。
+- 13 个公开工具已有统一 API calls、items、字符/bytes、延迟/P95、timeout/cancellation 预算报告；跨工具 GitHub 故障注入矩阵已覆盖 11 类确定性边界，T12 已将这些证据接入 required Node 24 CI/release gate。
 
 #### 1. MCP 契约、兼容性与 evaluation
 
@@ -1772,7 +1772,7 @@ interface ToolDependencies {
 | P0 | MCP Registry 发布与 `.agentic-sdlc.yml` 基础 | 先建立可发现、可配置、可解释的统一策略入口 | ✅ v1.7.1 |
 | P0 | 风险感知 `prepare_work_item` | 把高风险任务的防御性编程、负向测试、回滚、可观测性与有来源的上下文前移到开工阶段 | ✅ v1.8.0 |
 | P1 | `sdlc_evidence_packet` 与可信 handoff | 统一 verified/unverified/stale/partial 证据语义 | ✅ v1.9.0 |
-| P1 | MCP 契约与 Agent evaluation | 用 Inspector、稳定评测、性能预算和故障注入验证 agent 真正会用 | v1.10 执行中（T0–T3 已完成） |
+| P1 | MCP 契约与 Agent evaluation | 用 Inspector、稳定评测、性能预算和故障注入验证 agent 真正会用 | ✅ v1.10.0 |
 | P1 | CI/CD 供应链与可观测性 | 固定 Actions、SBOM/provenance、coverage 门槛和隐私安全 metrics | v1.11 待开始 |
 | P2 | 组织策略与签名 evidence | 只有出现真实 breaking/persistence 需求时进入主版本 | v2.0 条件触发 |
 

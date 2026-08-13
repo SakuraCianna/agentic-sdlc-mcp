@@ -2,9 +2,11 @@
 
 All notable changes to this project are documented here. Release history is also available on the [GitHub Releases page](https://github.com/SakuraCianna/agentic-sdlc-mcp/releases).
 
-## [Unreleased]
+## [1.10.0] - 2026-08-13
 
 ### Added
+
+- Added the required Node 24 `Contract and evaluation` release gate. It verifies the immutable v1.9.0 manifest, Inspector stdio/HTTP, the pinned Conformance pilot, 12 fixed evaluation scenarios, all 13 response budgets, and the 11-case GitHub fault matrix, then uploads only five bounded sanitized artifacts.
 
 - Added the provider-neutral T7 evaluation foundation: bounded scenario/trace schemas, explicit scripted/recorded-agent/live-model provenance, a deterministic machine-readable scorer for tool selection/order/write/gate violations, versioned SHA-256 digests, and a checked-in JSON Schema drift gate exposed through `npm run eval:score`.
 - Added the T8 deterministic selection suite: six sanitized recorded-agent traces from real Agentic SDLC MCP use with auditable evidence, fixed recording/argument digests, replay through the real MCP 2.0.0 client with plan-output composition and structured assertions, explicit gate/review and repo/brief disambiguation, zero-write issue preview enforcement, a minimal-environment offline runner, and 100% full-scorer scenario accuracy.
@@ -21,19 +23,22 @@ All notable changes to this project are documented here. Release history is also
 - Added an Inspector 2.0.0 stdio black-box gate with an isolated lockfile. It launches the real built entry through an explicit ad-hoc target, verifies legacy initialization, 13 tools, five resource reads, a zero-write issue preview, and machine-readable invalid-schema/unknown-resource failures without inheriting credentials or allowing external network access.
 - Added an Inspector 2.0.0 loopback HTTP gate against the production adapter, including complete stdio/HTTP discovery JSON parity, an empty-store 401 `stored-auth-only`/no-browser proof, canonical-target validation, exact loopback network isolation, reliable child/listener cleanup, and machine-readable invalid-schema, unknown-tool, and closed-listener failures.
 - Added a pinned Conformance 0.1.16 legacy pilot with a sanitized `checks.json` artifact. Its 25 expected gaps each carry a reason, owner, and removal condition; five scenarios currently pass directly, while new failures and stale baseline entries fail the run.
-- Raised the global coverage regression floors to 94% statements, 89% branches, 94% functions, and 95% lines; after adding the full tool matrix, Inspector/Conformance runner boundaries, bounded secret-scanner regressions, the T7-T11 evaluation suites, and self-hosted reviewer feedback regressions, the current 1495-test baseline is 96.68% statements, 91.64% branches, 97.44% functions, and 97.39% lines.
+- Raised the global coverage regression floors to 94% statements, 89% branches, 94% functions, and 95% lines; after adding the full tool matrix, Inspector/Conformance runner boundaries, bounded secret-scanner regressions, the T7-T12 evaluation suites, and self-hosted reviewer feedback regressions, the current 1526-test baseline is 96.66% statements, 91.64% branches, 97.46% functions, and 97.36% lines.
 
 ### Changed
 
+- Updated only three in-range transitive lock entries after current advisories: Hono 4.13.1, development-only brace-expansion 5.0.9, and development-only nanoid 3.3.18. MCP SDK, Inspector, Conformance, and public runtime dependency versions remain fixed; the final full and production audits report zero known vulnerabilities.
 - Made the security-focused PR reviewer recognize detailed Chinese threat, permission, credential, and security-validation evidence; large strict reviews now honor a substantive atomic-scope rationale instead of emitting an impossible-to-resolve scope finding.
 - Pinned every CI, release, registry-publish, and secret-scan use of `actions/checkout` to the signed v7.0.1 commit and `actions/setup-node` to the immutable v7.0.0 commit, with matching workflow regression assertions.
-- Locked `@modelcontextprotocol/sdk` 1.30.0 as the v1.x rollback bridge before the v2 migration, bringing its stdio buffer, Content-Type, SSE keep-alive, and timer lifecycle fixes without enabling the 2026 wire protocol. The resolved `@hono/node-server` remains 1.19.15 and its unused `serve-static` advisory remains tracked as one moderate audit finding.
+- Locked `@modelcontextprotocol/sdk` 1.30.0 as the v1.x rollback bridge before the v2 migration, bringing its stdio buffer, Content-Type, SSE keep-alive, and timer lifecycle fixes without enabling the 2026 wire protocol. The final v2 lock keeps `@hono/node-server` 1.19.15, advances Hono to 4.13.1, and reports zero known vulnerabilities in full and production audits; the server still exposes no static-file route.
 - Migrated the runtime to the stable MCP TypeScript SDK 2.0.0 split packages: `server`, `node`, and `express` remain production dependencies while the real integration client is development-only. The package migration first preserved the 2025-era initialize flow, and the separately reviewable transport slice now adds explicit `2026-07-28` negotiation without removing legacy fallback.
 - Routed production stdio through `serveStdio(factory)` and loopback HTTP through the official strict modern handler plus the existing bounded legacy JSON profile. Modern response metadata remains SDK-generated; no OAuth, multi-tenant state, shared session store, or non-loopback default was added.
 - Made every registered tool use complete Standard Schema objects at the v2 boundary and kept the public 13-tool/5-resource contract compatible. The only reviewed schema drift is the official root dialect upgrade from draft-07 to JSON Schema 2020-12; any other `$schema`, reference, or composition change remains fail-closed.
 - Kept immutable contract replay compatible with both the historical v1 package layout and the current v2 split layout without passing nominal SDK objects across dependency roots.
 
 ### Fixed
+
+- Fixed infrastructure/release review so supported CLI commands with executable arguments in real `Verification` or `Validated` sections count as operational evidence, including commands inside a section's fenced block. Commands in unrelated sections, fenced fake headings, bare CLI names, punctuation-only arguments, and natural-language lookalikes remain fail-closed. This issue was found by using Agentic SDLC MCP to review its own T12 PR.
 
 - Sanitized GitHub failures so untrusted upstream messages and ordinary internal exception text no longer enter MCP Markdown or structured limitations. Public output retains actionable HTTP, timeout, and cancellation categories; only explicitly constructed product diagnostics may expose fixed safe text.
 - Propagated MCP cancellation through `create_pr_summary` PR metadata/file requests and deduplicated identical check/status records within one GitHub response page without weakening 300/301 pagination truncation semantics.
@@ -52,7 +57,7 @@ All notable changes to this project are documented here. Release history is also
 - Kept credential-context secrets, credentials, private/API keys, qualified compact/camelCase tokens, credential-qualified uppercase token identifiers, and explicit key/secret/password environment suffixes in the high-signal secrets domain, with paired positive and negative regression coverage.
 - Kept exact structured `secret(s)` and `credential(s)` Issue labels as high-confidence risk signals without treating the same bare words anywhere in free text as equivalent evidence.
 - Clarified that `riskProfile` is an explainable implementation-planning estimate, not proof of a vulnerability, leaked credential, or exploitable finding.
-- Reconfirmed that MCP SDK v2's Node adapter reaches `@hono/node-server@1.19.15` and `hono@4.12.27` only through `getRequestListener`; the project exposes no static-file route and does not import Hono's CORS, JSX `memo`, proxy, or language middleware. The current production audit therefore retains three package-level moderate findings without a destructive transport replacement or false all-clear claim; reachability must be reassessed if any affected middleware is introduced or the stable SDK lock changes.
+- Reconfirmed that MCP SDK v2's Node adapter reaches `@hono/node-server@1.19.15` and the patched `hono@4.13.1` only through `getRequestListener`; the project exposes no static-file route and does not import Hono's CORS, JSX `memo`, proxy, or language middleware. The final audit reports zero known vulnerabilities after an in-range lock update; reachability must still be reassessed if any affected middleware is introduced or the stable SDK lock changes.
 - Reordered loopback HTTP middleware so Host and Origin guards reject untrusted requests before any body parsing, while preserving the prior 100 KiB JSON limit as an explicit bound.
 - Made loopback shutdown settle and abort in-flight legacy HTTP exchanges instead of waiting indefinitely on the SDK transport's unresolved response map. The documented 2025 stateless HTTP cancellation limitation remains unchanged because correlating request IDs across unidentified clients would permit cross-client cancellation.
 - Closed HTTP factory races in both protocol eras: abort or handler shutdown now settles with 499 even if an asynchronous factory never returns, and a server returned after closure is immediately torn down. A guarded modern handoff also prevents the SDK from connecting a factory product after shutdown wins the adjacent microtask race. Factory/serving failures return a bounded JSON-RPC 500 without exposing internal details, and conflicting 2025/2026 header/body claims are explicitly rejected instead of changing eras.
@@ -203,3 +208,4 @@ All notable changes to this project are documented here. Release history is also
 [1.7.1]: https://github.com/SakuraCianna/agentic-sdlc-mcp/releases/tag/v1.7.1
 [1.8.0]: https://github.com/SakuraCianna/agentic-sdlc-mcp/releases/tag/v1.8.0
 [1.9.0]: https://github.com/SakuraCianna/agentic-sdlc-mcp/releases/tag/v1.9.0
+[1.10.0]: https://github.com/SakuraCianna/agentic-sdlc-mcp/releases/tag/v1.10.0

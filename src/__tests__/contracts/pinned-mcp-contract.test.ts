@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   createContractCollectorEnvironment,
+  createPinnedNpmEnvironment,
   isPathInside,
   isWorktreeListed,
   validatePinnedContractSource,
@@ -103,5 +104,19 @@ describe("pinned MCP contract checkout safety", () => {
       SystemRoot: "C:\\Windows",
     });
     expect(environment.GITHUB_TOKEN).toBe("placeholder-github-token");
+  });
+
+  it("does not propagate an outer npm publish dry-run into the pinned checkout", () => {
+    const environment = {
+      PATH: "C:\\safe-bin",
+      npm_config_dry_run: "true",
+      NPM_CONFIG_REGISTRY: "https://registry.npmjs.org/",
+    };
+
+    expect(createPinnedNpmEnvironment(environment)).toEqual({
+      PATH: "C:\\safe-bin",
+      NPM_CONFIG_REGISTRY: "https://registry.npmjs.org/",
+    });
+    expect(environment.npm_config_dry_run).toBe("true");
   });
 });

@@ -351,6 +351,7 @@ npm run test
 | `npm run contracts:inspector:http` | 让 Inspector 在随机 IPv4 loopback 端口验证构建后的本地 HTTP adapter |
 | `npm run contracts:conformance:install` | 从隔离 lockfile 安装精确固定的 Conformance 0.1.16 pilot 依赖 |
 | `npm run contracts:conformance:pilot` | 运行 legacy 2025-11-25 active suite 并生成净化的 `checks.json` artifact |
+| `npm run eval:ci` | 运行离线 12 场景发布门禁，以及全部 13 项预算和 11 项故障报告 |
 | `npm run smoke` | 在没有 GitHub 凭据时验证注册与加载 |
 | `npm run check:line-endings` | 拒绝 CRLF 和混合行尾 |
 
@@ -362,7 +363,9 @@ HTTP 门禁在 `127.0.0.1:0` 启动生产 adapter，以 Inspector 的非交互 `
 
 Conformance pilot 精确固定官方 0.1.16 及其 legacy `2025-11-25` active suite。目前记录 30 个场景：5 个直接通过、25 个有治理信息的预期缺口；后者主要来自 upstream everything-server 的 prompts、fixture URI/tool、subscription、media/callback 能力和 stateful SSE 假设并不属于本产品公开契约。每项都包含原因、owner 和移除条件；新增失败或 stale 条目都会让运行失败。上传的 `checks.json` 不含 raw response details、凭据、Issue 正文或私有仓库数据。这是非阻断兼容 pilot，不是官方认证，也不能成为添加测试专用生产能力的理由。
 
-CI 会在 Node 22 和 Node 24 上执行完整产品检查与当前契约比较，并用独立 Node 24 jobs 重放不可变基线和运行 Inspector stdio/HTTP 与 Conformance 契约。Node 20 已结束维护，因此不属于受支持运行时；本地贡献者只需安装一个受支持版本，兼容矩阵由 GitHub Actions 负责。
+CI 会在 Node 22 和 Node 24 上执行完整产品检查与当前契约比较。独立 Node 24 jobs 会重放不可变基线，并执行 required contract/evaluation gate：Inspector stdio/HTTP、Conformance、12 个固定场景、全部 13 项响应预算和 11-case GitHub 故障矩阵。门禁要求场景总正确率至少 90%，六个安全关键场景必须 100%，且只上传五个有界汇总 artifact。Node 20 已结束维护，因此不属于受支持运行时；本地贡献者只需安装一个受支持版本，兼容矩阵由 GitHub Actions 负责。
+
+评测结果始终保留 provenance：`scripted` 表示确定性 fixture，`recorded-agent` 表示对脱敏历史执行进行固定输入重放，`live-model` 表示可选的当前模型运行。required CI 包含六个 scripted 和六个 recorded-agent 场景，不运行 live-model。重放通过只能证明 checked-in 工作流保持确定性，不能代表所有模型、供应商、未来提示词或 MCP 官方认证。详见[评测指南](docs/evaluation.md)。
 
 普通测试、`contracts:check` 与 `contracts:verify-baseline` 永远不会改写基线。重放命令和仅供维护者使用的 `contracts:generate` 都会验证固定 tag/commit，在系统临时目录按历史 lockfile 安装并构建 checkout；安装会关闭 lifecycle scripts、audit 与 funding 输出，再由 cwd 位于 checkout 外的有界短生命周期子进程通过真实 `tools/list` 和 `resources/list` 读取公开契约。该子进程只继承操作系统路径、临时目录、locale 与动态库 allowlist；凭据、业务配置、`NODE_OPTIONS` 和本地状态路径都不会进入。Windows 在历史句柄释放后以有界重试完成清理。命令需要访问 npm registry，但不会调用 GitHub API 或模型服务。只有 `contracts:generate` 会写 tracked JSON，并把差异留给 PR 审查。
 
@@ -382,6 +385,7 @@ CI 会在 Node 22 和 Node 24 上执行完整产品检查与当前契约比较�
 - [仓库策略指南](docs/repository-policy.md)
 - [测试策略](docs/testing-strategy.md)
 - [远程部署重新立项准入条件](docs/remote-deployment-considerations.md)
+- [v1.10.0 发布说明](docs/releases/v1.10.0.md)
 - [v1.9.0 发布说明](docs/releases/v1.9.0.md)
 - [AI 编码智能体冒烟测试](docs/ai-coding-agent-smoke-test.md)
 - [更新日志](CHANGELOG.md)
