@@ -45,9 +45,42 @@ describe("CI workflow action pins", () => {
         "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020"
       )
     );
-    expect(source).not.toMatch(
-      /uses:\s+actions\/(?:checkout|setup-node)@v/iu
+    expect(uses.filter((value) => value.startsWith("actions/upload-artifact@"))).toEqual(
+      Array(2).fill(
+        "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
+      )
     );
+    expect(source).not.toMatch(
+      /uses:\s+actions\/(?:checkout|setup-node|upload-artifact)@v/iu
+    );
+  });
+
+  it("runs the Node 24 contract/evaluation release gate and uploads only sanitized files", async () => {
+    const workflowPath = new URL("../../.github/workflows/ci.yml", import.meta.url);
+    const source = await readFile(workflowPath, "utf8");
+    const workflow = parse(source) as CiWorkflow;
+    const job = workflow.jobs?.["inspector-stdio-contract"];
+    const steps = job?.steps ?? [];
+
+    const checkout = steps.find((step) => step.name === "Checkout with release tags");
+    expect(checkout?.with?.["fetch-depth"]).toBe(0);
+    expect(steps.some((step) => step.run === "npm run contracts:check")).toBe(true);
+    expect(steps.some((step) => step.run === "node scripts/check-mcp-contract.mjs")).toBe(false);
+    expect(steps.some((step) => step.run === "npm run eval:ci")).toBe(true);
+    const upload = steps.find(
+      (step) => step.uses === "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
+    );
+    expect(upload?.with?.["if-no-files-found"]).toBe("error");
+    const artifactPaths = String(upload?.with?.path).trim().split(/\r?\n/u);
+    expect(artifactPaths).toEqual([
+      "artifacts/contracts/manifest-diff.json",
+      "artifacts/conformance/v0.1.16/checks.json",
+      "artifacts/evaluation/scenario-score.json",
+      "artifacts/evaluation/budgets.json",
+      "artifacts/evaluation/faults.json",
+    ]);
+    expect(artifactPaths).not.toContain("artifacts/");
+    expect(artifactPaths.every((artifactPath) => !artifactPath.includes("*"))).toBe(true);
   });
 });
 

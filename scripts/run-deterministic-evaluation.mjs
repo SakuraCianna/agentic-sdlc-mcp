@@ -40,6 +40,7 @@ const EXPECTED_FAULT_REPORTS = (() => {
 })();
 const EXPECTED_FAULT_IDS = EXPECTED_FAULT_REPORTS.map((report) => report.faultId);
 const GROUP_TESTS = new Map([
+  ["score", ["src/__tests__/evaluation/scorer.test.ts"]],
   [
     "budgets",
     [

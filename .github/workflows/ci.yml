@@ -53,7 +53,7 @@ jobs:
         run: npm run test:coverage
 
       - name: Upload coverage artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: coverage-node-${{ matrix.node-version }}
           path: coverage/
@@ -85,12 +85,14 @@ jobs:
         run: node scripts/verify-mcp-baseline.mjs
 
   inspector-stdio-contract:
-    name: Inspector stdio contract (Node 24)
+    name: Contract and evaluation (Node 24)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Checkout
+      - name: Checkout with release tags
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js 24
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -111,6 +113,9 @@ jobs:
       - name: Install pinned Conformance runner without lifecycle scripts
         run: npm run contracts:conformance:install
 
+      - name: Check current MCP manifest
+        run: npm run contracts:check
+
       - name: Verify stdio through Inspector 2
         run: npm run contracts:inspector:stdio
 
@@ -120,10 +125,18 @@ jobs:
       - name: Run legacy MCP Conformance pilot
         run: npm run contracts:conformance:pilot
 
-      - name: Upload sanitized Conformance checks
+      - name: Run deterministic evaluation release gate
+        run: npm run eval:ci
+
+      - name: Upload sanitized contract and evaluation evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: conformance-v0.1.16-node-24
-          path: artifacts/conformance/v0.1.16/checks.json
+          name: v1.10-contract-evaluation-node-24
+          path: |
+            artifacts/contracts/manifest-diff.json
+            artifacts/conformance/v0.1.16/checks.json
+            artifacts/evaluation/scenario-score.json
+            artifacts/evaluation/budgets.json
+            artifacts/evaluation/faults.json
           if-no-files-found: error
           retention-days: 14

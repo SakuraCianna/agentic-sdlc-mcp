@@ -5,6 +5,10 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { collectRawMcpContract } from "./lib/mcp-contract-client.mjs";
 import { V1_9_0_CONTRACT_SOURCE } from "./lib/mcp-contract-source.mjs";
 import { verifyPinnedContractTag } from "./lib/pinned-mcp-contract.mjs";
+import {
+  createManifestDiffArtifact,
+  writeJsonArtifactAtomic,
+} from "./lib/release-artifacts.mjs";
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(scriptDirectory, "..");
@@ -46,6 +50,17 @@ async function main() {
     baseline.source
   );
   const comparison = contractModule.compareMcpContracts(baseline, current);
+
+  await writeJsonArtifactAtomic(
+    path.join(projectRoot, "artifacts", "contracts", "manifest-diff.json"),
+    createManifestDiffArtifact({
+      baseline: baseline.source,
+      toolCount: current.tools.length,
+      resourceCount: current.resources.length,
+      breaking: comparison.breaking,
+      nonBreaking: comparison.nonBreaking,
+    })
+  );
 
   printChanges("Breaking contract changes", comparison.breaking);
   printChanges("Compatible contract changes", comparison.nonBreaking);
