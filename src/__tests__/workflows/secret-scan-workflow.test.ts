@@ -29,14 +29,22 @@ describe("secret scan workflow", () => {
     });
   });
 
-  it("narrows the fixture allowlist to one rule and one test file", async () => {
+  it("keeps secret-scanner fixture allowlists rule-scoped and narrowly bound", async () => {
     const configUrl = new URL("../../../.gitleaks.toml", import.meta.url);
     const config = await readFile(configUrl, "utf8");
 
     expect(config).toContain('id = "generic-api-key"');
+    expect(config).toContain('id = "aws-access-token"');
+    expect(config.match(/src\/__tests__\/review\/pull-request-review\\\.test\\\.ts\$/gu)).toHaveLength(2);
+    expect(config).toContain('condition = "AND"');
+    expect(config).toContain('regexTarget = "line"');
     expect(config).toContain(
-      "src/__tests__/review/pull-request-review\\.test\\.ts$"
+      'commits = ["fd9e5d5d3b6a4294d13302e669486c948bfa0800"]'
+    );
+    expect(config).toContain(
+      "regexes = ['''^\\s*\"AKIA1234567890ABCDEF\",\\s*$''']"
     );
     expect(config).not.toMatch(/\[\[allowlists\]\]/);
+    expect(config).not.toMatch(/disabledRules/u);
   });
 });

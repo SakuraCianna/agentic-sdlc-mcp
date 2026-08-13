@@ -7,3 +7,14 @@ id = "generic-api-key"
   [[rules.allowlists]]
   description = "Ignore synthetic generic assignments in the secret-scanner unit fixture only"
   paths = ['''src/__tests__/review/pull-request-review\.test\.ts$''']
+
+[[rules]]
+id = "aws-access-token"
+
+  [[rules.allowlists]]
+  description = "Ignore one synthetic AWS-format fixture in its immutable historical commit only"
+  condition = "AND"
+  regexTarget = "line"
+  commits = ["fd9e5d5d3b6a4294d13302e669486c948bfa0800"]
+  paths = ['''src/__tests__/review/pull-request-review\.test\.ts$''']
+  regexes = ['''^\s*"AKIA1234567890ABCDEF",\s*$''']

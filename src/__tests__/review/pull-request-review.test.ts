@@ -642,7 +642,7 @@ describe("scanPatchForSecrets", () => {
     "sk-1234567890abcdefghijklmnop",
     "xoxb-1234567890-abcdefghijkl",
     "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.signature123",
-    "AKIA1234567890ABCDEF",
+    ["AKIA", "1234567890ABCDEF"].join(""),
   ])("detects a known credential literal under a neutral JSON budget key: %s", (literal) => {
     expect(
       scanPatchForSecrets(
