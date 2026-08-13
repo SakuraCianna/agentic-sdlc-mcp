@@ -596,6 +596,17 @@ function isHighConfidenceUnquotedSecret(value: string): boolean {
   return classes >= 3;
 }
 
+function knownCredentialLiteralName(value: string): string | null {
+  if (/^AKIA[0-9A-Z]{16}$/u.test(value)) return "AWS access key assignment";
+  if (
+    /^(?:ghp_|github_pat_|sk-|xox[a-z]-)[A-Za-z0-9._-]+$/u.test(value) ||
+    /^eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/u.test(value)
+  ) {
+    return "credential assignment";
+  }
+  return null;
+}
+
 type SecretLexicalMode = "code" | "block_comment" | "single" | "double" | "template";
 
 interface SecretLexicalState {
@@ -1289,9 +1300,23 @@ function assignmentTargetStart(code: string, operatorIndex: number): number {
   return start;
 }
 
-function isCredentialMetadataTarget(normalizedTarget: string): boolean {
-  return /(?:apikey|authorization(?:header)?|token|secret|password|credential)(?:bucket|cache|config|count|expir(?:y|es?)|factory|id|index|length|manager|metadata|names?|options|parser|policy|prefix|provider|scan(?:json|toml|ya?ml)?|scanner(?:evidence|provenance|report|result|status)?|service|status|store|strength|suffix|ttl|type|validation|validator|izer|ization)$/.test(
-    normalizedTarget
+function terminalAssignmentTargetName(target: string): string {
+  const trimmed = target.trim();
+  const bracketMember = trimmed.match(/\[\s*["']([^"']+)["']\s*\]\s*$/u);
+  if (bracketMember?.[1]) return bracketMember[1];
+  const withoutType = trimmed.replace(/\s*:\s*[^:]+$/u, "");
+  return withoutType.match(/([A-Za-z_$][\w$]*)\s*$/u)?.[1] ?? "";
+}
+
+function isCredentialMetadataTarget(target: string, normalizedTarget: string): boolean {
+  const terminalName = terminalAssignmentTargetName(target)
+    .toLowerCase()
+    .replace(/[^a-z0-9]/gu, "");
+  return (
+    /^(?:tokenbudget|tokenestimate|tokenestimation)$/u.test(terminalName) ||
+    /(?:apikey|authorization(?:header)?|token|secret|password|credential)(?:bucket|cache|config|count|expir(?:y|es?)|factory|id|index|length|manager|metadata|names?|options|parser|policy|prefix|provider|scan(?:json|toml|ya?ml)?|scanner(?:evidence|provenance|report|result|status)?|service|status|store|strength|suffix|ttl|type|validation|validator|izer|ization)$/u.test(
+      normalizedTarget
+    )
   );
 }
 
@@ -1299,7 +1324,7 @@ function isCredentialTarget(target: string): boolean {
   const normalized = target.toLowerCase().replace(/[^a-z0-9]/g, "");
   if (
     !normalized ||
-    isCredentialMetadataTarget(normalized)
+    isCredentialMetadataTarget(target, normalized)
   ) {
     return false;
   }
@@ -1310,7 +1335,15 @@ function isCredentialTarget(target: string): boolean {
     .filter(Boolean);
   const accessKeyTarget =
     /accesskeyid\d*$/u.test(normalized) ||
-    /awsaccesskey\d*$/u.test(normalized);
+    /awsaccesskey\d*(?:budget|estimate|estimation)?$/u.test(normalized);
+  const qualifiedTokenTarget =
+    /(?:api|auth|access|bearer|client|github|jwt|oauth|refresh|session|slack)token\d*(?:budget|estimate|estimation)?$/u.test(
+      normalized
+    );
+  const qualifiedCredentialMetadataTarget =
+    /(?:authorizationheader|clientsecret|password)\d*(?:budget|estimate|estimation)$/u.test(
+      normalized
+    );
   const tokenTarget =
     /(?:^|[^A-Za-z0-9\/-])tokens?\d*(?=$|[^A-Za-z0-9])/iu.test(target) ||
     /(?:^|[^A-Za-z0-9])tokens?(?=[A-Z])/u.test(target) ||
@@ -1320,6 +1353,8 @@ function isCredentialTarget(target: string): boolean {
     );
   return (
     accessKeyTarget ||
+    qualifiedTokenTarget ||
+    qualifiedCredentialMetadataTarget ||
     tokenTarget ||
     words.some((word) =>
       /^(?:apikey\d*|authorization(?:header|token)?\d*|clientsecret\d*|credentials?\d*|password\d*|privatekey\d*|secrets?\d*)$/u.test(
@@ -1665,9 +1700,7 @@ export function scanPatchForSecrets(
           if (isPlaceholderSecret(literal.value)) continue;
           const literalName = hasCredentialTarget
             ? "credential assignment"
-            : /^AKIA[0-9A-Z]{16}$/u.test(literal.value)
-              ? "AWS access key assignment"
-              : null;
+            : knownCredentialLiteralName(literal.value);
           if (literalName !== null) {
             const literalSpan = `${literalStart}:${operatorIndex + 1 + literal.end}`;
             if (recordedJsonLiteralSpans.has(literalSpan)) continue;

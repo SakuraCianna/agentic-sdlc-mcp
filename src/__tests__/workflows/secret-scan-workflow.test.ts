@@ -29,14 +29,46 @@ describe("secret scan workflow", () => {
     });
   });
 
-  it("narrows the fixture allowlist to one rule and one test file", async () => {
+  it("keeps secret-scanner fixture allowlists rule-scoped and narrowly bound", async () => {
     const configUrl = new URL("../../../.gitleaks.toml", import.meta.url);
     const config = await readFile(configUrl, "utf8");
+    const syntheticAwsFixture = ["AKIA", "1234567890ABCDEF"].join("");
 
     expect(config).toContain('id = "generic-api-key"');
-    expect(config).toContain(
-      "src/__tests__/review/pull-request-review\\.test\\.ts$"
-    );
+    const awsRuleSection = config
+      .split('[[rules]]\nid = "aws-access-token"')[1]
+      ?.split("\n[[rules]]")[0];
+    expect(awsRuleSection).toBeDefined();
+
+    const awsAllowlists = awsRuleSection
+      ?.split("[[rules.allowlists]]")
+      .slice(1)
+      .map((block) =>
+        block
+          .trim()
+          .split("\n")
+          .map((line) => line.trim())
+          .join("\n")
+      );
+    expect(awsAllowlists).toEqual([
+      [
+        'description = "Ignore one synthetic AWS-format fixture in its immutable historical commit only"',
+        'condition = "AND"',
+        'regexTarget = "line"',
+        'commits = ["fd9e5d5d3b6a4294d13302e669486c948bfa0800"]',
+        "paths = ['''src/__tests__/review/pull-request-review\\.test\\.ts$''']",
+        `regexes = ['''^\\s*\"${syntheticAwsFixture}\",\\s*$''']`,
+      ].join("\n"),
+      [
+        'description = "Ignore the historical contract assertion for the same synthetic fixture only"',
+        'condition = "AND"',
+        'regexTarget = "line"',
+        'commits = ["b96e4626c5ffa2fbd7bafb71bdf7205e726521d9"]',
+        "paths = ['''src/__tests__/workflows/secret-scan-workflow\\.test\\.ts$''']",
+        `regexes = ['''^\\s*\"regexes = .*${syntheticAwsFixture}.*\"\\s*$''']`,
+      ].join("\n"),
+    ]);
     expect(config).not.toMatch(/\[\[allowlists\]\]/);
+    expect(config).not.toMatch(/disabledRules/u);
   });
 });

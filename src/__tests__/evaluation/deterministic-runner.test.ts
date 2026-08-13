@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  assertCompleteBudgetArtifact,
   createDeterministicEvaluationEnvironment,
   parseDeterministicEvaluationArgs,
 } from "../../../scripts/run-deterministic-evaluation.mjs";
@@ -12,6 +13,9 @@ describe("deterministic evaluation runner", () => {
     );
     expect(parseDeterministicEvaluationArgs(["--group", "critical"])).toBe(
       "critical"
+    );
+    expect(parseDeterministicEvaluationArgs(["--group", "budgets"])).toBe(
+      "budgets"
     );
     expect(() => parseDeterministicEvaluationArgs([])).toThrow(/Usage/u);
     expect(() =>
@@ -45,5 +49,39 @@ describe("deterministic evaluation runner", () => {
       LANG: "en_US.UTF-8",
       PATH: "fixture-path",
     });
+  });
+
+  it("publishes only a complete all-passing 13-scenario budget artifact", () => {
+    const complete = {
+      complete: true,
+      expectedReports: 13,
+      completedReports: 13,
+      reports: Array.from({ length: 13 }, (_value, index) => ({
+        scenarioId: `scenario-${index}`,
+        passed: true,
+      })),
+    };
+
+    expect(() => assertCompleteBudgetArtifact(complete)).not.toThrow();
+    expect(() =>
+      assertCompleteBudgetArtifact({ ...complete, completedReports: 12 })
+    ).toThrow(/incomplete/u);
+    expect(() =>
+      assertCompleteBudgetArtifact({
+        ...complete,
+        reports: complete.reports.map((report, index) =>
+          index === 0 ? { ...report, passed: false } : report
+        ),
+      })
+    ).toThrow(/failed/u);
+    expect(() =>
+      assertCompleteBudgetArtifact({
+        ...complete,
+        reports: complete.reports.map((report) => ({
+          ...report,
+          scenarioId: "duplicate",
+        })),
+      })
+    ).toThrow(/unique/u);
   });
 });
