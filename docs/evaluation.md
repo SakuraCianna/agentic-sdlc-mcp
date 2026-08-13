@@ -45,9 +45,10 @@ scorer 从 100 分开始应用固定 penalty，并把结果限制在 0–100：
 npm run eval:score
 npm run eval:deterministic -- --group selection
 npm run eval:deterministic -- --group critical
+npm run eval:budgets
 ```
 
-`eval:score` 构建 TypeScript 后运行固定的正例、反例、阈值、digest、schema drift 和输入上限测试。`eval:deterministic` 只接受显式注册的 `selection` 或 `critical` group；两者都只向子进程传递 CI、locale、颜色、系统路径、临时目录等最小安全环境 allowlist，设置 offline 标记，并通过真实 MCP 2.0.0 client/server 内存 transport 重放 versioned 场景。
+`eval:score` 构建 TypeScript 后运行固定的正例、反例、阈值、digest、schema drift 和输入上限测试。`eval:deterministic` 只接受显式注册的 `selection`、`critical` 或 `budgets` group；三组都只向子进程传递 CI、locale、颜色、系统路径、临时目录等最小安全环境 allowlist，设置 offline 标记，并通过真实 MCP 2.0.0 client/server 内存 transport 重放 versioned 场景。`eval:budgets` 是固定选择 `budgets` group 的便捷命令。
 
 `selection` 包含以下 6 个 recorded-agent 场景：
 
@@ -64,6 +65,14 @@ npm run eval:deterministic -- --group critical
 
 Issue/PR packet 不回传 raw title/body，只保留逐输入计算的 source-content SHA-256 与 prompt-injection evidence；本来公开 raw 字段的 README、comment、check/policy structured output 则继续以 untrusted data 保留，agent-facing Markdown 会隔离或完全不展示它们。测试直接比较真实 MCP `content` 与 `structuredContent` 的 evidence summary，passing/blocked 两侧结论一致，顶层 `omittedEvidence` 也计入 fail-closed；包含 HTML comment 断词、`dryRun false` 与语义改写的样例不能进入 agent-facing Markdown。注入后的真实 Issue packet 还会阻止 evidence→handoff resolver，外部文本不能扩大固定 repository/ref、跳过 gate 或触发 live write。
 
-这些结果证明 server-side deterministic trust boundary、组合 gate 与 scorer 对已观察 trace 的规则，不证明任意外部 agent/model 一定会选择相同工具。对真实模型的注入鲁棒性必须另以 `recorded-agent`/`live-model` provenance 记录，不能从 scripted trace 推断。T10 预算测量、T11 GitHub 故障注入仍待完成。
+这些结果证明 server-side deterministic trust boundary、组合 gate 与 scorer 对已观察 trace 的规则，不证明任意外部 agent/model 一定会选择相同工具。对真实模型的注入鲁棒性必须另以 `recorded-agent`/`live-model` provenance 记录，不能从 scripted trace 推断。
+
+## 响应与调用预算
+
+`evaluation/budgets.json` 为全部 13 个公开工具逐一声明版本化预算；`npm run eval:budgets` 使用固定 GitHub fixture 和真实 MCP 2.0.0 `Client.callTool` 分别调用每个工具，并把报告写入被 Git 忽略的 `artifacts/evaluation/budgets.json`。每条报告包含 scenario/tool、GitHub API calls、递归 structured items、Markdown 字符数、structured JSON bytes、真实 duration、timeout/cancellation、固定 P95、headroom 和具体超限来源。deadline 的 `AbortSignal` 会传入 `Client.callTool`，测试确认 MCP handler 实际收到取消；runner 先写进程专属 pending 文件，只有 13/13 报告唯一且全部通过、整个测试组成功时才发布正式 artifact，失败运行删除自己的 pending 文件且不覆盖上次成功结果。
+
+确定性 hard gate 包括 API calls、items、Markdown UTF-16 code units、`JSON.stringify(structuredContent)` 的 UTF-8 bytes，以及 timeout/cancellation。真实 duration 只记录为本次 fixture 观测值，不直接作为跨机器性能承诺；P95 使用 checked-in 固定 mock duration samples 按 nearest-rank 算法计算，并保留显式余量。`tokenEstimate = ceil((Markdown UTF-8 bytes + structured JSON UTF-8 bytes) / 4)`，只用于观察响应规模，不使用模型 tokenizer，也不是跨模型 hard gate。
+
+T10 已完成；T11 GitHub 故障注入仍待完成。
 
 本项目以本地长驻 MCP 进程运行；已加载的 server 不会因为仓库合并或 npm 包更新而热替换。验证新版本行为前应重启 MCP client/server 连接，否则工具输出可能仍来自旧进程。版本与契约检查必须同时记录 server version/commit 证据，不能仅凭工作树 HEAD 推断运行实例已更新。

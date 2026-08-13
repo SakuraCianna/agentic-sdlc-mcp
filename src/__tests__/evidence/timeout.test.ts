@@ -2,7 +2,11 @@ import { spawnSync } from "node:child_process";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { withAbortableTimeout } from "../../evidence/timeout.js";
+import {
+  AbortableCancellationError,
+  AbortableTimeoutError,
+  withAbortableTimeout,
+} from "../../evidence/timeout.js";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -58,7 +62,7 @@ describe("withAbortableTimeout", () => {
     await rejection;
     expect(childSignal?.aborted).toBe(true);
     expect(childSignal?.reason).toEqual(
-      new Error("GitHub evidence timed out after 25ms.")
+      new AbortableTimeoutError("GitHub evidence", 25)
     );
     expect(vi.getTimerCount()).toBe(0);
   });
@@ -103,7 +107,7 @@ describe("withAbortableTimeout", () => {
     await rejection;
     expect(childSignal?.aborted).toBe(true);
     expect(childSignal?.reason).toEqual(
-      new Error("evidence collection was aborted.")
+      new AbortableCancellationError("evidence collection")
     );
     expect(vi.getTimerCount()).toBe(0);
   });

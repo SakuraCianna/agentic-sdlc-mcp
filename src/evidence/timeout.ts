@@ -1,7 +1,31 @@
+/** A caller cancellation whose non-Error reason was safely normalized. */
+export class AbortableCancellationError extends Error {
+  readonly label: string;
+
+  constructor(label: string) {
+    super(`${label} was aborted.`);
+    this.name = "AbortableCancellationError";
+    this.label = label;
+  }
+}
+
 function abortError(label: string, signal: AbortSignal): Error {
   return signal.reason instanceof Error
     ? signal.reason
-    : new Error(`${label} was aborted.`);
+    : new AbortableCancellationError(label);
+}
+
+/** A locally enforced deadline, distinct from a caller-initiated cancellation. */
+export class AbortableTimeoutError extends Error {
+  readonly label: string;
+  readonly timeoutMs: number;
+
+  constructor(label: string, timeoutMs: number) {
+    super(`${label} timed out after ${timeoutMs}ms.`);
+    this.name = "AbortableTimeoutError";
+    this.label = label;
+    this.timeoutMs = timeoutMs;
+  }
 }
 
 /**
@@ -41,9 +65,7 @@ export function withAbortableTimeout<T>(
     parentSignal?.addEventListener("abort", abortFromParent, { once: true });
 
     timer = setTimeout(() => {
-      const error = new Error(
-        `${label} timed out after ${normalizedTimeoutMs}ms.`
-      );
+      const error = new AbortableTimeoutError(label, normalizedTimeoutMs);
       cleanup();
       controller.abort(error);
       reject(error);
