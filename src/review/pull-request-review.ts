@@ -483,10 +483,55 @@ function hasConcreteVerificationMethod(content: string): boolean {
   );
 }
 
+const VERIFICATION_COMMAND_PROSE = new Set([
+  "a",
+  "an",
+  "and",
+  "are",
+  "as",
+  "at",
+  "available",
+  "be",
+  "been",
+  "being",
+  "by",
+  "for",
+  "from",
+  "has",
+  "have",
+  "in",
+  "is",
+  "of",
+  "on",
+  "or",
+  "that",
+  "the",
+  "this",
+  "to",
+  "was",
+  "were",
+  "will",
+  "with",
+]);
+
+function hasNamedVerificationCommand(content: string): boolean {
+  return content.split(/\r?\n/).some((line) => {
+    const match = line.match(
+      /^\s*(?:[-*]\s*)?`?(?:bun|cargo|dotnet|git|go|gradle|make|markdownlint|mvn|node|npm|npx|pnpm|python|pytest|yarn)\s+([^\s`]+)/i
+    );
+    if (!match?.[1]) return false;
+    const argument = match[1].replace(/^["']|["',:;]$/g, "").toLowerCase();
+    return /^[\w@./:-]+$/u.test(argument) && !VERIFICATION_COMMAND_PROSE.has(argument);
+  });
+}
+
 function hasDocsVerification(body: string): boolean {
   const sections = sectionContents(body, "verification|validated");
   return sections.length > 0
-    ? sections.some(hasConcreteVerificationMethod)
+    ? sections.some(
+        (content) =>
+          hasConcreteVerificationMethod(content) || hasNamedVerificationCommand(content)
+      )
     : hasConcreteVerificationMethod(body);
 }
 
