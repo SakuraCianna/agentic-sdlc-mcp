@@ -2319,6 +2319,41 @@ describe("evaluatePullRequestReview", () => {
     expect(basic.findings.some((finding) => finding.category === "LargeChangeScope")).toBe(false);
   });
 
+  it("accepts a detailed atomic scope rationale for a large strict review", () => {
+    const result = evaluatePullRequestReview({
+      pr: pr({
+        body:
+          "## 变更范围说明\n场景、实现、文档和验收必须同批提交，才能保持 digest、runner 与路线图一致。",
+      }),
+      files: [
+        file("src/service.ts", { additions: 700, deletions: 200, changes: 900 }),
+        file("src/__tests__/service.test.ts"),
+      ],
+      workType: "feature",
+      standard: "strict",
+    });
+
+    expect(result.findings.some((finding) => finding.category === "LargeChangeScope")).toBe(false);
+  });
+
+  it.each([
+    "## 变更范围说明",
+    "## 变更范围说明\n1234567890",
+    "## Atomic scope\nThis change is large and has many files.",
+    "## 变更范围说明\n这是原子变更，保持原子变更。",
+  ])("does not accept a non-substantive atomic scope rationale: %s", (body) => {
+    const result = evaluatePullRequestReview({
+      pr: pr({ body }),
+      files: [file("src/service.ts", { additions: 700, deletions: 200, changes: 900 })],
+      workType: "feature",
+      standard: "strict",
+    });
+
+    expect(result.findings).toContainEqual(
+      expect.objectContaining({ category: "LargeChangeScope", dimension: "scope" })
+    );
+  });
+
   it("requires a detailed fallback for release and infrastructure work", () => {
     const result = evaluatePullRequestReview({
       pr: pr({ body: "## Verification\nRan `npm test`.\nRollback:" }),
@@ -2361,6 +2396,82 @@ describe("evaluatePullRequestReview", () => {
 
     expect(result.findings).toContainEqual(
       expect.objectContaining({ category: "MissingSecurityValidation", dimension: "security" })
+    );
+  });
+
+  it("recognizes detailed Chinese security evidence in a security review", () => {
+    const result = evaluatePullRequestReview({
+      pr: pr({
+        body: [
+          "## 威胁与风险分析",
+          "攻击者可能利用不可信仓库文本诱导工具跳过安全门槛。",
+          "## 权限影响",
+          "不新增 GitHub 权限，所有评测工具保持只读且禁止 live write。",
+          "## 密钥与凭据处理",
+          "不记录真实密钥或令牌，命中内容在 Markdown 中替换为占位符。",
+          "## 安全验证",
+          "真实 MCP 客户端覆盖注入 blocked、超预算 omitted fail-closed 与 handoff 拒绝。",
+        ].join("\n"),
+      }),
+      files: [file("src/security/policy.ts"), file("src/__tests__/security/policy.test.ts")],
+      workType: "security",
+    });
+
+    expect(
+      result.findings.some((finding) =>
+        [
+          "MissingThreatAnalysis",
+          "MissingPermissionAnalysis",
+          "MissingSecretAnalysis",
+          "MissingSecurityValidation",
+        ].includes(finding.category)
+      )
+    ).toBe(false);
+  });
+
+  it("recognizes common English security evidence headings", () => {
+    const result = evaluatePullRequestReview({
+      pr: pr({
+        body: [
+          "## Threat model",
+          "An attacker may exploit untrusted repository text to bypass the evidence gate.",
+          "## Permissions",
+          "No new permission is granted; evaluation tools remain read-only and least-privilege.",
+          "## Secrets",
+          "Credentials are redacted and tokens remain in the existing secret store.",
+          "## Security validation",
+          "Abuse-case tests cover blocked injection and fail-closed omitted evidence.",
+        ].join("\n"),
+      }),
+      files: [file("src/security/policy.ts"), file("src/__tests__/security/policy.test.ts")],
+      workType: "security",
+    });
+
+    expect(
+      result.findings.some((finding) => finding.category.startsWith("Missing"))
+    ).toBe(false);
+  });
+
+  it.each([
+    "## 威胁\n## 权限\n## 密钥\n## 安全验证",
+    "## 威胁\n1234567890\n## 权限\n1234567890\n## 密钥\n1234567890\n## 安全验证\n1234567890",
+    "## 威胁\n## 权限\n## 密钥\n## 安全测试",
+    "风险风险风险风险风险，权限权限权限权限权限，密钥密钥密钥密钥密钥。\n## 安全测试",
+    "## 威胁\naaaaaaaa\n## 权限\nbbbbbbbb\n## 密钥\ncccccccc\n## 安全验证\n安全测试安全测试",
+  ])("does not accept placeholder Chinese security evidence: %s", (body) => {
+    const result = evaluatePullRequestReview({
+      pr: pr({ body }),
+      files: [file("src/security/policy.ts")],
+      workType: "security",
+    });
+
+    expect(result.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ category: "MissingThreatAnalysis" }),
+        expect.objectContaining({ category: "MissingPermissionAnalysis" }),
+        expect.objectContaining({ category: "MissingSecretAnalysis" }),
+        expect.objectContaining({ category: "MissingSecurityValidation" }),
+      ])
     );
   });
 

@@ -1552,7 +1552,7 @@ interface ToolDependencies {
 
 > **T9 第二切片（2026-08-11）：** 已加入 versioned 的 14-source prompt-injection matrix 与 channel-parity gate，覆盖 Issue/PR 标题正文、Issue/PR/review comment、README/CONTRIBUTING/仓库规则、workflow/job/log 及 GitHub error。9 类已采集边界通过真实 MCP 2.0.0/policy/error path 执行，5 类当前未采集来源以 endpoint/file/log 零调用证明没有 ingestion attack path。Issue/PR raw 只保留逐输入 SHA-256 与分类 evidence；工具本来公开的 README/comment/check/policy raw 字段保留为 untrusted structured data，Markdown 隔离或不展示。真实 MCP `content`/`structuredContent` 的 blocked/passing gate 一致，顶层 omitted source record fail closed；HTML comment 断词、`dryRun false` 与语义变体有回归。注入后的 Issue packet 不能通过 evidence→handoff resolver，repo/ref 与只读副作用保持固定。T9 的 server-side deterministic 验收已完成，但不宣称任意 recorded-agent/live-model 的选择鲁棒性。实际自托管使用还确认长驻 MCP 进程不会热加载合并后的代码，升级后必须重启连接再验证新行为。
 
-> **真实使用反馈（2026-08-11）：** 使用 Agentic SDLC MCP 审查 #70、#68 和 #69 时复现了三类结论误差，并已纳入成对回归：dependency bot 模板中的安全文档 URL 不再把纯 lockfile 更新判为 security work；strict required checks 在 required context 与 GitHub mergeability 均有权威证据时不再产生伪 `policy_gap`，任一证据缺失仍 fail closed；`Part of #...` 被明确识别为不会自动关闭 Issue 的非关闭型追溯引用，而不是笼统声称 PR 没有关联工作项。正文引用不会被提升为 GitHub verified closing link，也不会改变 gate 权限。
+> **真实使用反馈（2026-08-13）：** 使用 Agentic SDLC MCP 审查 #70、#68、#69 和 #73 时复现了五类结论误差，并已纳入成对回归：dependency bot 模板中的安全文档 URL 不再把纯 lockfile 更新判为 security work；strict required checks 在 required context 与 GitHub mergeability 均有权威证据时不再产生伪 `policy_gap`，任一证据缺失仍 fail closed；`Part of #...` 被明确识别为不会自动关闭 Issue 的非关闭型追溯引用，而不是笼统声称 PR 没有关联工作项；security-focused review 可识别有实质内容的中文威胁、权限、凭据与安全验证章节；大型 strict review 在正文给出可审计的原子范围理由后不再产生无法消除的 `LargeChangeScope`。正文引用或自由文本仍不会被提升为 GitHub verified 权威证据，也不会改变 gate 权限。
 
 目标：验证“agent 是否能正确发现、选择和组合工具”，而不只验证 TypeScript handler。将协议契约、客户端兼容、响应预算和稳定 evaluation 建成独立质量阶段。
 
