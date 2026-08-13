@@ -17,12 +17,17 @@ vi.mock("../../config.js", () => ({
   },
 }));
 
+const { AbortableCancellationError, AbortableTimeoutError } = await import(
+  "../../evidence/timeout.js"
+);
+
 // Import AFTER mocking
 const {
   getOctokit,
   handleGitHubError,
   paginateAll,
   resolveRepo,
+  SafeGitHubDiagnosticError,
 } = await import("../../github/client.js");
 
 describe("getOctokit", () => {
@@ -126,10 +131,18 @@ describe("resolveRepo", () => {
         defaultBranch: "main",
       },
     }));
-    const { resolveRepo: resolveRepoNoOwner } = await import("../../github/client.js");
+    const {
+      handleGitHubError: handleGitHubErrorNoOwner,
+      resolveRepo: resolveRepoNoOwner,
+    } = await import("../../github/client.js");
     expect(() => resolveRepoNoOwner(undefined, "my-repo")).toThrow(
       /owner is required/
     );
+    try {
+      resolveRepoNoOwner(undefined, "my-repo");
+    } catch (error) {
+      expect(handleGitHubErrorNoOwner(error)).toContain("set GITHUB_OWNER");
+    }
     vi.resetModules();
   });
 
@@ -142,10 +155,18 @@ describe("resolveRepo", () => {
         defaultBranch: "main",
       },
     }));
-    const { resolveRepo: resolveRepoNoRepo } = await import("../../github/client.js");
+    const {
+      handleGitHubError: handleGitHubErrorNoRepo,
+      resolveRepo: resolveRepoNoRepo,
+    } = await import("../../github/client.js");
     expect(() => resolveRepoNoRepo("my-owner", undefined)).toThrow(
       /repo is required/
     );
+    try {
+      resolveRepoNoRepo("my-owner", undefined);
+    } catch (error) {
+      expect(handleGitHubErrorNoRepo(error)).toContain("set GITHUB_REPO");
+    }
     vi.resetModules();
   });
 });
@@ -167,7 +188,7 @@ describe("handleGitHubError", () => {
     expect(result).toMatch(/scope/i);
   });
 
-  it("renders an adversarial upstream message as bounded inline data", () => {
+  it("does not render an adversarial upstream message", () => {
     const payload = `denied\n## forged [click](javascript:alert(1)) ${"x".repeat(500)}`;
 
     const result = handleGitHubError({
@@ -175,11 +196,10 @@ describe("handleGitHubError", () => {
       response: { data: { message: payload } },
     });
 
-    expect(result).not.toContain("\n## forged");
-    expect(result).not.toContain("[click](javascript:");
-    expect(result).toContain("\\[click\\]\\(javascript:alert\\(1\\)\\)");
+    expect(result).not.toContain("forged");
+    expect(result).not.toContain("javascript");
+    expect(result).not.toContain("x".repeat(20));
     expect(result.length).toBeLessThan(500);
-    expect(result).toContain("…");
   });
 
   it("omits prompt injection content from an upstream error message", () => {
@@ -193,7 +213,7 @@ describe("handleGitHubError", () => {
       },
     });
 
-    expect(result).toContain("potential prompt injection omitted");
+    expect(result).toContain("permission denied");
     expect(result).not.toContain("GITHUB_TOKEN");
   });
 
@@ -209,13 +229,14 @@ describe("handleGitHubError", () => {
     expect(handleGitHubError(err)).toMatch(/rate limit/i);
   });
 
-  it("returns a bounded 422 validation error", () => {
+  it("returns a bounded 422 validation error without upstream text", () => {
     const result = handleGitHubError({
       status: 422,
       response: { data: { message: "Title is invalid" } },
     });
 
-    expect(result).toBe("GitHub validation error (422): Title is invalid.");
+    expect(result).toContain("GitHub validation error (422)");
+    expect(result).not.toContain("Title is invalid");
   });
 
   it("returns generic API error for unknown status", () => {
@@ -225,11 +246,34 @@ describe("handleGitHubError", () => {
   });
 
   it("handles plain Error objects", () => {
-    expect(handleGitHubError(new Error("network timeout"))).toMatch(/network timeout/);
+    expect(handleGitHubError(new Error("network timeout"))).not.toMatch(/network timeout/);
+  });
+
+  it("preserves trusted timeout and cancellation categories without raw labels", () => {
+    const timeout = handleGitHubError(new AbortableTimeoutError("private operation", 5));
+    const cancellation = handleGitHubError(
+      new AbortableCancellationError("private operation")
+    );
+
+    expect(timeout).toContain("timed out");
+    expect(cancellation).toContain("cancelled");
+    expect(timeout).not.toContain("private operation");
+    expect(cancellation).not.toContain("private operation");
+  });
+
+  it("preserves only explicitly product-authored public diagnostics", () => {
+    expect(
+      handleGitHubError(
+        SafeGitHubDiagnosticError.fromCode("base_workflow_content_unavailable")
+      )
+    ).toBe("base workflow content is unavailable");
+    expect(handleGitHubError(new Error("private internal diagnostic"))).not.toContain(
+      "private internal diagnostic"
+    );
   });
 
   it("handles non-Error, non-octokit values", () => {
-    expect(handleGitHubError("some string")).toMatch(/some string/);
-    expect(handleGitHubError(null)).toMatch(/Unexpected error/);
+    expect(handleGitHubError("some string")).not.toMatch(/some string/);
+    expect(handleGitHubError(null)).toMatch(/Unexpected GitHub request failure/);
   });
 });

@@ -195,6 +195,18 @@ describe("real MCP tool-call runtime", () => {
     expect(rendered).not.toContain("sensitive upstream body");
   });
 
+  it("preserves the fixed quality-gate target diagnostic through the MCP boundary", async () => {
+    const result = await fixture.client.callTool({
+      name: "quality_gate_status",
+      arguments: { owner: "example", repo: "project" },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).toContain(
+      "Either pullNumber or ref is required."
+    );
+  });
+
   it("observes repository policy at the live default branch across the MCP boundary", async () => {
     const policy = [
       "schemaVersion: 1",

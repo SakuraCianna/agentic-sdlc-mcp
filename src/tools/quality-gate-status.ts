@@ -13,7 +13,12 @@ import {
   StructuredContentTrustBoundarySchema,
   withStructuredContentTrustBoundary,
 } from "../security/trust-boundary.js";
-import { resolveRepo, getOctokit, handleGitHubError } from "../github/client.js";
+import {
+  SafeGitHubDiagnosticError,
+  resolveRepo,
+  getOctokit,
+  handleGitHubError,
+} from "../github/client.js";
 import {
   collectCiEvidence,
   collectPullRequestEvidence,
@@ -1141,7 +1146,7 @@ export async function handleQualityGateStatus(
       evaluateRefQualityGate(evidence)
     );
   } else {
-    throw new Error("Either pullNumber or ref is required.");
+    throw SafeGitHubDiagnosticError.fromCode("quality_gate_target_required");
   }
 
   return { text: renderQualityGateMarkdown(structured), structured };

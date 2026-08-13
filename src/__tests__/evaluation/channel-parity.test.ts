@@ -261,7 +261,7 @@ describe("T9 prompt-injection source and channel parity", () => {
           status: 403,
           response: { data: { message: testCase.text } },
         });
-        expect(safeError).toContain("potential prompt injection omitted");
+        expect(safeError).toContain("permission denied");
         expect(safeError).not.toContain("HIDDEN_github_error");
         expect(safeError).not.toContain("GITHUB_TOKEN");
       }

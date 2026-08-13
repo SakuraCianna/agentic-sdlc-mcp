@@ -302,7 +302,8 @@ describe("handleWorkflowPermissionsAudit", () => {
     const { structured, text } = await handleWorkflowPermissionsAudit(params, REF, octokit);
 
     expect(structured.errors).toHaveLength(1);
-    expect(structured.errors[0]).toContain("Internal server error");
+    expect(structured.errors[0]).toContain("GitHub API error (500)");
+    expect(structured.errors[0]).not.toContain("Internal server error");
     expect(structured.conclusion).toBe("needs_review");
     expect(text).not.toContain("No findings -- scanned workflows declare explicit, least-privilege permissions.");
   });
