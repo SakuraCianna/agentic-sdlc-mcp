@@ -47,9 +47,14 @@ npm run eval:deterministic -- --group selection
 npm run eval:deterministic -- --group critical
 npm run eval:budgets
 npm run eval:faults
+npm run eval:ci
 ```
 
 `eval:score` 构建 TypeScript 后运行固定的正例、反例、阈值、digest、schema drift 和输入上限测试。`eval:deterministic` 只接受显式注册的 `selection`、`critical`、`budgets` 或 `faults` group；四组都只向子进程传递 CI、locale、颜色、系统路径、临时目录等最小安全环境 allowlist，设置 offline 标记，并通过真实 MCP 2.0.0 client/server 内存 transport 重放 versioned 场景。`eval:budgets` 与 `eval:faults` 是固定选择对应 group 的便捷命令。
+
+`eval:ci` 是 v1.10 required release gate 的本地等价入口：先构建，再依次运行 scorer、selection、critical、budgets 与 faults，最后只在 12 个唯一场景完整、总正确率至少 90%、critical 组 6/6、预算 13/13、故障 11/11 时原子写入 `artifacts/evaluation/scenario-score.json`。汇总只保留计数、百分比与 provenance，不保存原始参数、Issue/PR 正文或上游响应。GitHub Actions 同时上传 manifest diff、Conformance checks、scenario score、budget 与 fault 五个精确文件；任一缺失或失败都不会上传旧的部分结果。
+
+当前 required 结果是 6 个 `recorded-agent` selection replay 与 6 个 `scripted` critical scenario；`live-model` 为 0。这里的 100% 是固定 fixture 的 release-gate 结果，不是当前模型实时能力或 MCP 官方认证。若未来引入 live-model，必须另行治理模型/版本、凭据、成本、漂移和可重复性，不能把它静默混入 required 离线分数。
 
 `selection` 包含以下 6 个 recorded-agent 场景：
 
@@ -80,6 +85,6 @@ Issue/PR packet 不回传 raw title/body，只保留逐输入计算的 source-co
 
 `npm run eval:faults` 通过真实 MCP 2.0.0 `Client.callTool` 和共享 Octokit fixture 执行矩阵，阻断 fetch/socket/live Issue create。测试同时验证可用来源仍保留、partial/unverified 不提升为 clean、GitHub/普通异常原文不进入 Markdown 或 structured limitations、`create_pr_summary` 取消实际到达 Octokit signal、超时后无挂起 upstream promise，以及相同 check/status 只在同一 response page 内去重。runner 使用进程专属 pending 文件；只有配置中的 11 个唯一 ID 全部登记成功后才发布被 Git 忽略的 `artifacts/evaluation/faults.json`，失败或部分运行不能覆盖正式 artifact。
 
-该 artifact 证明固定 fixture 下的 server-side deterministic 降级与资源生命周期，不代表真实 GitHub 可用性、重试策略或任意 agent/model 行为。T11 已完成；T12 CI 与 v1.10 release gate 仍待完成。
+该 artifact 证明固定 fixture 下的 server-side deterministic 降级与资源生命周期，不代表真实 GitHub 可用性、重试策略或任意 agent/model 行为。T11 与 T12 已完成；Node 24 contract/evaluation job 已成为 `main` required release gate，正式发布仍以候选 PR 的远端检查和独立终审为准。
 
 本项目以本地长驻 MCP 进程运行；已加载的 server 不会因为仓库合并或 npm 包更新而热替换。验证新版本行为前应重启 MCP client/server 连接，否则工具输出可能仍来自旧进程。版本与契约检查必须同时记录 server version/commit 证据，不能仅凭工作树 HEAD 推断运行实例已更新。

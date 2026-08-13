@@ -164,7 +164,7 @@ describe("MCP 2025/2026 era routing", () => {
       expect(asRecord(result["_meta"])).toEqual(expect.objectContaining({
         "io.modelcontextprotocol/serverInfo": {
           name: "agentic-sdlc-mcp",
-          version: "1.9.0",
+          version: "1.10.0",
         },
       }));
     }

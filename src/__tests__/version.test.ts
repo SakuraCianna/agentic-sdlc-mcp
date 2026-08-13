@@ -14,7 +14,7 @@ describe("SERVER_INFO", () => {
     };
 
     expect(SERVER_INFO.name).toBe(packageJson.name);
-    expect(SERVER_INFO.version).toBe("1.9.0");
+    expect(SERVER_INFO.version).toBe("1.10.0");
     expect(SERVER_INFO.version).toBe(packageJson.version);
     expect(packageJson.dependencies["@modelcontextprotocol/sdk"]).toBeUndefined();
     expect(packageJson.dependencies["@modelcontextprotocol/server"]).toBe("2.0.0");

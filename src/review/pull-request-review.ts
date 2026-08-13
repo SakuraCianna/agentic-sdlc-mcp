@@ -399,15 +399,59 @@ function hasNoTestReason(body: string): boolean {
   );
 }
 
+function markdownHiddenHeadingLines(lines: readonly string[]): boolean[] {
+  let openFence: { marker: "`" | "~"; length: number } | null = null;
+  let inHtmlComment = false;
+
+  return lines.map((line) => {
+    if (openFence) {
+      const closing = line.match(/^ {0,3}(`{3,}|~{3,})\s*$/);
+      const marker = closing?.[1];
+      if (
+        marker?.[0] === openFence.marker &&
+        marker.length >= openFence.length
+      ) {
+        openFence = null;
+      }
+      return true;
+    }
+
+    if (inHtmlComment) {
+      if (line.includes("-->")) inHtmlComment = false;
+      return true;
+    }
+
+    const commentStart = line.indexOf("<!--");
+    if (commentStart >= 0) {
+      if (line.indexOf("-->", commentStart + 4) < 0) inHtmlComment = true;
+      return true;
+    }
+
+    const opening = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+    const marker = opening?.[1];
+    const info = opening?.[2] ?? "";
+    if (marker && (marker[0] === "~" || !info.includes("`"))) {
+      openFence = {
+        marker: marker[0] as "`" | "~",
+        length: marker.length,
+      };
+      return true;
+    }
+    return false;
+  });
+}
+
 function sectionContents(body: string, names: string): string[] {
   const lines = body.split(/\r?\n/);
+  const hiddenHeading = markdownHiddenHeadingLines(lines);
   const namePattern = new RegExp(`^(?:${names})\\s*:?$`, "i");
-  const inlinePattern = new RegExp(`^\\s*(?:${names})\\s*:\\s*(.*)$`, "i");
+  const inlinePattern = new RegExp(`^ {0,3}(?:${names})\\s*:\\s*(.*)$`, "i");
   const sections: string[] = [];
 
   for (let index = 0; index < lines.length; index += 1) {
+    if (hiddenHeading[index]) continue;
     const line = lines[index] ?? "";
-    const heading = line.match(/^\s*#{1,6}\s+(.+?)\s*#*\s*$/);
+    const heading = line.match(/^ {0,3}#{1,6}\s+(.+?)\s*#*\s*$/);
     const inline = line.match(inlinePattern);
     if (!heading && !inline) continue;
     if (heading && !namePattern.test(heading[1] ?? "")) continue;
@@ -416,7 +460,7 @@ function sectionContents(body: string, names: string): string[] {
     if (inline?.[1]) content.push(inline[1]);
     for (let cursor = index + 1; cursor < lines.length; cursor += 1) {
       const next = lines[cursor] ?? "";
-      if (/^\s*#{1,6}\s+/.test(next)) break;
+      if (!hiddenHeading[cursor] && /^ {0,3}#{1,6}\s+/.test(next)) break;
       content.push(next);
     }
     sections.push(content.join("\n").trim());
@@ -467,10 +511,7 @@ function hasSubstantiveEvidence(
 
 function hasConcreteVerificationMethod(content: string): boolean {
   return (
-    /\bmarkdownlint\b|\blink[ -]?check(?:er|ing)?\b/i.test(content) ||
-    /\b(?:ran|run|executed|verified with|validated with)\s+`?(?:bun|cargo|dotnet|git|go|gradle|make|markdownlint|mvn|node|npm|npx|pnpm|python|pytest|yarn)\b/i.test(
-      content
-    ) ||
+    hasReportedVerificationCommand(content) ||
     /\brender(?:ed|ing)?\b[^.\n]*\b(?:doc(?:umentation)?|markdown|page|site)\b/i.test(
       content
     ) ||
@@ -483,45 +524,113 @@ function hasConcreteVerificationMethod(content: string): boolean {
   );
 }
 
-const VERIFICATION_COMMAND_PROSE = new Set([
+const VERIFICATION_SUBCOMMANDS: Readonly<Record<string, ReadonlySet<string>>> = {
+  bun: new Set(["build", "install", "run", "test"]),
+  cargo: new Set(["build", "check", "clippy", "fmt", "run", "test"]),
+  dotnet: new Set(["build", "format", "pack", "publish", "restore", "run", "test"]),
+  git: new Set([
+    "diff",
+    "log",
+    "ls-files",
+    "ls-remote",
+    "merge-base",
+    "rev-parse",
+    "show",
+    "status",
+    "worktree",
+  ]),
+  go: new Set(["build", "fmt", "generate", "run", "test", "vet"]),
+  gradle: new Set(["assemble", "build", "check", "clean", "test"]),
+  make: new Set(["all", "build", "check", "clean", "lint", "test"]),
+  mvn: new Set(["clean", "install", "package", "test", "verify"]),
+  npm: new Set(["audit", "build", "ci", "exec", "install", "pack", "publish", "run", "start", "test"]),
+  pnpm: new Set(["audit", "build", "exec", "install", "run", "start", "test"]),
+  yarn: new Set(["audit", "build", "install", "run", "start", "test"]),
+};
+
+const VERIFICATION_TARGET_PROSE = new Set([
   "a",
   "an",
-  "and",
-  "are",
-  "as",
-  "at",
   "available",
-  "be",
-  "been",
-  "being",
-  "by",
-  "for",
-  "from",
-  "has",
-  "have",
-  "in",
+  "correctly",
   "is",
-  "of",
-  "on",
-  "or",
-  "that",
   "the",
-  "this",
-  "to",
-  "was",
-  "were",
-  "will",
-  "with",
+  "works",
 ]);
+
+function hasExecutableTarget(argumentsText: string): boolean {
+  const target = argumentsText.match(/^`?([^\s`]+)/)?.[1]?.replace(/["',:;.]+$/g, "");
+  return Boolean(
+    target &&
+      !target.startsWith("-") &&
+      /^[\w@./:-]+$/u.test(target) &&
+      /[\p{L}\p{N}]/u.test(target) &&
+      !VERIFICATION_TARGET_PROSE.has(target.toLowerCase())
+  );
+}
+
+function isVerificationCommandArgument(
+  cli: string,
+  argument: string,
+  remainingArguments = ""
+): boolean {
+  if (!/[\p{L}\p{N}]/u.test(argument)) return false;
+  const normalized = argument.replace(/^['"]|['",:;.]+$/g, "").toLowerCase();
+  const subcommands = VERIFICATION_SUBCOMMANDS[cli];
+  if (subcommands) {
+    if (!subcommands.has(normalized)) return false;
+    if (normalized === "run" || normalized === "exec") {
+      return hasExecutableTarget(remainingArguments);
+    }
+    return true;
+  }
+
+  if (cli === "node") {
+    return (
+      normalized.startsWith("-") ||
+      /(?:^|[\\/])[^\\/]+\.(?:cjs|js|mjs|ts)$/.test(normalized)
+    );
+  }
+  if (cli === "python") {
+    return normalized.startsWith("-") || /(?:^|[\\/])[^\\/]+\.py$/.test(normalized);
+  }
+  if (cli === "pytest") {
+    return normalized.startsWith("-") || /(?:^|[\\/])(?:test[^\\/]*|tests?)(?:[\\/:]|$)/.test(normalized);
+  }
+  if (cli === "markdownlint") {
+    return normalized.startsWith("-") || /(?:\.md|[\\/*?])/i.test(normalized);
+  }
+  if (cli === "npx") {
+    return /^(?:eslint|jest|markdownlint|playwright|prettier|tsc|tsx|vitest)$/.test(normalized);
+  }
+  return false;
+}
 
 function hasNamedVerificationCommand(content: string): boolean {
   return content.split(/\r?\n/).some((line) => {
     const match = line.match(
-      /^\s*(?:[-*]\s*)?`?(?:bun|cargo|dotnet|git|go|gradle|make|markdownlint|mvn|node|npm|npx|pnpm|python|pytest|yarn)\s+([^\s`]+)/i
+      /^\s*(?:[-*]\s*)?`?(bun|cargo|dotnet|git|go|gradle|make|markdownlint|mvn|node|npm|npx|pnpm|python|pytest|yarn)\s+([^\s`]+)(?:\s+(.+))?/i
     );
-    if (!match?.[1]) return false;
-    const argument = match[1].replace(/^["']|["',:;]$/g, "").toLowerCase();
-    return /^[\w@./:-]+$/u.test(argument) && !VERIFICATION_COMMAND_PROSE.has(argument);
+    if (!match?.[1] || !match[2]) return false;
+    return isVerificationCommandArgument(match[1].toLowerCase(), match[2], match[3]);
+  });
+}
+
+function hasReportedVerificationCommand(content: string): boolean {
+  return content.split(/\r?\n/).some((line) => {
+    const match = line.match(
+      /\b(?:executed|ran|run|validated with|verified with)\s+`?(bun|cargo|dotnet|git|go|gradle|make|markdownlint|mvn|node|npm|npx|pnpm|python|pytest|yarn)\s+([^\s`]+)(?:\s+(.+))?/i
+    );
+    if (!match?.[1] || !match[2]) return false;
+    const prefix = line.slice(0, match.index);
+    if (
+      /\b(?:can(?:not|'t)|could(?:\s+not|n't)|did(?:\s+not|n't)|failed\s+to|never|not|unable\s+to|was(?:\s+not|n't)|were(?:\s+not|n't))\b/i.test(
+        prefix
+      )
+    ) {
+      return false;
+    }
+    return isVerificationCommandArgument(match[1].toLowerCase(), match[2], match[3]);
   });
 }
 

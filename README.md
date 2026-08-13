@@ -351,6 +351,7 @@ npm run test
 | `npm run contracts:inspector:http` | Verify the built local HTTP adapter through Inspector on a random IPv4 loopback port |
 | `npm run contracts:conformance:install` | Install the exact Conformance 0.1.16 pilot dependency from its isolated lockfile |
 | `npm run contracts:conformance:pilot` | Run the legacy 2025-11-25 active suite and write a sanitized `checks.json` artifact |
+| `npm run eval:ci` | Run the offline 12-scenario release gate plus all 13 budget and 11 fault reports |
 | `npm run smoke` | Verify registration without GitHub credentials |
 | `npm run check:line-endings` | Reject CRLF and mixed line endings |
 
@@ -362,7 +363,9 @@ The HTTP gate starts the production adapter on `127.0.0.1:0`, targets its canoni
 
 The Conformance pilot pins official 0.1.16 and its legacy `2025-11-25` active suite. It currently records 30 scenarios: five direct passes and 25 governed expected failures, primarily because the upstream everything-server prompts, fixture URIs, fixture tools, subscriptions, media/callback capabilities, and stateful SSE assumptions are not this product's public contract. Every expected failure has a reason, owner, and removal condition; a new failure or stale entry fails the run. The uploaded `checks.json` excludes raw response details and credentials. This is a non-blocking compatibility pilot, not certification and not a reason to add test-only production capabilities.
 
-CI runs the full product suite and current-contract comparison on Node 22 and Node 24. Separate Node 24 jobs replay the immutable baseline and run the Inspector stdio/HTTP and Conformance contracts. Node 20 is not a supported runtime because it is end-of-life; local contributors only need one supported Node version, while the compatibility matrix is enforced by GitHub Actions.
+CI runs the full product suite and current-contract comparison on Node 22 and Node 24. Separate Node 24 jobs replay the immutable baseline and run the required contract/evaluation gate: Inspector stdio/HTTP, Conformance, 12 fixed scenarios, all 13 response budgets, and the 11-case GitHub fault matrix. The gate requires at least 90% total scenario accuracy and 100% for the six safety-critical scenarios, then uploads only five bounded summary artifacts. Node 20 is not a supported runtime because it is end-of-life; local contributors only need one supported Node version, while the compatibility matrix is enforced by GitHub Actions.
+
+Evaluation results retain their provenance. `scripted` means a deterministic fixture, `recorded-agent` means a sanitized historical execution replayed against fixed inputs, and `live-model` means an optional current model run. Required CI contains six scripted and six recorded-agent scenarios and no live-model run. A passing replay proves the checked-in workflow remains deterministic; it is not a claim about every model, provider, future prompt, or MCP certification. See the [evaluation guide](docs/evaluation.md).
 
 Ordinary tests, `contracts:check`, and `contracts:verify-baseline` never rewrite the baseline. The replay command and the maintainer-only `contracts:generate` command verify the pinned tag/commit, install the historical lockfile with lifecycle scripts, audit, and funding output disabled, build it in the system temporary directory, and use real `tools/list` and `resources/list` calls in a bounded child process whose cwd stays outside the checkout. That child receives only an allowlist of OS path, temporary-directory, locale, and dynamic-library environment variables; credentials, business configuration, `NODE_OPTIONS`, and local state paths are not inherited. Windows cleanup uses bounded retries after historical handles are released. The commands require npm registry access but do not call GitHub APIs or model services. Only `contracts:generate` writes the tracked JSON, leaving its diff visible for review.
 
@@ -382,6 +385,7 @@ Keep tokens, credentials, private repository content, and generated local config
 - [Repository policy guide](docs/repository-policy.md)
 - [Testing strategy](docs/testing-strategy.md)
 - [Remote deployment re-entry criteria](docs/remote-deployment-considerations.md)
+- [v1.10.0 release notes](docs/releases/v1.10.0.md)
 - [v1.9.0 release notes](docs/releases/v1.9.0.md)
 - [AI coding agent smoke test](docs/ai-coding-agent-smoke-test.md)
 - [Changelog](CHANGELOG.md)

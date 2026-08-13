@@ -2,17 +2,17 @@
 
 ## Review baseline
 
-- Change set: v1.9.0 release candidate
-- Fixed comparison point: `04f57f1094fdec674ea575b71a3f707cbc45b3b2`
+- Change set: v1.10.0 release candidate
+- Fixed comparison point: immutable `v1.9.0` commit `3e1cdbb2d591ba482903f53579f1f76cc95ff1c4`
 - Working branch: `sakuracianna`
-- Review date: 2026-07-28
+- Review date: 2026-08-13
 
 ## External risk status
 
 | ID | Severity | Status | Description | Disposition |
 |---|---|---|---|---|
-| EXT-001 | Moderate | Not actionable | GHSA-frvp-7c67-39w9 affects Hono `serve-static` on Windows in versions before 1.19.15 and from 2.0.0 through 2.0.4; npm audit currently flattens the range to `<2.0.5` and reports Hono plus the SDK | The lockfile resolves the upstream-patched 1.19.15 release. Production code imports only `getRequestListener` through the MCP SDK and exposes no static-file route. Accept the two moderate audit entries; reopen if Hono is downgraded or static-file serving is introduced |
-| EXT-002 | Moderate | Not actionable | Hono 4.12.27 is in the stable MCP 2.0.0 Node adapter tree and npm audit now groups the CORS ReDoS, JSX `memo` disclosure, proxy header, and language-middleware complexity advisories into the current three package-level moderate findings | Production imports only `toNodeHandler`; it does not import Hono CORS, JSX/SSR, proxy, language, or static middleware. Keep the stable MCP 2.0.0 lock, do not claim audit green, and reopen immediately if an affected middleware becomes reachable or the SDK publishes a compatible patched dependency tree |
+| EXT-001 | Moderate | Resolved for current lock | GHSA-frvp-7c67-39w9 affects Hono `serve-static` on Windows in versions before 1.19.15 and from 2.0.0 through 2.0.4 | The lockfile remains on upstream-patched `@hono/node-server@1.19.15`; production imports only `getRequestListener` and exposes no static-file route. Reopen if node-server is downgraded or static-file serving is introduced. |
+| EXT-002 | Moderate | Resolved in v1.10 candidate | Hono 4.12.27 was covered by CORS ReDoS, JSX `memo` disclosure, proxy-header and language-middleware complexity advisories | An in-range lock update resolves Hono 4.13.1 without changing MCP SDK 2.0.0. Full and production audits report zero known vulnerabilities; reopen if affected middleware becomes reachable or the SDK dependency tree changes. |
 
 ## Reviewer findings
 

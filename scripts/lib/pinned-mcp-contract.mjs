@@ -28,11 +28,12 @@ const COLLECTOR_ENVIRONMENT_ALLOWLIST = new Set([
   "WINDIR",
 ]);
 
-function run(command, args, cwd, stdio = "inherit") {
+function run(command, args, cwd, stdio = "inherit", env = process.env) {
   return execFileSync(command, args, {
     cwd,
     encoding: stdio === "pipe" ? "utf8" : undefined,
     stdio,
+    env,
   });
 }
 
@@ -41,10 +42,12 @@ function runNpm(args, cwd) {
     return run(
       process.env.ComSpec ?? "cmd.exe",
       ["/d", "/s", "/c", "npm", ...args],
-      cwd
+      cwd,
+      "inherit",
+      createPinnedNpmEnvironment()
     );
   }
-  return run("npm", args, cwd);
+  return run("npm", args, cwd, "inherit", createPinnedNpmEnvironment());
 }
 
 function normalizePathForComparison(value) {
@@ -59,6 +62,16 @@ export function createContractCollectorEnvironment(environment = process.env) {
       value !== undefined &&
       COLLECTOR_ENVIRONMENT_ALLOWLIST.has(name.toUpperCase())
     ) {
+      sanitized[name] = value;
+    }
+  }
+  return sanitized;
+}
+
+export function createPinnedNpmEnvironment(environment = process.env) {
+  const sanitized = {};
+  for (const [name, value] of Object.entries(environment)) {
+    if (name.toUpperCase() !== "NPM_CONFIG_DRY_RUN") {
       sanitized[name] = value;
     }
   }

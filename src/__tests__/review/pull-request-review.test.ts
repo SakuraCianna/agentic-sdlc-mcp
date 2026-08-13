@@ -2848,6 +2848,82 @@ describe("evaluatePullRequestReview", () => {
       "## Verification\nnpm\n## Rollback\nRevert the workflow commit.",
       "a CLI name without a command",
     ],
+    [
+      "## Verification\nnpm works correctly\n## Rollback\nRevert the workflow commit.",
+      "an npm name followed by natural language",
+    ],
+    [
+      "## Verification\nnode supports ESM\n## Rollback\nRevert the workflow commit.",
+      "a node name followed by natural language",
+    ],
+    [
+      "## Verification\nRan npm works correctly.\n## Rollback\nRevert the workflow commit.",
+      "reported natural language after a CLI name",
+    ],
+    [
+      "## Verification\nmarkdownlint is available.\n## Rollback\nRevert the workflow commit.",
+      "a tool name without a command or outcome",
+    ],
+    [
+      "## Verification\nnpm ...\n## Rollback\nRevert the workflow commit.",
+      "a CLI name followed only by punctuation",
+    ],
+    [
+      "```markdown\n## Verification\nnpm run eval:ci\n```\n## Rollback\nRevert the workflow commit.",
+      "a verification heading inside a fenced code block",
+    ],
+    [
+      "~~~`example\n## Verification\nnpm run eval:ci\n~~~\n## Rollback\nRevert the workflow commit.",
+      "a verification heading inside a tilde fence with backtick info",
+    ],
+    [
+      "<!--\n## Verification\nnpm test\n-->\n## Rollback\nRevert the workflow commit.",
+      "a verification heading inside an HTML comment",
+    ],
+    [
+      "## Verification\nnpm run\n## Rollback\nRevert the workflow commit.",
+      "a run subcommand without a script name",
+    ],
+    [
+      "## Verification\nnpm run # no script\n## Rollback\nRevert the workflow commit.",
+      "a run subcommand followed by a comment",
+    ],
+    [
+      "## Verification\nnpm run ; echo ok\n## Rollback\nRevert the workflow commit.",
+      "a run subcommand followed by a semicolon",
+    ],
+    [
+      "## Verification\nnpm run && echo ok\n## Rollback\nRevert the workflow commit.",
+      "a run subcommand followed by a shell conjunction",
+    ],
+    [
+      "## Verification\nnpm run is available\n## Rollback\nRevert the workflow commit.",
+      "a run subcommand followed by natural language",
+    ],
+    [
+      "## Verification\nnpm exec # no package\n## Rollback\nRevert the workflow commit.",
+      "an exec subcommand followed by a comment",
+    ],
+    [
+      "## Verification\nnpm run --if-present\n## Rollback\nRevert the workflow commit.",
+      "a run subcommand followed only by an option",
+    ],
+    [
+      "## Verification\nNever ran npm test.\n## Rollback\nRevert the workflow commit.",
+      "an explicitly never-run command",
+    ],
+    [
+      "## Verification\nWe did not run npm test.\n## Rollback\nRevert the workflow commit.",
+      "an explicitly skipped command",
+    ],
+    [
+      "## Verification\nUnable to run npm test.\n## Rollback\nRevert the workflow commit.",
+      "an unable-to-run command",
+    ],
+    [
+      "## Verification\nDidn't run npm test.\n## Rollback\nRevert the workflow commit.",
+      "a contracted explicitly skipped command",
+    ],
   ])("rejects $1 as operational verification", (body) => {
     const result = evaluatePullRequestReview({
       pr: pr({ body }),
@@ -2858,6 +2934,41 @@ describe("evaluatePullRequestReview", () => {
     expect(result.findings).toContainEqual(
       expect.objectContaining({ category: "MissingOperationalVerification" })
     );
+  });
+
+  it("accepts a command fence inside a real verification section", () => {
+    const result = evaluatePullRequestReview({
+      pr: pr({
+        body: [
+          "## Verification",
+          "```powershell",
+          "npm run eval:ci",
+          "```",
+          "## Rollback",
+          "Revert the workflow commit after preserving the failed run logs.",
+        ].join("\n"),
+      }),
+      files: [file(".github/workflows/ci.yml"), file("src/__tests__/ci.test.ts")],
+      workType: "infra",
+    });
+
+    expect(
+      result.findings.some((finding) => finding.category === "MissingOperationalVerification")
+    ).toBe(false);
+  });
+
+  it("preserves plain reported command compatibility", () => {
+    const result = evaluatePullRequestReview({
+      pr: pr({
+        body: "## Verification\nRan npm test.\n## Rollback\nRevert the workflow commit.",
+      }),
+      files: [file(".github/workflows/ci.yml"), file("src/__tests__/ci.test.ts")],
+      workType: "infra",
+    });
+
+    expect(
+      result.findings.some((finding) => finding.category === "MissingOperationalVerification")
+    ).toBe(false);
   });
 
   it("returns complete structured fields for every finding", () => {
