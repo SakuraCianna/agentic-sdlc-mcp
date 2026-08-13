@@ -5,3 +5,5 @@ export function createDeterministicEvaluationEnvironment(
 ): NodeJS.ProcessEnv & { AGENTIC_EVALUATION_OFFLINE: "1" };
 
 export function assertCompleteBudgetArtifact(value: unknown): void;
+
+export function assertCompleteFaultArtifact(value: unknown): void;

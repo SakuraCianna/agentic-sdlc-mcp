@@ -5,6 +5,11 @@ export interface GithubContractFixture {
   octokit: Octokit;
   liveIssueCreate: ReturnType<typeof vi.fn>;
   issuesGet: ReturnType<typeof vi.fn>;
+  pullsGet: ReturnType<typeof vi.fn>;
+  pullsListFiles: ReturnType<typeof vi.fn>;
+  checksListForRef: ReturnType<typeof vi.fn>;
+  combinedStatusGet: ReturnType<typeof vi.fn>;
+  graphql: ReturnType<typeof vi.fn>;
   codeScanningList: ReturnType<typeof vi.fn>;
   dependabotList: ReturnType<typeof vi.fn>;
   secretScanningList: ReturnType<typeof vi.fn>;
@@ -60,6 +65,81 @@ export function createGithubContractFixture(): GithubContractFixture {
       created_at: "2026-08-01T00:00:00Z",
       updated_at: "2026-08-01T00:00:00Z",
       milestone: null,
+    },
+  }));
+  const pullsGet = vi.fn(async () => ({
+    data: {
+      number: 7,
+      title: pullRequestTitle,
+      body: pullRequestBody,
+      user: { login: "alice" },
+      state: "open",
+      html_url: "https://github.com/example/project/pull/7",
+      created_at: "2026-08-01T00:00:00Z",
+      draft: false,
+      head: { ref: "contract-tests", sha: "fixture-head-sha" },
+      base: { ref: "main", sha: "fixture-base-sha" },
+      commits: 1,
+      mergeable: true,
+      mergeable_state: "clean",
+      labels: [{ name: "testing" }],
+    },
+  }));
+  const pullsListFiles = vi.fn(async () => ({
+    data: [
+      {
+        filename: "src/contract.ts",
+        status: "modified",
+        additions: 4,
+        deletions: 1,
+        changes: 5,
+        patch: "@@ -1 +1 @@\n-old\n+new",
+      },
+      {
+        filename: "src/__tests__/contract.test.ts",
+        status: "added",
+        additions: 8,
+        deletions: 0,
+        changes: 8,
+        patch: "@@ -0,0 +1 @@\n+test",
+      },
+    ],
+  }));
+  const combinedStatusGet = vi.fn(async () => ({
+    data: {
+      statuses: [
+        {
+          context: checkName,
+          state: "success",
+          target_url: "https://github.com/example/project/actions/runs/1",
+        },
+      ],
+    },
+  }));
+  const checksListForRef = vi.fn(async () => ({
+    data: {
+      total_count: 1,
+      check_runs: [
+        {
+          name: checkName,
+          status: "completed",
+          conclusion: "success",
+          app: { id: 15368 },
+          details_url: "https://github.com/example/project/actions/runs/1",
+          html_url: "https://github.com/example/project/runs/1",
+        },
+      ],
+    },
+  }));
+  const graphql = vi.fn(async () => ({
+    repository: {
+      pullRequest: {
+        reviewDecision: null,
+        closingIssuesReferences: {
+          nodes: [],
+          pageInfo: { hasNextPage: false },
+        },
+      },
     },
   }));
   const codeScanningList = vi.fn(async () => ({ data: [] }));
@@ -146,17 +226,7 @@ export function createGithubContractFixture(): GithubContractFixture {
       }),
       getContent,
       getCommit: vi.fn(async () => ({ data: { sha: "fixture-head-sha" } })),
-      getCombinedStatusForRef: vi.fn(async () => ({
-        data: {
-          statuses: [
-            {
-              context: checkName,
-              state: "success",
-              target_url: "https://github.com/example/project/actions/runs/1",
-            },
-          ],
-        },
-      })),
+      getCombinedStatusForRef: combinedStatusGet,
       getBranchProtection: vi.fn(async () => {
         throw notFound("branch protection");
       }),
@@ -174,65 +244,15 @@ export function createGithubContractFixture(): GithubContractFixture {
       listEventsForTimeline: vi.fn(async () => ({ data: [] })),
     },
     pulls: {
-      get: vi.fn(async () => ({
-        data: {
-          number: 7,
-          title: pullRequestTitle,
-          body: pullRequestBody,
-          user: { login: "alice" },
-          state: "open",
-          html_url: "https://github.com/example/project/pull/7",
-          created_at: "2026-08-01T00:00:00Z",
-          draft: false,
-          head: { ref: "contract-tests", sha: "fixture-head-sha" },
-          base: { ref: "main", sha: "fixture-base-sha" },
-          commits: 1,
-          mergeable: true,
-          mergeable_state: "clean",
-          labels: [{ name: "testing" }],
-        },
-      })),
+      get: pullsGet,
       list: vi.fn(async () => ({ data: [] })),
-      listFiles: vi.fn(async () => ({
-        data: [
-          {
-            filename: "src/contract.ts",
-            status: "modified",
-            additions: 4,
-            deletions: 1,
-            changes: 5,
-            patch: "@@ -1 +1 @@\n-old\n+new",
-          },
-          {
-            filename: "src/__tests__/contract.test.ts",
-            status: "added",
-            additions: 8,
-            deletions: 0,
-            changes: 8,
-            patch: "@@ -0,0 +1 @@\n+test",
-          },
-        ],
-      })),
+      listFiles: pullsListFiles,
       listRequestedReviewers: vi.fn(async () => ({ data: { users: [], teams: [] } })),
       listReviews: vi.fn(async () => ({ data: [] })),
       listReviewComments: reviewCommentsList,
     },
     checks: {
-      listForRef: vi.fn(async () => ({
-        data: {
-          total_count: 1,
-          check_runs: [
-            {
-              name: checkName,
-              status: "completed",
-              conclusion: "success",
-              app: { id: 15368 },
-              details_url: "https://github.com/example/project/actions/runs/1",
-              html_url: "https://github.com/example/project/runs/1",
-            },
-          ],
-        },
-      })),
+      listForRef: checksListForRef,
     },
     actions: {
       getWorkflowRun: vi.fn(async () => {
@@ -246,23 +266,18 @@ export function createGithubContractFixture(): GithubContractFixture {
     codeScanning: { listAlertsForRepo: codeScanningList },
     dependabot: { listAlertsForRepo: dependabotList },
     secretScanning: { listAlertsForRepo: secretScanningList },
-    graphql: vi.fn(async () => ({
-      repository: {
-        pullRequest: {
-          reviewDecision: null,
-          closingIssuesReferences: {
-            nodes: [],
-            pageInfo: { hasNextPage: false },
-          },
-        },
-      },
-    })),
+    graphql,
   } as unknown as Octokit;
 
   return {
     octokit,
     liveIssueCreate,
     issuesGet,
+    pullsGet,
+    pullsListFiles,
+    checksListForRef,
+    combinedStatusGet,
+    graphql,
     codeScanningList,
     dependabotList,
     secretScanningList,
