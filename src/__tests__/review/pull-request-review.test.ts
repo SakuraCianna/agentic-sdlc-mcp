@@ -581,6 +581,88 @@ describe("scanPatchForSecrets", () => {
     expect(scanPatchForSecrets("src/security/risk-classifier.ts", patch)).toEqual([]);
   });
 
+  it.each([
+    [
+      "a JSON token estimate algorithm",
+      "evaluation/budgets.json",
+      '+"tokenEstimate": "ceil(UTF-8 bytes / 4); observational only, never a hard gate"',
+    ],
+    [
+      "a response token estimate calculation",
+      "src/evaluation/budgets.ts",
+      "+tokenEstimate: Math.ceil((measurement.structuredJsonBytes + measurement.markdownUtf8Bytes) / 4),",
+    ],
+    [
+      "a JSON token budget description",
+      "evaluation/budgets.json",
+      '+"tokenBudget": "Maximum approximate response size measured from UTF-8 bytes"',
+    ],
+    [
+      "a token estimate declaration",
+      "src/evaluation/budgets.ts",
+      "+const tokenEstimate = structuredJsonBytes + markdownUtf8Bytes;",
+    ],
+    [
+      "a token budget member assignment",
+      "src/evaluation/budgets.ts",
+      "+config.tokenBudget = baseBudget + reserve;",
+    ],
+    [
+      "a typed token estimation declaration",
+      "src/evaluation/budgets.ts",
+      "+const tokenEstimation: number = Math.ceil(responseBytes / 4);",
+    ],
+    [
+      "a bracketed token estimate member assignment",
+      "src/evaluation/budgets.ts",
+      '+config["tokenEstimate"] = Math.ceil(responseBytes / 4);',
+    ],
+  ])("does not treat %s as a runtime credential", (_name, filename, patch) => {
+    expect(scanPatchForSecrets(filename, patch)).toEqual([]);
+  });
+
+  it.each([
+    "+const accessTokenBudget = prefix + signature;",
+    "+const apiTokenEstimate = prefix + signature;",
+    "+const clientSecretBudget = prefix + signature;",
+    "+const passwordEstimate = prefix + signature;",
+    "+const authorizationHeaderBudget = prefix + signature;",
+    "+const refreshTokenBudget = prefix + signature;",
+    "+const sessionTokenEstimate = prefix + signature;",
+    "+const awsAccessKeyBudget = prefix + signature;",
+  ])("keeps qualified credential budget metadata fail-high: %s", (patch) => {
+    expect(scanPatchForSecrets("src/config.ts", patch)).toContainEqual(
+      expect.objectContaining({ category: "DynamicSecretConstruction", severity: "high" })
+    );
+  });
+
+  it.each([
+    "ghp_1234567890abcdef",
+    "github_pat_11AA22BB33CC44DD55EE",
+    "sk-1234567890abcdefghijklmnop",
+    "xoxb-1234567890-abcdefghijkl",
+    "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.signature123",
+    "AKIA1234567890ABCDEF",
+  ])("detects a known credential literal under a neutral JSON budget key: %s", (literal) => {
+    expect(
+      scanPatchForSecrets(
+        "evaluation/budgets.json",
+        `+{"tokenBudget":"${literal}"}`
+      )
+    ).toContainEqual(
+      expect.objectContaining({ category: "SecretLikeAssignment", severity: "high" })
+    );
+  });
+
+  it("keeps a known-prefix placeholder under a neutral JSON budget key ignored", () => {
+    expect(
+      scanPatchForSecrets(
+        "evaluation/budgets.json",
+        '+{"tokenBudget":"sk-your-api-key-here"}'
+      )
+    ).toEqual([]);
+  });
+
   it("does not treat a multiline ternary colon as a credential assignment", () => {
     const patch = [
       "+const reason = limited",

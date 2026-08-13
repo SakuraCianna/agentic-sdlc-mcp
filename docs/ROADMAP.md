@@ -1554,7 +1554,7 @@ interface ToolDependencies {
 
 > **T10 进展（2026-08-13）：** 已为 13 个公开工具建立 versioned budget scenario，通过真实 MCP 2.0.0 client 与固定 Octokit fixture 逐工具测量 GitHub API calls、递归 structured items、Markdown UTF-16 chars、structured JSON UTF-8 bytes 和真实 duration。前四项及 timeout/cancellation 为 hard gate；deadline signal 会传入 `Client.callTool` 并由测试确认 handler 收到取消。固定 mock durations 用 nearest-rank P95 报告并保留余量；token estimate 仅以 Markdown+JSON UTF-8 bytes 除以 4 粗估，不作为模型 tokenizer 或跨模型承诺。`npm run eval:budgets` 覆盖 0/1/limit/limit+1 和取消生命周期，只有 13/13 唯一报告全部通过才发布被 Git 忽略的逐 scenario/tool artifact。
 
-> **真实使用反馈（2026-08-13）：** 使用 Agentic SDLC MCP 审查 #70、#68、#69 和 #73 时复现了五类结论误差，并已纳入成对回归：dependency bot 模板中的安全文档 URL 不再把纯 lockfile 更新判为 security work；strict required checks 在 required context 与 GitHub mergeability 均有权威证据时不再产生伪 `policy_gap`，任一证据缺失仍 fail closed；`Part of #...` 被明确识别为不会自动关闭 Issue 的非关闭型追溯引用，而不是笼统声称 PR 没有关联工作项；security-focused review 可识别有实质内容的中文威胁、权限、凭据与安全验证章节；大型 strict review 在正文给出可审计的原子范围理由后不再产生无法消除的 `LargeChangeScope`。正文引用或自由文本仍不会被提升为 GitHub verified 权威证据，也不会改变 gate 权限。
+> **真实使用反馈（2026-08-13）：** 使用 Agentic SDLC MCP 审查 #70、#68、#69、#73 和 #74 时复现了六类结论误差，并已纳入成对回归：dependency bot 模板中的安全文档 URL 不再把纯 lockfile 更新判为 security work；strict required checks 在 required context 与 GitHub mergeability 均有权威证据时不再产生伪 `policy_gap`，任一证据缺失仍 fail closed；`Part of #...` 被明确识别为不会自动关闭 Issue 的非关闭型追溯引用，而不是笼统声称 PR 没有关联工作项；security-focused review 可识别有实质内容的中文威胁、权限、凭据与安全验证章节；大型 strict review 在正文给出可审计的原子范围理由后不再产生无法消除的 `LargeChangeScope`；response `tokenEstimate`/`tokenBudget` 元数据不再视为 credential，真实 API/access token 与 client secret 仍 fail high。正文引用或自由文本仍不会被提升为 GitHub verified 权威证据，也不会改变 gate 权限。
 
 目标：验证“agent 是否能正确发现、选择和组合工具”，而不只验证 TypeScript handler。将协议契约、客户端兼容、响应预算和稳定 evaluation 建成独立质量阶段。
 
