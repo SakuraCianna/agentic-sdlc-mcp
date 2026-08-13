@@ -1,7 +1,10 @@
+import { readFile } from "node:fs/promises";
+
 import { describe, expect, it } from "vitest";
 
 import {
   assertCompleteBudgetArtifact,
+  assertCompleteFaultArtifact,
   createDeterministicEvaluationEnvironment,
   parseDeterministicEvaluationArgs,
 } from "../../../scripts/run-deterministic-evaluation.mjs";
@@ -16,6 +19,9 @@ describe("deterministic evaluation runner", () => {
     );
     expect(parseDeterministicEvaluationArgs(["--group", "budgets"])).toBe(
       "budgets"
+    );
+    expect(parseDeterministicEvaluationArgs(["--group", "faults"])).toBe(
+      "faults"
     );
     expect(() => parseDeterministicEvaluationArgs([])).toThrow(/Usage/u);
     expect(() =>
@@ -83,5 +89,69 @@ describe("deterministic evaluation runner", () => {
         })),
       })
     ).toThrow(/unique/u);
+  });
+
+  it("publishes only a complete all-passing 11-case fault artifact", async () => {
+    const faultCases: Array<{
+      id: string;
+      kind: string;
+      endpoint: string;
+      status?: number;
+      affectedTool: string;
+      aggregateTool: string;
+      expectedSignal: string;
+      preservesSignal: string;
+    }> = JSON.parse(
+      await readFile(
+        new URL("../../../evaluation/fixtures/github-faults.json", import.meta.url),
+        "utf8"
+      )
+    ).cases;
+    const complete = {
+      complete: true,
+      expectedReports: 11,
+      completedReports: 11,
+      reports: faultCases.map((fault) => ({
+        faultId: fault.id,
+        kind: fault.kind,
+        endpoint: fault.endpoint,
+        status: fault.status ?? null,
+        affectedTool: fault.affectedTool,
+        aggregateTool: fault.aggregateTool,
+        expectedSignal: fault.expectedSignal,
+        preservesSignal: fault.preservesSignal,
+        passed: true,
+      })),
+    };
+
+    expect(() => assertCompleteFaultArtifact(complete)).not.toThrow();
+    expect(() =>
+      assertCompleteFaultArtifact({ ...complete, completedReports: 10 })
+    ).toThrow(/incomplete/u);
+    expect(() =>
+      assertCompleteFaultArtifact({
+        ...complete,
+        reports: complete.reports.map((report) => ({
+          ...report,
+          faultId: "duplicate",
+        })),
+      })
+    ).toThrow(/versioned fixture/u);
+    expect(() =>
+      assertCompleteFaultArtifact({
+        ...complete,
+        reports: complete.reports.map((report: { faultId: string; passed: boolean }, index: number) =>
+          index === 0 ? { ...report, faultId: "unknown-fault" } : report
+        ),
+      })
+    ).toThrow(/versioned fixture/u);
+    expect(() =>
+      assertCompleteFaultArtifact({
+        ...complete,
+        reports: complete.reports.map((report, index) =>
+          index === 0 ? { ...report, status: 500 } : report
+        ),
+      })
+    ).toThrow(/metadata/u);
   });
 });

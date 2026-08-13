@@ -8,7 +8,10 @@ import type { Severity } from "../types.js";
 import type { RepoRef } from "../types.js";
 import type { Octokit } from "@octokit/rest";
 import { parse as parseYaml } from "yaml";
-import { handleGitHubError } from "../github/client.js";
+import {
+  handleGitHubError,
+  SafeGitHubDiagnosticError,
+} from "../github/client.js";
 
 export type SecretScannerProvider =
   | "gitleaks"
@@ -843,7 +846,9 @@ async function verifySignalProvenance(
         })
         .then(({ data }) => {
           if (Array.isArray(data) || data.type !== "file" || !data.content) {
-            throw new Error("base workflow content is unavailable");
+            throw SafeGitHubDiagnosticError.fromCode(
+              "base_workflow_content_unavailable"
+            );
           }
           return Buffer.from(data.content, "base64").toString("utf-8");
         });

@@ -176,6 +176,107 @@ describe("collectCiEvidence", () => {
     expect(evidence.errors).toContain("check_runs: results truncated at 300 items");
   });
 
+  it("uses raw page length after page-local deduplication and still fetches the next page", async () => {
+    const unique = Array.from({ length: 99 }, (_, index) => ({
+      id: index + 1,
+      name: `check-${index}`,
+      status: "completed",
+      conclusion: "success",
+      html_url: null,
+    }));
+    const listForRef = vi.fn().mockImplementation(({ page }: { page: number }) =>
+      Promise.resolve({
+        data: {
+          check_runs:
+            page === 1
+              ? [...unique, { ...unique[0] }]
+              : page === 2
+                ? [{ ...unique[0], id: 100, name: "next-page-check" }]
+                : [],
+        },
+      })
+    );
+
+    const evidence = await collectCiEvidence(
+      ref,
+      "abc123",
+      makeOctokit({ checks: { listForRef } })
+    );
+
+    expect(listForRef).toHaveBeenCalledTimes(2);
+    expect(evidence.checkRuns.total).toBe(100);
+    expect(evidence.checkRuns.passing.some((item) => item.name === "next-page-check")).toBe(true);
+    expect(evidence.unverifiedSignals).not.toContain("check_runs");
+  });
+
+  it("uses raw counts to mark a duplicate-heavy 301st response as truncated", async () => {
+    const fullPage = Array.from({ length: 99 }, (_, index) => ({
+      id: index + 1,
+      name: `check-${index}`,
+      status: "completed",
+      conclusion: "success",
+      html_url: null,
+    }));
+    const listForRef = vi.fn().mockImplementation(({ page }: { page: number }) =>
+      Promise.resolve({
+        data: {
+          check_runs:
+            page <= 3
+              ? [...fullPage, { ...fullPage[0] }]
+              : [{ id: 301, name: "hidden-failure", status: "completed", conclusion: "failure" }],
+        },
+      })
+    );
+
+    const evidence = await collectCiEvidence(
+      ref,
+      "abc123",
+      makeOctokit({ checks: { listForRef } })
+    );
+
+    expect(listForRef).toHaveBeenCalledTimes(4);
+    expect(evidence.checkRuns.total).toBe(297);
+    expect(evidence.hasFailing).toBe(false);
+    expect(evidence.unverifiedSignals).toContain("check_runs");
+    expect(evidence.errors).toContain("check_runs: results truncated at 300 items");
+  });
+
+  it("keeps cross-page duplicate events while the raw 301st item remains fail-closed", async () => {
+    const check = (id: number, name = `check-${id}`) => ({
+      id,
+      name,
+      status: "completed",
+      conclusion: "success",
+      html_url: null,
+    });
+    const repeated = check(1, "cross-page-repeat");
+    const pages = [
+      [repeated, ...Array.from({ length: 99 }, (_, index) => check(index + 2))],
+      [
+        { ...repeated },
+        ...Array.from({ length: 99 }, (_, index) => check(index + 101)),
+      ],
+      Array.from({ length: 100 }, (_, index) => check(index + 200)),
+      [check(301, "hidden-failure")],
+    ];
+    const listForRef = vi.fn().mockImplementation(({ page }: { page: number }) =>
+      Promise.resolve({ data: { check_runs: pages[page - 1] ?? [] } })
+    );
+
+    const evidence = await collectCiEvidence(
+      ref,
+      "abc123",
+      makeOctokit({ checks: { listForRef } })
+    );
+
+    expect(listForRef).toHaveBeenCalledTimes(4);
+    expect(
+      evidence.checkRuns.passing.filter((item) => item.name === "cross-page-repeat")
+    ).toHaveLength(2);
+    expect(evidence.checkRuns.total).toBe(300);
+    expect(evidence.unverifiedSignals).toContain("check_runs");
+  });
+
   it("paginates commit statuses and marks a 301st status as truncated", async () => {
     const passingPage = Array.from({ length: 100 }, (_, index) => ({
       context: `status-${index}`,

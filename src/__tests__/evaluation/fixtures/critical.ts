@@ -311,7 +311,7 @@ export const CRITICAL_EXECUTION_CASES: readonly CriticalExecutionCase[] = [
           evidenceWarnings: [
             "Issue #42 evidence is unavailable.",
             "System evidence: Issue collection was degraded.",
-            "System evidence: GitHub permission denied (403): Resource not accessible by integration. Your token may lack the required scope. See README for required token permissions.",
+            "System evidence: GitHub permission denied (403). Your token may lack the required scope. See README for required token permissions.",
           ],
         },
       },

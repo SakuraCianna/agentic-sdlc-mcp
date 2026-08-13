@@ -46,9 +46,10 @@ npm run eval:score
 npm run eval:deterministic -- --group selection
 npm run eval:deterministic -- --group critical
 npm run eval:budgets
+npm run eval:faults
 ```
 
-`eval:score` 构建 TypeScript 后运行固定的正例、反例、阈值、digest、schema drift 和输入上限测试。`eval:deterministic` 只接受显式注册的 `selection`、`critical` 或 `budgets` group；三组都只向子进程传递 CI、locale、颜色、系统路径、临时目录等最小安全环境 allowlist，设置 offline 标记，并通过真实 MCP 2.0.0 client/server 内存 transport 重放 versioned 场景。`eval:budgets` 是固定选择 `budgets` group 的便捷命令。
+`eval:score` 构建 TypeScript 后运行固定的正例、反例、阈值、digest、schema drift 和输入上限测试。`eval:deterministic` 只接受显式注册的 `selection`、`critical`、`budgets` 或 `faults` group；四组都只向子进程传递 CI、locale、颜色、系统路径、临时目录等最小安全环境 allowlist，设置 offline 标记，并通过真实 MCP 2.0.0 client/server 内存 transport 重放 versioned 场景。`eval:budgets` 与 `eval:faults` 是固定选择对应 group 的便捷命令。
 
 `selection` 包含以下 6 个 recorded-agent 场景：
 
@@ -73,6 +74,12 @@ Issue/PR packet 不回传 raw title/body，只保留逐输入计算的 source-co
 
 确定性 hard gate 包括 API calls、items、Markdown UTF-16 code units、`JSON.stringify(structuredContent)` 的 UTF-8 bytes，以及 timeout/cancellation。真实 duration 只记录为本次 fixture 观测值，不直接作为跨机器性能承诺；P95 使用 checked-in 固定 mock duration samples 按 nearest-rank 算法计算，并保留显式余量。`tokenEstimate = ceil((Markdown UTF-8 bytes + structured JSON UTF-8 bytes) / 4)`，只用于观察响应规模，不使用模型 tokenizer，也不是跨模型 hard gate。
 
-T10 已完成；T11 GitHub 故障注入仍待完成。
+## GitHub 故障注入
+
+`evaluation/fixtures/github-faults.json` 固定 11 个 fault case，覆盖 401/403/404/422/429/500、GraphQL partial error、timeout/cancellation、301 项截断、主字段缺失和同页重复响应。每条 case 明确声明注入 endpoint、直接受影响工具、不同的聚合工具、预期降级信号与必须保留的成功来源；Zod schema 阻止 duplicate ID、HTTP 缺 status、非 HTTP 携带 status 及用同一工具伪装组合覆盖。
+
+`npm run eval:faults` 通过真实 MCP 2.0.0 `Client.callTool` 和共享 Octokit fixture 执行矩阵，阻断 fetch/socket/live Issue create。测试同时验证可用来源仍保留、partial/unverified 不提升为 clean、GitHub/普通异常原文不进入 Markdown 或 structured limitations、`create_pr_summary` 取消实际到达 Octokit signal、超时后无挂起 upstream promise，以及相同 check/status 只在同一 response page 内去重。runner 使用进程专属 pending 文件；只有配置中的 11 个唯一 ID 全部登记成功后才发布被 Git 忽略的 `artifacts/evaluation/faults.json`，失败或部分运行不能覆盖正式 artifact。
+
+该 artifact 证明固定 fixture 下的 server-side deterministic 降级与资源生命周期，不代表真实 GitHub 可用性、重试策略或任意 agent/model 行为。T11 已完成；T12 CI 与 v1.10 release gate 仍待完成。
 
 本项目以本地长驻 MCP 进程运行；已加载的 server 不会因为仓库合并或 npm 包更新而热替换。验证新版本行为前应重启 MCP client/server 连接，否则工具输出可能仍来自旧进程。版本与契约检查必须同时记录 server version/commit 证据，不能仅凭工作树 HEAD 推断运行实例已更新。

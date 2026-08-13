@@ -65,6 +65,12 @@ export interface BoundedCollection<T> {
   truncated: boolean;
 }
 
+interface BoundedPage<T> {
+  items: T[];
+  /** Raw items received before page-local normalization such as deduplication. */
+  receivedCount: number;
+}
+
 export type ReviewDecision = "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | null;
 
 export interface PullRequestChangedFile {
@@ -181,22 +187,44 @@ function bucketSignals(signals: GateSignal[]): SignalBuckets {
   return buckets;
 }
 
+function uniquePageItems<T>(items: readonly T[], identity: (item: T) => string): T[] {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    const key = identity(item);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 /** Collect at most maxItems while probing one extra page to distinguish complete from truncated. */
 export async function collectBounded<T>(
-  fn: (page: number, perPage: number) => Promise<T[]>,
+  fn: (page: number, perPage: number) => Promise<T[] | BoundedPage<T>>,
   maxItems = 300,
   perPage = 100
 ): Promise<BoundedCollection<T>> {
   const items: T[] = [];
+  let receivedItems = 0;
   let page = 1;
 
-  while (items.length <= maxItems) {
-    const pageItems = await fn(page, perPage);
-    items.push(...pageItems);
-    if (items.length > maxItems) {
-      return { items: items.slice(0, maxItems), truncated: true };
+  while (receivedItems <= maxItems) {
+    const result = await fn(page, perPage);
+    const pageItems = Array.isArray(result) ? result : result.items;
+    const receivedCount = Array.isArray(result) ? result.length : result.receivedCount;
+    if (
+      !Number.isSafeInteger(receivedCount) ||
+      receivedCount < pageItems.length ||
+      receivedCount < 0
+    ) {
+      throw new TypeError("Bounded page receivedCount must cover its normalized items.");
     }
-    if (pageItems.length < perPage) {
+    const remaining = Math.max(0, maxItems - receivedItems);
+    items.push(...pageItems.slice(0, remaining));
+    receivedItems += receivedCount;
+    if (receivedItems > maxItems) {
+      return { items, truncated: true };
+    }
+    if (receivedCount < perPage) {
       return { items, truncated: false };
     }
     page++;
@@ -237,7 +265,20 @@ async function collectCheckRuns(
             per_page: perPage,
             ...githubRequestOptions(signal),
           })
-          .then((response) => response.data.check_runs),
+          .then((response) => ({
+            receivedCount: response.data.check_runs.length,
+            items: uniquePageItems(response.data.check_runs, (run) =>
+              JSON.stringify([
+                run.id,
+                run.name,
+                run.status,
+                run.conclusion,
+                run.app?.id,
+                run.details_url,
+                run.html_url,
+              ])
+            ),
+          })),
       300
     );
     return {
@@ -283,7 +324,17 @@ async function collectCommitStatuses(
             per_page: perPage,
             ...githubRequestOptions(signal),
           })
-          .then((response) => response.data.statuses),
+          .then((response) => ({
+            receivedCount: response.data.statuses.length,
+            items: uniquePageItems(response.data.statuses, (status) =>
+              JSON.stringify([
+                status.id,
+                status.context,
+                status.state,
+                status.target_url,
+              ])
+            ),
+          })),
       300
     );
     return {

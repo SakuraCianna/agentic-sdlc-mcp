@@ -15,6 +15,7 @@ import {
   withStructuredContentTrustBoundary,
 } from "../security/trust-boundary.js";
 import { resolveRepo, getOctokit, paginateAll, handleGitHubError } from "../github/client.js";
+import { githubRequestOptions } from "../github/request-options.js";
 import type { RepoRef } from "../types.js";
 import type { Octokit } from "@octokit/rest";
 import { safeMarkdownInline } from "../rendering/markdown.js";
@@ -85,19 +86,28 @@ export interface PrSummaryResult {
 export async function handleCreatePrSummary(
   params: CreatePrSummaryInput,
   ref: RepoRef,
-  octokit: Octokit
+  octokit: Octokit,
+  signal?: AbortSignal
 ): Promise<{ text: string; structured: PrSummaryResult }> {
   const { data: pr } = await octokit.pulls.get({
     owner: ref.owner,
     repo: ref.repo,
     pull_number: params.pullNumber,
+    ...githubRequestOptions(signal),
   });
 
   // Paginate — large PRs can have > 100 files
   const fileEvidence = await paginateAll(
     (page, perPage) =>
       octokit.pulls
-        .listFiles({ owner: ref.owner, repo: ref.repo, pull_number: params.pullNumber, per_page: perPage, page })
+        .listFiles({
+          owner: ref.owner,
+          repo: ref.repo,
+          pull_number: params.pullNumber,
+          per_page: perPage,
+          page,
+          ...githubRequestOptions(signal),
+        })
         .then((r) => r.data),
     301
   );
@@ -293,11 +303,16 @@ Returns: Markdown PR summary + structured metadata.`,
         openWorldHint: true,
       },
     },
-    async (params: CreatePrSummaryInput) => {
+    async (params: CreatePrSummaryInput, context) => {
       try {
         const ref = resolveRepo(params.owner, params.repo);
         const octokit = getOctokit();
-        const { text, structured } = await handleCreatePrSummary(params, ref, octokit);
+        const { text, structured } = await handleCreatePrSummary(
+          params,
+          ref,
+          octokit,
+          context.mcpReq.signal
+        );
         return {
           content: [{ type: "text", text }],
           structuredContent: withStructuredContentTrustBoundary(structured),

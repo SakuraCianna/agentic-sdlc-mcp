@@ -4,10 +4,39 @@
 
 import { Octokit } from "@octokit/rest";
 import { config } from "../config.js";
-import { safeMarkdownInline } from "../rendering/markdown.js";
+import {
+  AbortableCancellationError,
+  AbortableTimeoutError,
+} from "../evidence/timeout.js";
 import type { RepoRef } from "../types.js";
 
 let _octokit: Octokit | null = null;
+
+/** A product-authored diagnostic that is explicitly safe for MCP output. */
+export class SafeGitHubDiagnosticError extends Error {
+  private constructor(public readonly publicMessage: string) {
+    super(publicMessage);
+    this.name = "SafeGitHubDiagnosticError";
+  }
+
+  static fromCode(
+    code:
+      | "base_workflow_content_unavailable"
+      | "owner_required"
+      | "quality_gate_target_required"
+      | "repo_required"
+  ): SafeGitHubDiagnosticError {
+    const messages = {
+      base_workflow_content_unavailable: "base workflow content is unavailable",
+      owner_required:
+        "owner is required. Pass it as a tool argument or set GITHUB_OWNER in your environment.",
+      quality_gate_target_required: "Either pullNumber or ref is required.",
+      repo_required:
+        "repo is required. Pass it as a tool argument or set GITHUB_REPO in your environment.",
+    } as const;
+    return new SafeGitHubDiagnosticError(messages[code]);
+  }
+}
 
 export function getOctokit(): Octokit {
   if (!_octokit) {
@@ -25,14 +54,10 @@ export function resolveRepo(owner?: string, repo?: string): RepoRef {
   const resolvedRepo = repo ?? config.githubRepo;
 
   if (!resolvedOwner) {
-    throw new Error(
-      "owner is required. Pass it as a tool argument or set GITHUB_OWNER in your environment."
-    );
+    throw SafeGitHubDiagnosticError.fromCode("owner_required");
   }
   if (!resolvedRepo) {
-    throw new Error(
-      "repo is required. Pass it as a tool argument or set GITHUB_REPO in your environment."
-    );
+    throw SafeGitHubDiagnosticError.fromCode("repo_required");
   }
 
   return { owner: resolvedOwner, repo: resolvedRepo };
@@ -80,15 +105,18 @@ export async function paginateAll<T>(
  * actionable error messages.
  */
 export function handleGitHubError(error: unknown): string {
-  const safeErrorText = (value: unknown): string =>
-    safeMarkdownInline(typeof value === "string" ? value : String(value), {
-      maxLength: 240,
-      fallback: "unknown",
-    });
+  if (error instanceof SafeGitHubDiagnosticError) return error.publicMessage;
+  if (error instanceof AbortableTimeoutError) {
+    return "GitHub request timed out before complete evidence was available. Retry or reduce the requested scope.";
+  }
+  if (
+    error instanceof AbortableCancellationError ||
+    (error instanceof Error && error.name === "AbortError")
+  ) {
+    return "GitHub request was cancelled before complete evidence was available.";
+  }
   if (isOctokitError(error)) {
     const status = error.status;
-    const rawMessage = (error.response?.data as { message?: string })?.message ?? "";
-    const message = rawMessage ? safeErrorText(rawMessage) : "";
 
     switch (status) {
       case 401:
@@ -98,31 +126,31 @@ export function handleGitHubError(error: unknown): string {
         );
       case 403:
         return (
-          `GitHub permission denied (403): ${message}. ` +
+          "GitHub permission denied (403). " +
           "Your token may lack the required scope. " +
           "See README for required token permissions."
         );
       case 404:
         return (
-          `GitHub resource not found (404): ${message}. ` +
+          "GitHub resource not found (404). " +
           "Verify the owner, repo, and resource identifiers."
         );
       case 422:
-        return `GitHub validation error (422): ${message}.`;
+        return "GitHub validation error (422). Verify the tool arguments and repository state.";
       case 429:
         return (
           "GitHub rate limit exceeded (429). " +
           "Wait a few minutes then retry, or use a token with higher limits."
         );
       default:
-        return `GitHub API error (${status}): ${message}`;
+        return `GitHub API error (${status}). Retry the request or inspect trusted server-side logs.`;
     }
   }
 
   if (error instanceof Error) {
-    return `Unexpected error: ${safeErrorText(error.message)}`;
+    return "Unexpected GitHub request failure. Retry the request or inspect trusted server-side logs.";
   }
-  return `Unexpected error: ${safeErrorText(error)}`;
+  return "Unexpected GitHub request failure. Retry the request or inspect trusted server-side logs.";
 }
 
 interface OctokitError {

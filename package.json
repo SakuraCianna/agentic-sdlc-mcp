@@ -34,6 +34,7 @@
     "eval:score": "vitest run src/__tests__/evaluation/scorer.test.ts",
     "eval:deterministic": "node scripts/run-deterministic-evaluation.mjs",
     "eval:budgets": "node scripts/run-deterministic-evaluation.mjs --group budgets",
+    "eval:faults": "node scripts/run-deterministic-evaluation.mjs --group faults",
     "contracts:generate": "npm run build && node scripts/generate-mcp-contract.mjs --tag v1.9.0 --expected-commit 3e1cdbb2d591ba482903f53579f1f76cc95ff1c4 --release-url https://github.com/SakuraCianna/agentic-sdlc-mcp/releases/tag/v1.9.0 --output contracts/mcp/v1.9.0.json --update",
     "contracts:check": "npm run build && node scripts/check-mcp-contract.mjs",
     "contracts:verify-baseline": "npm run build && node scripts/verify-mcp-baseline.mjs",
