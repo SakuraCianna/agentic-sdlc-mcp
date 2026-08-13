@@ -431,6 +431,40 @@ function hasDetailedSection(body: string, names: string): boolean {
   );
 }
 
+function hasMeaningfulProse(content: string): boolean {
+  return (content.match(/\p{L}/gu) ?? []).length >= 8;
+}
+
+function removeAllMatches(content: string, pattern: RegExp): string {
+  const flags = pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`;
+  return content.replace(new RegExp(pattern.source, flags), "");
+}
+
+const SECURITY_EVIDENCE_LABELS =
+  /\b(?:access|attack|authorization|credential|key|permission|privilege|risk|secret|threat|token|vulnerability)\b|访问|攻击|授权|凭据|口令|密钥|权限|风险|特权|威胁|令牌|漏洞/gi;
+
+function hasSubstantiveEvidence(
+  body: string,
+  sectionNames: string,
+  mentionPattern: RegExp,
+  detailPattern: RegExp
+): boolean {
+  if (
+    sectionContents(body, sectionNames).some(
+      (content) => hasMeaningfulProse(content) && detailPattern.test(content)
+    )
+  ) {
+    return true;
+  }
+  return body.split(/\r?\n/).some((line) => {
+    if (/^\s*#{1,6}\s+/.test(line) || !mentionPattern.test(line)) return false;
+    return (
+      detailPattern.test(line) &&
+      hasMeaningfulProse(removeAllMatches(line, SECURITY_EVIDENCE_LABELS))
+    );
+  });
+}
+
 function hasConcreteVerificationMethod(content: string): boolean {
   return (
     /\bmarkdownlint\b|\blink[ -]?check(?:er|ing)?\b/i.test(content) ||
@@ -465,11 +499,44 @@ function hasFallback(body: string): boolean {
 }
 
 function hasSecurityValidation(body: string): boolean {
-  return (
-    hasDetailedSection(body, "security verification|security validation") ||
-    /\b(?:codeql|dast|npm audit|penetration test(?:ing)?|sast|security test(?:ing)?|threat model (?:validated|verified))\b/i.test(
-      body
+  const methodPattern =
+    /\b(?:abuse[ -]?case|codeql|dast|fail[ -]?closed|mcp (?:2\.0\.0 )?(?:client|integration)|npm audit|penetration test(?:ing)?|sast|security test(?:ing)?|threat model (?:validated|verified))\b|安全(?:回归|测试|扫描|审计)|攻击用例|真实 MCP|拒绝|阻断/i;
+  const outcomePattern =
+    /\b(?:blocked?|covered?|failed?|findings?|passed?|rejected?|results?|verified)\b|告警|覆盖|拒绝|结果|失败|未发现|通过|阻断/i;
+  const sections = sectionContents(
+    body,
+    "security verification|security validation|security testing|安全验证|安全性验证|安全测试"
+  );
+  if (
+    sections.some(
+      (content) =>
+        hasMeaningfulProse(content) &&
+        methodPattern.test(content) &&
+        outcomePattern.test(content)
     )
+  ) {
+    return true;
+  }
+  return body.split(/\r?\n/).some((line) => {
+    if (
+      /^\s*#{1,6}\s+/.test(line) ||
+      !methodPattern.test(line) ||
+      !outcomePattern.test(line)
+    ) {
+      return false;
+    }
+    return (removeAllMatches(line, methodPattern).match(/\p{L}/gu) ?? []).length >= 2;
+  });
+}
+
+function hasAtomicScopeRationale(body: string): boolean {
+  const rationalePattern =
+    /\b(?:because|cannot be split|keep\w* .{2,30} (?:aligned|consistent)|must (?:remain|ship|land) together|otherwise)\b|因为|否则|不能拆|不可拆|必须.{0,20}(?:同批|一起|同时)|同批.{0,20}(?:保持|确保)|保持.{2,20}一致|确保.{2,20}一致|耦合.{0,20}(?:契约|接口|摘要|测试)/i;
+  return sectionContents(
+    body,
+    "change scope|scope rationale|atomic change|atomic scope|变更范围说明|范围说明|原子变更"
+  ).some(
+    (content) => hasMeaningfulProse(content) && rationalePattern.test(content)
   );
 }
 
@@ -2295,13 +2362,31 @@ function addWorkTypeEvidenceFindings(
   }
 
   if (workType === "security") {
-    const requirements: Array<[RegExp, string, string]> = [
-      [/\b(?:threat|attack|vulnerability|risk)\b/i, "MissingThreatAnalysis", "threat or risk"],
-      [/\b(?:access|authorization|permission|privilege)\b/i, "MissingPermissionAnalysis", "permission impact"],
-      [/\b(?:credential|key|secret|token)\b/i, "MissingSecretAnalysis", "credential and secret handling"],
+    const requirements: Array<[string, RegExp, RegExp, string, string]> = [
+      [
+        "threat|threats|threat model|threat analysis|threat and risk analysis|risk analysis|威胁|威胁模型|威胁与风险分析|风险分析",
+        /\b(?:threat|attack|vulnerability|risk)\b|威胁|攻击|漏洞|风险/i,
+        /\b(?:attacker|abuse|bypass|compromis(?:e|ed)|exploit|impact|may|mitigat(?:e|ion)|stolen|vector)\b|攻击者|缓解|可能|利用|影响|诱导|导致|绕过/i,
+        "MissingThreatAnalysis",
+        "threat or risk",
+      ],
+      [
+        "permission|permissions|permission impact|access impact|权限|权限影响|权限分析",
+        /\b(?:access|authorization|permission|privilege)\b|访问|授权|权限|特权/i,
+        /\b(?:deny|grant|least[ -]?privilege|no new|read[ -]?only|scope|unchanged)\b|不新增|不授予|只读|最小权限|禁止|保持不变|范围/i,
+        "MissingPermissionAnalysis",
+        "permission impact",
+      ],
+      [
+        "secret|secrets|credential and secret handling|secret handling|credential handling|密钥|密钥与凭据处理|凭据处理|密钥处理",
+        /\b(?:credential|key|secret|token)\b|凭据|密钥|令牌|口令/i,
+        /\b(?:existing (?:secret )?store|no real|placeholder|redact(?:ed|ion)|remain|vault)\b|不记录|不输出|不泄露|占位符|脱敏|保留|存储/i,
+        "MissingSecretAnalysis",
+        "credential and secret handling",
+      ],
     ];
-    for (const [pattern, category, subject] of requirements) {
-      if (pattern.test(body)) continue;
+    for (const [sectionNames, pattern, detailPattern, category, subject] of requirements) {
+      if (hasSubstantiveEvidence(body, sectionNames, pattern, detailPattern)) continue;
       findings.push(
         finding(
           "high",
@@ -2399,9 +2484,10 @@ function addSecretScannerEvidenceFinding(
 function addStrictFindings(
   classified: ClassifiedPrFiles,
   totalChangedLines: number,
+  body: string,
   findings: StructuredReviewFinding[]
 ): void {
-  if (totalChangedLines <= 800) return;
+  if (totalChangedLines <= 800 || hasAtomicScopeRationale(body)) return;
   findings.push(
     finding(
       "medium",
@@ -2526,7 +2612,7 @@ export function evaluatePullRequestReview(
     findings.push(...scanPatchForSecrets(file.filename, file.patch));
   }
   if (standard === "strict" || standard === "security-focused") {
-    addStrictFindings(classified, totalChangedLines, findings);
+    addStrictFindings(classified, totalChangedLines, body, findings);
   }
   if (standard === "security-focused") {
     addSecretScannerEvidenceFinding(effectiveSecretScannerEvidence, findings);

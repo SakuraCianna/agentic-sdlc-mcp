@@ -8,6 +8,16 @@ export interface GithubContractFixture {
   codeScanningList: ReturnType<typeof vi.fn>;
   dependabotList: ReturnType<typeof vi.fn>;
   secretScanningList: ReturnType<typeof vi.fn>;
+  issueCommentsList: ReturnType<typeof vi.fn>;
+  reviewCommentsList: ReturnType<typeof vi.fn>;
+  workflowLogsGet: ReturnType<typeof vi.fn>;
+  repositoryContentGet: ReturnType<typeof vi.fn>;
+  setIssueText(title: string, body: string): void;
+  setPullRequestText(title: string, body: string): void;
+  setIssueComments(comments: readonly string[]): void;
+  setReadme(content: string): void;
+  setRepositoryPolicy(content: string): void;
+  setCheckName(name: string): void;
   denyIssueReads(): void;
   denySecurityReads(): void;
 }
@@ -27,16 +37,24 @@ function forbidden(): Error & { status: number; response: { data: { message: str
 }
 
 export function createGithubContractFixture(): GithubContractFixture {
+  let issueTitle = "Harden local MCP contracts";
+  let issueBody = "Keep protocol behavior deterministic and local-only.";
+  let pullRequestTitle = "Add MCP contract coverage";
+  let pullRequestBody = "Adds deterministic protocol-level tests.";
+  let issueComments: readonly string[] = [];
+  let readmeContent: string | null = null;
+  let repositoryPolicyContent: string | null = null;
+  let checkName = "ci/fixture";
   const liveIssueCreate = vi.fn(async () => {
     throw new Error("live issue creation is forbidden in the MCP contract matrix");
   });
   const issuesGet = vi.fn(async () => ({
     data: {
       number: 42,
-      title: "Harden local MCP contracts",
+      title: issueTitle,
       state: "open",
       html_url: "https://github.com/example/project/issues/42",
-      body: "Keep protocol behavior deterministic and local-only.",
+      body: issueBody,
       labels: [{ name: "testing" }],
       assignees: [{ login: "alice" }],
       created_at: "2026-08-01T00:00:00Z",
@@ -47,7 +65,29 @@ export function createGithubContractFixture(): GithubContractFixture {
   const codeScanningList = vi.fn(async () => ({ data: [] }));
   const dependabotList = vi.fn(async () => ({ data: [] }));
   const secretScanningList = vi.fn(async () => ({ data: [] }));
+  const issueCommentsList = vi.fn(async () => ({
+    data: issueComments.map((body, index) => ({
+      id: index + 1,
+      body,
+      user: { login: "maintainer" },
+      author_association: "OWNER",
+      created_at: "2026-08-01T00:00:00Z",
+      html_url: `https://github.com/example/project/issues/42#issuecomment-${index + 1}`,
+    })),
+  }));
+  const reviewCommentsList = vi.fn(async () => ({ data: [] }));
+  const workflowLogsGet = vi.fn(async () => ({ data: new ArrayBuffer(0) }));
   const getContent = vi.fn(async ({ path }: { path: string }) => {
+    if (path === ".agentic-sdlc.yml" && repositoryPolicyContent !== null) {
+      return {
+        data: {
+          type: "file",
+          encoding: "base64",
+          content: Buffer.from(repositoryPolicyContent).toString("base64"),
+          sha: "policy-blob-sha",
+        },
+      };
+    }
     if (path === "CHANGELOG.md") {
       return {
         data: {
@@ -101,7 +141,8 @@ export function createGithubContractFixture(): GithubContractFixture {
         },
       })),
       getReadme: vi.fn(async () => {
-        throw notFound("README.md");
+        if (readmeContent === null) throw notFound("README.md");
+        return { data: readmeContent };
       }),
       getContent,
       getCommit: vi.fn(async () => ({ data: { sha: "fixture-head-sha" } })),
@@ -109,7 +150,7 @@ export function createGithubContractFixture(): GithubContractFixture {
         data: {
           statuses: [
             {
-              context: "ci/fixture",
+              context: checkName,
               state: "success",
               target_url: "https://github.com/example/project/actions/runs/1",
             },
@@ -124,7 +165,7 @@ export function createGithubContractFixture(): GithubContractFixture {
     issues: {
       get: issuesGet,
       create: liveIssueCreate,
-      listComments: vi.fn(async () => ({ data: [] })),
+      listComments: issueCommentsList,
       listForRepo: vi.fn(async () => ({ data: [] })),
       listLabelsForRepo: vi.fn(async () => ({ data: [{ name: "testing" }] })),
       listSubIssues: vi.fn(async () => ({ data: [] })),
@@ -136,8 +177,8 @@ export function createGithubContractFixture(): GithubContractFixture {
       get: vi.fn(async () => ({
         data: {
           number: 7,
-          title: "Add MCP contract coverage",
-          body: "Adds deterministic protocol-level tests.",
+          title: pullRequestTitle,
+          body: pullRequestBody,
           user: { login: "alice" },
           state: "open",
           html_url: "https://github.com/example/project/pull/7",
@@ -174,6 +215,7 @@ export function createGithubContractFixture(): GithubContractFixture {
       })),
       listRequestedReviewers: vi.fn(async () => ({ data: { users: [], teams: [] } })),
       listReviews: vi.fn(async () => ({ data: [] })),
+      listReviewComments: reviewCommentsList,
     },
     checks: {
       listForRef: vi.fn(async () => ({
@@ -181,7 +223,7 @@ export function createGithubContractFixture(): GithubContractFixture {
           total_count: 1,
           check_runs: [
             {
-              name: "ci/fixture",
+              name: checkName,
               status: "completed",
               conclusion: "success",
               app: { id: 15368 },
@@ -199,6 +241,7 @@ export function createGithubContractFixture(): GithubContractFixture {
       getJobForWorkflowRun: vi.fn(async () => {
         throw notFound("workflow job");
       }),
+      downloadJobLogsForWorkflowRun: workflowLogsGet,
     },
     codeScanning: { listAlertsForRepo: codeScanningList },
     dependabot: { listAlertsForRepo: dependabotList },
@@ -223,6 +266,30 @@ export function createGithubContractFixture(): GithubContractFixture {
     codeScanningList,
     dependabotList,
     secretScanningList,
+    issueCommentsList,
+    reviewCommentsList,
+    workflowLogsGet,
+    repositoryContentGet: getContent,
+    setIssueText(title, body) {
+      issueTitle = title;
+      issueBody = body;
+    },
+    setPullRequestText(title, body) {
+      pullRequestTitle = title;
+      pullRequestBody = body;
+    },
+    setIssueComments(comments) {
+      issueComments = [...comments];
+    },
+    setReadme(content) {
+      readmeContent = content;
+    },
+    setRepositoryPolicy(content) {
+      repositoryPolicyContent = content;
+    },
+    setCheckName(name) {
+      checkName = name;
+    },
     denyIssueReads() {
       issuesGet.mockRejectedValue(forbidden());
     },

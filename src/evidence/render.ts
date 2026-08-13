@@ -8,6 +8,10 @@ function render(value: string, maxLength = 500): string {
 
 /** Render the human view exclusively from a completed structured evidence packet. */
 export function renderEvidencePacketMarkdown(packet: EvidencePacket): string {
+  const omittedEvidenceCount = packet.omittedEvidence.reduce(
+    (total, omitted) => total + omitted.count,
+    packet.summary.omittedIds.length
+  );
   const subjectParts = [
     `${packet.subject.type}:${render(packet.subject.repo, 200)}`,
     packet.subject.number ? `#${packet.subject.number}` : null,
@@ -34,7 +38,7 @@ export function renderEvidencePacketMarkdown(packet: EvidencePacket): string {
     `- Not applicable: ${packet.summary.idsByState.not_applicable.length}`,
     `- Stale: ${packet.summary.staleIds.length}`,
     `- Partial: ${packet.summary.partialIds.length}`,
-    `- Omitted: ${packet.summary.omittedIds.length}`,
+    `- Omitted: ${omittedEvidenceCount}`,
     `- Evidence item budget: ${packet.budget.maxEvidenceItems}`,
     "",
     "## Evidence",
