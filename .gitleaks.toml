@@ -18,3 +18,11 @@ id = "aws-access-token"
   commits = ["fd9e5d5d3b6a4294d13302e669486c948bfa0800"]
   paths = ['''src/__tests__/review/pull-request-review\.test\.ts$''']
   regexes = ['''^\s*"AKIA1234567890ABCDEF",\s*$''']
+
+  [[rules.allowlists]]
+  description = "Ignore the historical contract assertion for the same synthetic fixture only"
+  condition = "AND"
+  regexTarget = "line"
+  commits = ["b96e4626c5ffa2fbd7bafb71bdf7205e726521d9"]
+  paths = ['''src/__tests__/workflows/secret-scan-workflow\.test\.ts$''']
+  regexes = ['''^\s*"regexes = .*AKIA1234567890ABCDEF.*"\s*$''']
