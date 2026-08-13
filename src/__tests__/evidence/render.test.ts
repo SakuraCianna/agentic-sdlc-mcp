@@ -70,6 +70,7 @@ describe("renderEvidencePacketMarkdown", () => {
     expect(markdown).toContain("Source ref: refs/tags/v1.9.0");
     expect(markdown).toContain("Policy digest: def456");
     expect(markdown).toContain("## Omitted Evidence");
+    expect(markdown).toContain("- Omitted: 2");
     expect(markdown).toContain("workflow\\_log: 2 omitted");
     expect(markdown).toContain("## Recommended Next Actions");
     expect(markdown).toContain("Verify the npm provenance statement.");

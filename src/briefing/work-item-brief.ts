@@ -1,6 +1,7 @@
 import type { EffectiveRepositoryPolicy } from "../policy/repository-policy.js";
 import { matchRepositoryPolicy } from "../policy/repository-policy.js";
 import type { SdlcWorkType } from "../types.js";
+import { assessPromptInjection } from "../security/prompt-injection.js";
 
 export type WorkItemRiskLevel = "low" | "medium" | "high" | "critical";
 export type RiskConfidence = "low" | "medium" | "high";
@@ -136,7 +137,6 @@ const DOMAIN_RULES: Array<{
   patterns: readonly RegExp[];
   risk: WorkItemRiskLevel;
 }> = [
-  { domain: "prompt-injection", patterns: [/ignore (?:all |the )?(?:(?:previous|prior) instructions?|(?:repository )?policy)|reveal (?:the )?(?:token|secret)|print (?:the )?[A-Z_]*TOKEN|bypass (?:repository )?policy/i], risk: "high" },
   { domain: "payment", patterns: [/payment|billing|invoice|webhook|currency|refund|chargeback/i], risk: "high" },
   { domain: "authorization", patterns: [/authori[sz]ation|permission|access control|rbac|tenant|\b(?:authentication|authn|authz|auth|login|session|oauth|password)\b/i], risk: "high" },
   { domain: "secrets", patterns: SECRETS_DOMAIN_PATTERNS, risk: "critical" },
@@ -168,8 +168,16 @@ export function buildRiskAwareBrief(input: BuildRiskAwareBriefInput): RiskAwareB
     level = maxRisk(level, "critical");
     reasons.push("Structured Issue label matched risk domain: secrets.");
   }
+  const promptInjection = assessPromptInjection(combined);
+  if (promptInjection.detected) {
+    addUnique(domains, "prompt-injection");
+    level = maxRisk(level, "high");
+    reasons.push(
+      `Shared prompt-injection assessment matched: ${promptInjection.categories.join(", ")}.`
+    );
+  }
   for (const rule of DOMAIN_RULES) {
-    if (workType === "docs" && confirmedDocsOnly && rule.domain !== "prompt-injection") continue;
+    if (workType === "docs" && confirmedDocsOnly) continue;
     if (rule.domain === "secrets" && secretsLabelMatched) continue;
     if (!rule.patterns.some((pattern) => pattern.test(combined))) continue;
     addUnique(domains, rule.domain);

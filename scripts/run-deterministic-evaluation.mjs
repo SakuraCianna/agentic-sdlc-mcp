@@ -14,7 +14,14 @@ const GROUP_TESTS = new Map([
       "src/__tests__/evaluation/selection.test.ts",
     ],
   ],
-  ["critical", ["src/__tests__/evaluation/critical.test.ts"]],
+  [
+    "critical",
+    [
+      "src/__tests__/evaluation/critical.test.ts",
+      "src/__tests__/evaluation/channel-parity.test.ts",
+      "src/__tests__/evaluation/injection-mcp.test.ts",
+    ],
+  ],
 ]);
 const ALLOWED_ENVIRONMENT_NAMES = [
   "CI",

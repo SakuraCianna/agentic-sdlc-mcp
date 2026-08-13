@@ -233,6 +233,17 @@ export const CRITICAL_EXECUTION_CASES: readonly CriticalExecutionCase[] = [
           ) {
             throw new Error("handoff requires verified Issue metadata evidence");
           }
+          const unsafePromptInjectionState = [
+            idsByState.failed,
+            idsByState.pending,
+            idsByState.unverified,
+          ].some(
+            (ids) =>
+              Array.isArray(ids) && ids.includes("security:prompt-injection")
+          );
+          if (unsafePromptInjectionState) {
+            throw new Error("handoff must not continue with prompt-injection evidence");
+          }
           return {
             ...REPOSITORY,
             issueNumber: subject.number,

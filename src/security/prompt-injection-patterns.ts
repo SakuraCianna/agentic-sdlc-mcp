@@ -27,6 +27,11 @@ const SIGNALS: ReadonlyArray<{
       /(?:忽略|无视|忘记|覆盖).{0,40}(?:之前|先前|系统|开发者).{0,30}(?:指令|消息|规则|提示词)/is,
   },
   {
+    category: "instruction_override",
+    pattern:
+      /\b(?:treat|regard)\b.{0,40}\b(?:text|content|message|instructions?)\b.{0,40}\b(?:higher|highest)\b.{0,20}\bpriority\b|\bfollow\b.{0,40}\b(?:new|these)\b.{0,20}\b(?:directions|instructions?|rules?)\b/is,
+  },
+  {
     category: "role_impersonation",
     pattern: /\b(?:system|developer)\s+(?:message|prompt|instructions?)\s*:/is,
   },
@@ -45,9 +50,14 @@ const SIGNALS: ReadonlyArray<{
       /(?:调用|执行|运行|使用).{0,40}(?:工具|shell|powershell|bash|终端).{0,50}(?:无需|绕过|忽略|不要询问|不经确认)/is,
   },
   {
+    category: "tool_coercion",
+    pattern:
+      /\bdry\s*run\b.{0,30}\bfalse\b.{0,80}\b(?:create|open|publish|write)\b.{0,30}\bissues?\b|\b(?:create|open|publish|write)\b.{0,30}\bissues?\b.{0,80}\bdry\s*run\b.{0,30}\bfalse\b/is,
+  },
+  {
     category: "secret_exfiltration",
     pattern:
-      /\b(?:print|show|reveal|return|send|upload|exfiltrate|read)\b.{0,80}\b(?:github[_ -]?token|api[_ -]?key|access[_ -]?token|cookie|private[_ -]?key|password|environment\s+variable|process\.env)\b/is,
+      /\b(?:print|show|reveal|disclose|expose|return|send|upload|exfiltrate|read)\b.{0,80}\b(?:github[_ -]?token|api[_ -]?key|access[_ -]?token|tokens?|secrets?|cookie|private[_ -]?key|password|environment(?:\s+variables?)?|process\.env)\b/is,
   },
   {
     category: "secret_exfiltration",
@@ -76,19 +86,56 @@ const SIGNALS: ReadonlyArray<{
   },
 ];
 
-function canonicalize(value: string): string {
-  return value
+function htmlCommentViews(value: string): readonly string[] {
+  const visibleChunks: string[] = [];
+  const contentChunks: string[] = [];
+  let cursor = 0;
+  let segmentStart = 0;
+  while (cursor < value.length) {
+    const opening = value.indexOf("<!--", cursor);
+    if (opening < 0) break;
+    visibleChunks.push(value.slice(segmentStart, opening));
+    contentChunks.push(value.slice(segmentStart, opening));
+    const closing = value.indexOf("-->", opening + 4);
+    if (closing < 0) {
+      contentChunks.push(value.slice(opening + 4));
+      segmentStart = value.length;
+      cursor = value.length;
+      break;
+    }
+    contentChunks.push(value.slice(opening + 4, closing));
+    cursor = closing + 3;
+    segmentStart = cursor;
+  }
+  if (segmentStart < value.length) {
+    visibleChunks.push(value.slice(segmentStart));
+    contentChunks.push(value.slice(segmentStart));
+  }
+  return [visibleChunks.join(""), contentChunks.join("")];
+}
+
+function canonicalViews(value: string): readonly string[] {
+  const normalized = value
     .normalize("NFKC")
     .replace(/[\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/g, "");
+  if (!normalized.includes("<!--")) return [normalized];
+  return htmlCommentViews(normalized);
+}
+
+function matchedCategories(value: string): PromptInjectionCategory[] {
+  const categories: PromptInjectionCategory[] = [];
+  for (const canonical of canonicalViews(value)) {
+    for (const { category, pattern } of SIGNALS) {
+      if (!pattern.test(canonical) || categories.includes(category)) continue;
+      categories.push(category);
+    }
+  }
+  return categories;
 }
 
 /** Deterministically identify high-confidence instruction-like content. */
 export function assessPromptInjection(value: string): PromptInjectionAssessment {
-  const canonical = canonicalize(value);
-  const categories = SIGNALS.filter(({ pattern }) => pattern.test(canonical)).map(
-    ({ category }) => category
-  );
-  const uniqueCategories = [...new Set(categories)];
+  const uniqueCategories = matchedCategories(value);
   const highConfidence =
     uniqueCategories.includes("instruction_override") ||
     uniqueCategories.includes("secret_exfiltration") ||
