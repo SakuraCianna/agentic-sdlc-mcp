@@ -1,0 +1,93 @@
+name: Reusable PR evidence review
+
+# Opt in from a caller workflow pinned to a reviewed commit. No PR checkout occurs.
+on:
+  workflow_call:
+    inputs:
+      pull_number:
+        description: Positive integer PR number in the caller repository
+        required: true
+        type: number
+      enforce:
+        description: Fail the job when evidence does not establish review readiness
+        required: false
+        type: boolean
+        default: false
+      package_version:
+        description: Exact trusted npm release, never a tag or version range
+        required: false
+        type: string
+        default: "1.11.0"
+
+permissions:
+  contents: read
+  checks: read
+  pull-requests: read
+  actions: read
+
+jobs:
+  assess:
+    name: PR evidence (advisory by default)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Setup Node.js 24
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      - name: Install exact published reviewer without lifecycle scripts
+        env:
+          SDLC_PACKAGE_VERSION: ${{ inputs.package_version }}
+        run: |
+          if ($env:SDLC_PACKAGE_VERSION -notmatch '^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$') {
+            throw "package_version must be an exact release version"
+          }
+          $runtime = Join-Path $env:RUNNER_TEMP "agentic-sdlc-runtime"
+          npm install --prefix $runtime "agentic-sdlc-mcp@$env:SDLC_PACKAGE_VERSION" --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org
+          if ($LASTEXITCODE -ne 0) { throw "Trusted reviewer installation failed" }
+
+      - name: Assess PR using repository reads only
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SDLC_CURRENT_CHECK_RUN_ID: ${{ job.check_run_id }}
+          SDLC_PULL_NUMBER: ${{ inputs.pull_number }}
+          SDLC_ENFORCE: ${{ inputs.enforce }}
+          SDLC_READ_ONLY: "true"
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          $directory = Join-Path $env:RUNNER_TEMP "sdlc-pr-evidence"
+          New-Item -ItemType Directory -Path $directory -ErrorAction Stop | Out-Null
+          $cli = Join-Path $env:RUNNER_TEMP "agentic-sdlc-runtime/node_modules/agentic-sdlc-mcp/dist/cli.js"
+          $json = Join-Path $directory "assessment.json"
+          $summary = Join-Path $directory "assessment.md"
+          $arguments = @($cli, "assess-pr", "--repo", $env:GITHUB_REPOSITORY, "--pr", $env:SDLC_PULL_NUMBER, "--json", "--output", $json, "--summary", $summary)
+          if ($env:SDLC_ENFORCE -eq "true") { $arguments += "--enforce" }
+          $null = & node @arguments
+          $assessmentExit = $LASTEXITCODE
+          if (-not (Test-Path -LiteralPath $json)) {
+            @{ schemaVersion = "workflow-unavailable-1"; decision = "needs_evidence"; reasonCode = "reviewer_unavailable"; cliExitCode = $assessmentExit } |
+              ConvertTo-Json | Set-Content -LiteralPath $json -Encoding utf8
+            if ($assessmentExit -eq 0) { $assessmentExit = 2 }
+          }
+          if (-not (Test-Path -LiteralPath $summary)) {
+            "# PR evidence`n`nDecision: needs_evidence. Repository evidence could not be verified; check token permissions and reviewer availability." |
+              Set-Content -LiteralPath $summary -Encoding utf8
+          }
+          Get-Content -LiteralPath $summary -Raw | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding utf8
+          if ($env:SDLC_ENFORCE -eq "true") { exit $assessmentExit }
+          exit 0
+
+      - name: Upload JSON and review summary
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: pr-evidence-${{ inputs.pull_number }}
+          path: |
+            ${{ runner.temp }}/sdlc-pr-evidence/assessment.json
+            ${{ runner.temp }}/sdlc-pr-evidence/assessment.md
+          if-no-files-found: error
+          retention-days: 14

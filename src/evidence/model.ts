@@ -117,6 +117,7 @@ export interface BuildEvidencePacketInput {
   limitations?: string[];
   maxEvidenceItems?: number;
   omittedEvidence?: OmittedEvidence[];
+  budget?: Partial<z.infer<typeof EvidenceBudgetSchema>>;
 }
 
 export const DEFAULT_MAX_EVIDENCE_ITEMS = 100;
@@ -248,10 +249,11 @@ export function buildEvidencePacket(input: BuildEvidencePacketInput): EvidencePa
     },
     recommendedNextActions,
     limitations,
-    budget: {
+    budget: EvidenceBudgetSchema.parse({
       ...DEFAULT_EVIDENCE_BUDGET,
+      ...input.budget,
       maxEvidenceItems,
-    },
+    }),
     omittedEvidence,
   };
 

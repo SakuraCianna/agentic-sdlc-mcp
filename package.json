@@ -1,17 +1,24 @@
 {
   "name": "agentic-sdlc-mcp",
-  "version": "1.10.0",
+  "version": "1.11.0",
   "mcpName": "io.github.SakuraCianna/agentic-sdlc-mcp",
   "description": "An MCP Server acting as an Agentic SDLC Control Plane — helps AI coding agents plan, create, test, review, secure, and release software following GitHub Agentic AI best practices.",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "agentic-sdlc-mcp": "dist/index.js"
+    "agentic-sdlc-mcp": "dist/index.js",
+    "agentic-sdlc": "dist/cli.js"
   },
   "files": [
     "dist",
     "evaluation/schema.json",
     "README.md",
+    "README_zh.md",
+    "docs/client-recipes.md",
+    "docs/evidence-continuity.md",
+    "docs/pr-workflows.md",
+    "docs/user-pilot.md",
+    "skills/pr-evidence-review",
     "server.json",
     ".env.example"
   ],
@@ -48,6 +55,8 @@
     "precontracts:conformance:pilot": "npm run build",
     "contracts:conformance:pilot": "node scripts/run-conformance-pilot.mjs",
     "smoke": "node dist/index.js --smoke",
+    "sdlc": "node dist/cli.js",
+    "release:prepare": "npm run build && node scripts/prepare-release.mjs",
     "prepublishOnly": "npm run build && node scripts/verify-mcp-baseline.mjs && node scripts/check-mcp-contract.mjs && npm run typecheck && npm run test && npm run smoke"
   },
   "engines": {

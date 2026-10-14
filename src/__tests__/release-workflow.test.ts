@@ -36,12 +36,12 @@ describe("CI workflow action pins", () => {
       .filter((value): value is string => value !== undefined);
 
     expect(uses.filter((value) => value.startsWith("actions/checkout@"))).toEqual(
-      Array(3).fill(
+      Array(4).fill(
         "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
       )
     );
     expect(uses.filter((value) => value.startsWith("actions/setup-node@"))).toEqual(
-      Array(3).fill(
+      Array(4).fill(
         "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020"
       )
     );

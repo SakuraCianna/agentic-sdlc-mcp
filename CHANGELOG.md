@@ -2,7 +2,19 @@
 
 All notable changes to this project are documented here. Release history is also available on the [GitHub Releases page](https://github.com/SakuraCianna/agentic-sdlc-mcp/releases).
 
-## [1.10.0] - 2026-08-13
+## [1.11.0] - Unreleased
+
+- Add a read-only workflow CLI, opt-in PR evidence Actions, diagnostics, evidence comparison and conservative acceptance traceability.
+- Correct Code Scanning security severity and work-type-specific PR policy consistency.
+- Add preview-bound Issue recovery through request-level `params._meta["io.github.SakuraCianna/agentic-sdlc-mcp/issue-recovery"]`, preserving the existing tool argument shape; add cancellation, unknown-outcome preservation and an explicit read-only mode. Clients without metadata support retain preview/basic reporting and must not assume automatic idempotent retry.
+- Add environment-only MCP configuration, client recipes, a portable review Skill and a privacy-preserving user pilot.
+- Add a Windows CLI/stdio smoke job and local inspected tarball, lockfile-derived CycloneDX SBOM, and SHA-256 manifest preparation; signed attestations and automatic publication of these artifacts remain separate.
+- Require full 40- or 64-character hexadecimal target SHAs and valid PR/Issue identities for positive acceptance verification; mutable refs and abbreviated SHAs require revalidation in evidence continuity.
+- Include the previously implemented v1.10 contract and evaluation work; public distribution must be verified independently.
+
+## [1.10.0] - Implementation baseline (2026-08-13)
+
+The following records implementation work included in the 1.11.0 candidate. It does not assert a historical public 1.10.0 npm, Registry, or GitHub Release.
 
 ### Added
 
@@ -208,4 +220,5 @@ All notable changes to this project are documented here. Release history is also
 [1.7.1]: https://github.com/SakuraCianna/agentic-sdlc-mcp/releases/tag/v1.7.1
 [1.8.0]: https://github.com/SakuraCianna/agentic-sdlc-mcp/releases/tag/v1.8.0
 [1.9.0]: https://github.com/SakuraCianna/agentic-sdlc-mcp/releases/tag/v1.9.0
-[1.10.0]: https://github.com/SakuraCianna/agentic-sdlc-mcp/releases/tag/v1.10.0
+[1.10.0]: docs/releases/v1.10.0.md
+[1.11.0]: docs/releases/v1.11.0.md
