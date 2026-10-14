@@ -152,6 +152,20 @@ async function sourceSnapshot(root) {
   return { digest: hash(JSON.stringify(files)), files };
 }
 
+/** npm 10/11 display the root directory name; identity fields use the package name. */
+export function validateReleaseSbom(sbom, { name, version, projectRoot }) {
+  const parentName = path.basename(path.dirname(projectRoot));
+  const directoryName = path.basename(projectRoot);
+  const legacyDisplayName = parentName.startsWith("@") ? `${parentName}/${directoryName}` : directoryName;
+  const component = sbom?.metadata?.component;
+  const expectedPurl = `pkg:npm/${name.replace(/^@/, "%40")}@${version}`;
+  if (sbom?.bomFormat !== "CycloneDX" || component?.version !== version ||
+      component?.["bom-ref"] !== `${name}@${version}` || component?.purl !== expectedPurl ||
+      (component?.name !== name && component?.name !== legacyDisplayName)) {
+    throw new Error("SBOM metadata does not match the packed package.");
+  }
+}
+
 /** Prepare only. Existing paths are never replaced and no package is published. */
 export async function prepareRelease({ projectRoot = PROJECT_ROOT, outputName } = {}) {
   const root = await fs.realpath(projectRoot);
@@ -203,7 +217,7 @@ export async function prepareRelease({ projectRoot = PROJECT_ROOT, outputName } 
     if (packaged?.version !== version || packaged?.name !== packageJson.name || packagedServer?.version !== version || !packagedVersion.includes(`version: "${version}"`) ||
         !files.has(packageJson.main) || bins.some((bin) => !files.has(bin))) throw new Error("Tarball package, server, runtime or binary entry points are inconsistent; rebuild before preparing a release.");
     const sbom = JSON.parse(run(process.execPath, [cli, "sbom", "--sbom-format", "cyclonedx", "--omit=dev", "--package-lock-only", "--offline"], root, npmEnvironment));
-    if (sbom.bomFormat !== "CycloneDX" || sbom.metadata?.component?.name !== packageJson.name || sbom.metadata?.component?.version !== version) throw new Error("SBOM metadata does not match the packed package.");
+    validateReleaseSbom(sbom, { name: packageJson.name, version, projectRoot: root });
     if ((await sourceSnapshot(root)).digest !== snapshot.digest || run("git", ["rev-parse", "--verify", "HEAD"], root, env).trim() !== head) throw new Error("Release inputs changed while artifacts were being prepared; no manifest was written.");
     const sbomBytes = Buffer.from(`${JSON.stringify(sbom, null, 2)}\n`);
     await fs.writeFile(path.join(outputDirectory, "sbom.cyclonedx.json"), sbomBytes, { flag: "wx" });

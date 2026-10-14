@@ -9,4 +9,5 @@ export interface ReleaseManifest {
   limitations: string[];
 }
 export function inspectReleaseTarball(bytes: Buffer): Map<string, Buffer>;
+export function validateReleaseSbom(sbom: unknown, expected: { name: string; version: string; projectRoot: string }): void;
 export function prepareRelease(options?: { projectRoot?: string; outputName?: string }): Promise<{ outputDirectory: string; manifest: ReleaseManifest }>;

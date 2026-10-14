@@ -6,7 +6,7 @@ import path from "node:path";
 import { gzipSync, gunzipSync } from "node:zlib";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createContractCollectorEnvironment } from "../../scripts/lib/pinned-mcp-contract.mjs";
-import { inspectReleaseTarball, prepareRelease } from "../../scripts/prepare-release.mjs";
+import { inspectReleaseTarball, prepareRelease, validateReleaseSbom } from "../../scripts/prepare-release.mjs";
 
 const directories: string[] = [];
 const sha256 = (value: Buffer | string) => createHash("sha256").update(value).digest("hex");
@@ -80,6 +80,8 @@ describe("release artifact preparation with the installed npm CLI", () => {
     await expect(fs.access(path.join(f.root, "LIFECYCLE-RAN"))).rejects.toThrow();
     const sbom = JSON.parse(await fs.readFile(path.join(result.outputDirectory, "sbom.cyclonedx.json"), "utf8"));
     expect(sbom.bomFormat).toBe("CycloneDX"); expect(sbom.metadata.component.version).toBe("1.11.0");
+    expect(sbom.metadata.component["bom-ref"]).toBe("release-fixture@1.11.0");
+    expect(sbom.metadata.component.purl).toBe("pkg:npm/release-fixture@1.11.0");
     expect(sbom.components.map((component: { name: string }) => component.name)).toContain("runtime-fixture");
     expect(sbom.components.map((component: { name: string }) => component.name)).not.toContain("dev-fixture");
     expect(await fs.readdir(result.outputDirectory)).not.toContain(".npm-user.rc");
@@ -122,6 +124,56 @@ describe("release artifact preparation with the installed npm CLI", () => {
     const f = await fixture(); await fs.writeFile(path.join(f.root, "dist/version.js"), 'export const version = "0.0.0";');
     await expect(prepareRelease({ projectRoot: f.root, outputName: "stale-build" })).rejects.toThrow(/inconsistent; rebuild/);
   }, 30_000);
+});
+
+describe("cross-version npm SBOM package identity", () => {
+  const expected = { name: "release-fixture", version: "1.11.0", projectRoot: path.join(os.tmpdir(), "different-checkout-name") };
+  const valid = () => ({ bomFormat: "CycloneDX", metadata: { component: { name: expected.name, version: expected.version, "bom-ref": "release-fixture@1.11.0", purl: "pkg:npm/release-fixture@1.11.0" } } });
+
+  it("accepts canonical npm 12 package names and actual npm 10/11 root directory display names", () => {
+    const canonical = valid();
+    expect(() => validateReleaseSbom(canonical, expected)).not.toThrow();
+    const legacy = valid(); legacy.metadata.component.name = path.basename(expected.projectRoot);
+    expect(() => validateReleaseSbom(legacy, expected)).not.toThrow();
+  });
+
+  it("accepts the documented legacy name-from-folder behavior under a scoped parent", () => {
+    const scopedRoot = path.join(os.tmpdir(), "@checkout-scope", "different-checkout-name");
+    const sbom = valid(); sbom.metadata.component.name = "@checkout-scope/different-checkout-name";
+    expect(() => validateReleaseSbom(sbom, { ...expected, projectRoot: scopedRoot })).not.toThrow();
+  });
+
+  it("binds scoped npm package names to their exact bom-ref and encoded npm purl", () => {
+    const sbom = valid();
+    sbom.metadata.component = { name: "@team/release-fixture", version: expected.version, "bom-ref": "@team/release-fixture@1.11.0", purl: "pkg:npm/%40team/release-fixture@1.11.0" };
+    expect(() => validateReleaseSbom(sbom, { ...expected, name: "@team/release-fixture" })).not.toThrow();
+    sbom.metadata.component.purl = "pkg:npm/%40other/release-fixture@1.11.0";
+    expect(() => validateReleaseSbom(sbom, { ...expected, name: "@team/release-fixture" })).toThrow(/SBOM metadata/);
+  });
+
+  it.each([
+    { name: "unrelated-package" },
+    { version: "0.0.0" },
+    { "bom-ref": "unrelated-package@1.11.0" },
+    { "bom-ref": "release-fixture@0.0.0" },
+    { "bom-ref": undefined },
+    { purl: "pkg:npm/unrelated-package@1.11.0" },
+    { purl: "pkg:npm/release-fixture@0.0.0" },
+    { purl: undefined },
+  ])("rejects mismatched or missing identity data %j even when other fields are correct", (change) => {
+    const sbom = valid(); Object.assign(sbom.metadata.component, change);
+    expect(() => validateReleaseSbom(sbom, expected)).toThrow(/SBOM metadata/);
+  });
+
+  it("does not let a valid legacy display name override a different package identity", () => {
+    const sbom = valid(); sbom.metadata.component.name = path.basename(expected.projectRoot);
+    sbom.metadata.component["bom-ref"] = "unrelated-package@1.11.0";
+    expect(() => validateReleaseSbom(sbom, expected)).toThrow(/SBOM metadata/);
+  });
+
+  it.each([null, {}, { bomFormat: "SPDX" }, { bomFormat: "CycloneDX", metadata: { component: null } }])("rejects malformed SBOM metadata %j", (sbom) => {
+    expect(() => validateReleaseSbom(sbom, expected)).toThrow(/SBOM metadata/);
+  });
 });
 
 describe("tarball inspection never extracts untrusted paths", () => {
