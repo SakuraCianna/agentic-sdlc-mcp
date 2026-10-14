@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented here. Release history is also available on the [GitHub Releases page](https://github.com/SakuraCianna/agentic-sdlc-mcp/releases).
 
-## [1.11.0] - Unreleased
+## [1.11.0] - 2026-10-15
 
 - Add a read-only workflow CLI, opt-in PR evidence Actions, diagnostics, evidence comparison and conservative acceptance traceability.
 - Correct Code Scanning security severity and work-type-specific PR policy consistency.
@@ -14,7 +14,7 @@ All notable changes to this project are documented here. Release history is also
 
 ## [1.10.0] - Implementation baseline (2026-08-13)
 
-The following records implementation work included in the 1.11.0 candidate. It does not assert a historical public 1.10.0 npm, Registry, or GitHub Release.
+The following records implementation work included in 1.11.0. It does not assert a historical public 1.10.0 npm, Registry, or GitHub Release.
 
 ### Added
 
@@ -221,4 +221,4 @@ The following records implementation work included in the 1.11.0 candidate. It d
 [1.8.0]: https://github.com/SakuraCianna/agentic-sdlc-mcp/releases/tag/v1.8.0
 [1.9.0]: https://github.com/SakuraCianna/agentic-sdlc-mcp/releases/tag/v1.9.0
 [1.10.0]: docs/releases/v1.10.0.md
-[1.11.0]: docs/releases/v1.11.0.md
+[1.11.0]: https://github.com/SakuraCianna/agentic-sdlc-mcp/releases/tag/v1.11.0

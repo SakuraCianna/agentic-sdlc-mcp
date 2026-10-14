@@ -29,7 +29,7 @@
 
 `agentic-sdlc-mcp` is a software development lifecycle (SDLC) governance layer for teams that already let AI coding agents change production repositories. It turns GitHub context, policy, checks, reviews, security alerts, and release signals into 13 workflow-level MCP tools. Twelve tools are read-only. The only GitHub write tool previews changes by default.
 
-The **1.11.0 candidate** also provides `agentic-sdlc`, a read-only CLI for PR assessment, portable evidence, snapshot comparisons, and acceptance traceability. `agentic-sdlc-mcp` remains the MCP server entry point. Candidate features below describe this source tree; they do not announce an npm or Registry release.
+Version **1.11.0** also provides `agentic-sdlc`, a read-only CLI for PR assessment, portable evidence, snapshot comparisons, and acceptance traceability. `agentic-sdlc-mcp` remains the MCP server entry point. Verify the exact package and [release metadata](https://github.com/SakuraCianna/agentic-sdlc-mcp/releases/tag/v1.11.0) when installing this version.
 
 ## What changes with this MCP
 
@@ -83,7 +83,7 @@ Use the tools as decision support at the points where an autonomous agent would 
 
 Collect a human-readable decision and a JSON snapshot with one command. The assessment combines existing gate and rule-based review evidence, binds it to the PR head/base and policy digest, and preserves blockers, missing evidence, request counts, and collection duration.
 
-Build the candidate from a reviewed checkout with Node.js 22 or newer:
+Build from a reviewed checkout with Node.js 22 or newer:
 
 ```powershell
 npm ci
@@ -92,7 +92,7 @@ node dist/cli.js doctor --repo acme/widget
 node dist/cli.js assess-pr --repo acme/widget --pr 42 --output artifacts/pr-42-first.json --summary artifacts/pr-42-first.md
 ```
 
-Inject `GITHUB_TOKEN` through your process or secret manager before online collection. The CLI reads environment variables only; it does not load a home configuration or `.env`. `doctor` is offline unless `--online` is supplied, and missing configuration returns exit code 2. Once the candidate package is installed, `agentic-sdlc` runs the same CLI as `node dist/cli.js`.
+Inject `GITHUB_TOKEN` through your process or secret manager before online collection. The CLI reads environment variables only; it does not load a home configuration or `.env`. `doctor` is offline unless `--online` is supplied, and missing configuration returns exit code 2. Once the package is installed, `agentic-sdlc` runs the same CLI as `node dist/cli.js`.
 
 | Command | Result |
 |---|---|
@@ -129,7 +129,7 @@ agentic-sdlc-mcp
 
 The default transport is stdio. Most MCP clients should start the package for you instead of running it in a separate terminal.
 
-These npm commands use the published release, which can differ from the 1.11.0 source candidate. Do not assume the candidate CLI or new configuration switches are publicly distributed until the corresponding release and package are verified.
+These npm commands resolve published releases. Pin `agentic-sdlc-mcp@1.11.0` to reproduce this version, verify its release/package metadata, and restart any existing MCP connection after an upgrade.
 
 ## Let a coding agent set it up
 

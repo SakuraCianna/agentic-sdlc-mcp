@@ -2,14 +2,14 @@
 
 ## 当前交付校准（2026-10-15）
 
-当前工作围绕 **1.11.0 候选版的可使用交付**：保留 13 个 MCP 工具，增加独立的 `agentic-sdlc` CLI、PR evidence assessment、证据连续性、保守验收追溯、客户端薄配方和受控用户试点方案。原 v1.10 已完成但未公开分发的契约与 evaluation 改进纳入该候选，不因历史章节写有“完成”就宣称已经发布。
+当前工作围绕 **1.11.0 的可使用交付**：保留 13 个 MCP 工具，增加独立的 `agentic-sdlc` CLI、PR evidence assessment、证据连续性、保守验收追溯、客户端薄配方和受控用户试点方案。原 v1.10 已完成但未公开分发的契约与 evaluation 改进纳入 1.11.0；实际分发状态以[发布记录](https://github.com/SakuraCianna/agentic-sdlc-mcp/releases/tag/v1.11.0)及精确 npm/Registry 版本为准。
 
 | 状态层次 | 本文能确认的范围 | 完成所需的独立证据 |
 |---|---|---|
 | 代码完成 | 候选源码及回归持续集成；按实际文件核对 | 需求覆盖、审查结论与具体 commit |
 | 本机验证 | 仅以当前交付记录的实际命令为准；历史测试数量不是现状承诺 | 环境、命令、结果与限制 |
 | 远端 CI | 历史 run 不证明本候选通过 | 精确 commit 的 required checks/run URL |
-| 公开分发 | 1.11.0 为候选，本文不声明 npm/Registry 已发布 | Release、精确包版本、metadata 与包内容核验 |
+| 公开分发 | 通过 Release 触发 npm/Registry OIDC 发布，按精确版本核验实际结果 | Release、精确包版本、metadata 与包内容核验 |
 | 真实客户端 | [配方](client-recipes.md)核验官方文档，尚未据此宣称端到端兼容 | 客户端/版本、server discovery 和只读调用记录 |
 | 用户收益 | [试点方案](user-pilot.md)尚未执行 | 已授权样本、匿名汇总、人工判定和失败个案 |
 

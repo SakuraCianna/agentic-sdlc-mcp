@@ -29,7 +29,7 @@
 
 `agentic-sdlc-mcp` 是面向已经允许 AI 编码智能体修改生产仓库团队的软件开发生命周期（SDLC）治理层。它把 GitHub 上下文、仓库策略、检查、评审、安全告警和发布信号组织成 13 个工作流级 MCP 工具。其中 12 个工具只读，唯一的 GitHub 写入工具默认先预览。
 
-**1.11.0 候选版**新增只读 CLI `agentic-sdlc`，用于 PR 评估、可携带证据、快照差量和验收追溯；`agentic-sdlc-mcp` 继续作为 MCP server 入口。下文候选能力描述当前源码，不表示 npm 或 Registry 已发布。
+**1.11.0** 新增只读 CLI `agentic-sdlc`，用于 PR 评估、可携带证据、快照差量和验收追溯；`agentic-sdlc-mcp` 继续作为 MCP server 入口。安装时请核验精确包版本与[发布记录](https://github.com/SakuraCianna/agentic-sdlc-mcp/releases/tag/v1.11.0)。
 
 ## 接入这个 MCP 后有什么变化
 
@@ -83,7 +83,7 @@ flowchart LR
 
 一个命令同时生成可供人工阅读的结论和 JSON 快照。评估复用现有门禁与规则审查，将结果绑定到 PR head/base 和策略 digest，并保留阻塞项、证据缺口、请求次数和采集耗时。
 
-在已审阅的候选源码目录中，使用 Node.js 22 或更高版本构建：
+在已审阅的源码目录中，使用 Node.js 22 或更高版本构建：
 
 ```powershell
 npm ci
@@ -92,7 +92,7 @@ node dist/cli.js doctor --repo acme/widget
 node dist/cli.js assess-pr --repo acme/widget --pr 42 --output artifacts/pr-42-first.json --summary artifacts/pr-42-first.md
 ```
 
-在线采集前，通过进程环境或 secret manager 注入 `GITHUB_TOKEN`。CLI 只读取环境变量，不加载 home 配置或 `.env`。`doctor` 默认离线，显式 `--online` 才探测远端；缺少配置时退出码为 2。安装候选包后，`agentic-sdlc` 与 `node dist/cli.js` 是同一 CLI 入口。
+在线采集前，通过进程环境或 secret manager 注入 `GITHUB_TOKEN`。CLI 只读取环境变量，不加载 home 配置或 `.env`。`doctor` 默认离线，显式 `--online` 才探测远端；缺少配置时退出码为 2。安装包后，`agentic-sdlc` 与 `node dist/cli.js` 是同一 CLI 入口。
 
 | 命令 | 结果 |
 |---|---|
@@ -129,7 +129,7 @@ agentic-sdlc-mcp
 
 默认传输方式是 stdio。多数 MCP 客户端会自动启动这个包，不需要提前在另一个终端中运行。
 
-上面的 npm 命令运行已发布版本，可能与 1.11.0 候选源码不同；在核实对应 Release 和包之前，不应假设候选 CLI 或新配置开关已经公开分发。
+上面的 npm 命令解析已发布版本。复现本版本时请固定 `agentic-sdlc-mcp@1.11.0`、核验对应 Release 与包元数据，并在升级后重启已有 MCP 连接。
 
 ## 让编码智能体帮你安装
 
