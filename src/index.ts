@@ -2,20 +2,24 @@
 /**
  * agentic-sdlc-mcp — Agentic SDLC Control Plane MCP Server
  *
- * Load .env FIRST (via dotenv/config), before any config import.
+ * Load .env before configuration imports unless envonly mode is selected.
  * Windows PowerShell inline alternative:
  *   $env:GITHUB_TOKEN="ghp_..."; node dist/index.js
  *
  * Smoke-test mode (no real token required):
  *   node dist/index.js --smoke
  */
-import "dotenv/config";
+const configurationMode = process.env["SDLC_CONFIG_MODE"] ?? "default";
+if (!["default", "envonly"].includes(configurationMode)) {
+  console.error("ERROR: SDLC_CONFIG_MODE must be default or envonly.");
+  process.exit(1);
+}
+if (configurationMode !== "envonly") await import("dotenv/config");
 
-import { createAgenticSdlcServer } from "./server.js";
-import { serveMcpStdio } from "./stdio-server.js";
-
-// Config (exits early if GITHUB_TOKEN missing — skipped in smoke mode)
-import { config, initializeConfig } from "./config.js";
+// Keep config module evaluation after optional dotenv loading, including SMOKE detection.
+const { createAgenticSdlcServer } = await import("./server.js");
+const { serveMcpStdio } = await import("./stdio-server.js");
+const { config, initializeConfig } = await import("./config.js");
 
 // Initialize config (loads global file or asks interactively)
 await initializeConfig();
