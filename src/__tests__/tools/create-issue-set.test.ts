@@ -301,6 +301,7 @@ describe("handleCreateIssueSet — dryRun=false", () => {
       body: "Body A",
       labels: ["bug", "enhancement"],
       assignees: undefined,
+      request: { signal: expect.any(AbortSignal) },
     });
     expect(structured.dryRun).toBe(false);
     expect(structured.count).toBe(1);
@@ -485,7 +486,8 @@ describe("handleCreateIssueSet — dryRun=false", () => {
     expect(structured.failures).toHaveLength(2);
     expect(structured.failures.map((failure) => failure.title)).toEqual(["First", "Second"]);
     expect(text).toContain("0 created");
-    expect(text).toContain("2 failed");
+    expect(text).toContain("1 failed");
+    expect(text).toContain("1 unknown");
     expect(text).not.toContain("private response");
   });
 });

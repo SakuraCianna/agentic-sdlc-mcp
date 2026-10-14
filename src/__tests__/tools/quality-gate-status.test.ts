@@ -35,6 +35,7 @@ const {
   evaluateQualityGate,
   handleQualityGateStatus,
 } = await import("../../tools/quality-gate-status.js");
+const { handleReviewPr } = await import("../../tools/review-pr.js");
 
 import type { QualityGateInput } from "../../tools/quality-gate-status.js";
 
@@ -1301,6 +1302,79 @@ describe("handleQualityGateStatus ref compatibility", () => {
 });
 
 describe("handleQualityGateStatus output", () => {
+  it.each([
+    { title: "Security hardening", body: "Evidence first", labels: [], status: "missing", approved: ["Bob"] },
+    { title: "Update login", body: "Document the threat model", labels: [], status: "requested", approved: ["Bob"] },
+    { title: "Update login", body: "Evidence first", labels: ["security"], status: "approved", approved: ["Bob", "security-reviewer"] },
+    { title: "Update login", body: "Evidence first", labels: [], status: "unrelated", approved: ["Bob"] },
+  ])("matches review's work-type-specific risk and reviewer rules for $status approval", async ({ title, body, labels, status, approved }) => {
+    const evidence = pullRequestEvidence({
+      pullRequest: { title, body, labels, baseSha: "base-policy-sha" },
+      changedFiles: [{
+        filename: "src/public/login.ts", previousFilename: "src/auth/login.ts", status: "renamed",
+        additions: 1, deletions: 1, changes: 2,
+      }],
+      reviews: {
+        approvedUsers: approved,
+        requestedUsers: status === "requested" ? ["security-reviewer"] : [],
+      },
+    });
+    const policy = [
+      "schemaVersion: 1",
+      "riskRules:",
+      "  - id: risk.security",
+      "    paths: [src/auth/**]",
+      "    workTypes: [security]",
+      "    level: high",
+      "    domains: [identity]",
+      "review:",
+      "  requiredReviewers:",
+      "    - id: review.security",
+      "      riskRuleIds: [risk.security]",
+      "      reviewers: ['@security-reviewer']",
+    ].join("\n");
+    const octokit = makeOctokit() as unknown as {
+      repos: Record<string, unknown> & { getContent: ReturnType<typeof vi.fn> };
+    };
+    octokit.repos.getContent = vi.fn().mockResolvedValue({
+      data: {
+        type: "file", encoding: "base64",
+        content: Buffer.from(policy).toString("base64"), sha: "policy-blob",
+      },
+    });
+    evidenceMocks.collectPullRequestEvidence.mockResolvedValue(evidence);
+    const client = octokit as unknown as Parameters<typeof handleQualityGateStatus>[2];
+
+    const gate = await handleQualityGateStatus({ pullNumber: 42 }, REF, client);
+    const review = await handleReviewPr(
+      { pullNumber: 42, standard: "basic", checkOwnership: false }, REF, client
+    );
+
+    expect(review.structured.workType).toBe(status === "unrelated" ? "feature" : "security");
+    if (status === "unrelated") {
+      expect(review.structured.findings.some((finding) => finding.reason.includes("risk.security"))).toBe(false);
+    } else {
+      expect(review.structured.findings).toContainEqual(expect.objectContaining({
+        category: "RepositoryRiskRule", reason: expect.stringContaining("risk.security"),
+      }));
+    }
+    if (status === "approved" || status === "unrelated") {
+      expect(gate.structured.conclusion).toBe("passing");
+      expect(gate.structured.blockers.join(" ")).not.toContain("review.security");
+    } else {
+      expect(gate.structured.conclusion).toBe("needs_review");
+      expect(gate.structured.blockers.join(" ")).toContain("[review.security]");
+      expect(review.structured.findings).toContainEqual(expect.objectContaining({
+        category: status === "requested" ? "RepositoryPolicyReviewPending" : "RepositoryPolicy",
+        reason: expect.stringContaining("review.security"),
+      }));
+    }
+    expect(gate.structured.policyDigest).toBe(review.structured.policyDigest);
+    expect(octokit.repos.getContent).toHaveBeenCalledWith(
+      expect.objectContaining({ path: ".agentic-sdlc.yml", ref: "base-policy-sha" })
+    );
+  });
+
   it("loads policy from the PR base SHA and enforces repository required checks", async () => {
     evidenceMocks.collectPullRequestEvidence.mockResolvedValueOnce(
       pullRequestEvidence({

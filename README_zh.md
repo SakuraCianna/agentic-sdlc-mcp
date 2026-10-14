@@ -29,6 +29,8 @@
 
 `agentic-sdlc-mcp` 是面向已经允许 AI 编码智能体修改生产仓库团队的软件开发生命周期（SDLC）治理层。它把 GitHub 上下文、仓库策略、检查、评审、安全告警和发布信号组织成 13 个工作流级 MCP 工具。其中 12 个工具只读，唯一的 GitHub 写入工具默认先预览。
 
+**1.11.0** 新增只读 CLI `agentic-sdlc`，用于 PR 评估、可携带证据、快照差量和验收追溯；`agentic-sdlc-mcp` 继续作为 MCP server 入口。安装时请核验精确包版本与[发布记录](https://github.com/SakuraCianna/agentic-sdlc-mcp/releases/tag/v1.11.0)。
+
 ## 接入这个 MCP 后有什么变化
 
 AI 编码智能体可以生成代码和 Pull Request，但它未必理解仓库的全部规则。这个 MCP 为智能体提供有界上下文，也让评审者看到明确的证据缺口，而不是再收到一份无法验证的自由文本总结。
@@ -77,6 +79,39 @@ flowchart LR
 | 把工作移交给另一个智能体 | `agent_handoff_packet` | 标注调用方断言与证据警告的有界续接包 |
 | 归档一次决策快照 | `sdlc_evidence_packet` | 带 provenance、freshness、completeness 和稳定内容 digest 的 Issue、PR 或 release 证据包 |
 
+## 不经过智能体，直接评估 PR
+
+一个命令同时生成可供人工阅读的结论和 JSON 快照。评估复用现有门禁与规则审查，将结果绑定到 PR head/base 和策略 digest，并保留阻塞项、证据缺口、请求次数和采集耗时。
+
+在已审阅的源码目录中，使用 Node.js 22 或更高版本构建：
+
+```powershell
+npm ci
+npm run build
+node dist/cli.js doctor --repo acme/widget
+node dist/cli.js assess-pr --repo acme/widget --pr 42 --output artifacts/pr-42-first.json --summary artifacts/pr-42-first.md
+```
+
+在线采集前，通过进程环境或 secret manager 注入 `GITHUB_TOKEN`。CLI 只读取环境变量，不加载 home 配置或 `.env`。`doctor` 默认离线，显式 `--online` 才探测远端；缺少配置时退出码为 2。安装包后，`agentic-sdlc` 与 `node dist/cli.js` 是同一 CLI 入口。
+
+| 命令 | 结果 |
+|---|---|
+| `doctor --repo acme/widget --online --json` | 只读端点诊断；报告不包含凭据值 |
+| `assess-pr --repo acme/widget --pr 42 --standard strict --json` | `ready_for_review`、`blocked` 或 `needs_evidence`，附版本化 packet |
+| `evidence --repo acme/widget --subject pr --number 42 --output artifacts/pr-42-evidence.json` | 现有 Issue、PR 或 release evidence packet；其他 subject 使用 `--subject issue --number N` 或 `--subject release --ref REF` |
+| `diff --previous artifacts/pr-42-first.json --current artifacts/pr-42-next.json --json` | 新增、移除、变化、未变化及失效证据；两份输入均需已经存在 |
+| `trace --packet artifacts/pr-42-evidence.json --acceptance acceptance.md --source openspec --json` | 将显式 checkbox/编号条件与所提供证据关联 |
+
+`assess-pr` 和 `evidence` 还支持 `--previous`、`--acceptance` 及可选 `--mappings`，可在一次采集后完成本地分析。mapping 文件采用[证据连续性指南](docs/evidence-continuity.md)中的严格数组 schema。`--json` 控制 stdout；`--output` 始终新建 JSON 文件，已有文件不会覆盖。`--summary` 新建 Markdown 文件；只有目标为 GitHub Actions 精确的 `GITHUB_STEP_SUMMARY` 路径时才追加。
+
+评估默认仅提供建议：报告完成即返回 0，即使结论为阻塞或缺证据。`assess-pr --enforce` 在 `blocked` 时返回 1、`needs_evidence` 时返回 2、`ready_for_review` 时返回 0。配置、输入或来源不可用错误返回 2，取消返回 130。`diff` 或 `trace` 返回成功只说明分析完成，不表示证据或验收已通过。
+
+在线采集默认总超时 30 秒、请求预算 120 次；`--timeout-ms` 范围为 1–120000，`--max-requests` 为 2–500。`doctor` 使用自身有界探测并支持超时参数。文件输入与序列化输出限制为 1 MiB。
+
+快照未变化也不会继承此前验证；head/base、策略、生产工具版本、时效性和完整性变化都可能要求重新采集。勾选、智能体自述与普通 CI 绿灯不能证明业务验收；CLI 默认没有可信验收 producer。就绪报告和 `--enforce` 都不会批准、合并或部署 PR。
+
+MCP 评审连接可设置 `SDLC_CONFIG_MODE=envonly` 跳过 home/`.env` 配置，设置 `SDLC_READ_ONLY=true` 拒绝真实 Issue 创建并保留预览。Token 应限定授权仓库和读取权限。[客户端配方](docs/client-recipes.md)提供安装与轻量审查 skill；[用户试点方案](docs/user-pilot.md)是尚未执行的小样本验证计划。
+
 ## 从 npm 安装
 
 你需要 Node.js 22 或更高版本。Node 22 与 24 由 GitHub Actions 验证。优先直接运行 npm 上已经发布的包：
@@ -93,6 +128,8 @@ agentic-sdlc-mcp
 ```
 
 默认传输方式是 stdio。多数 MCP 客户端会自动启动这个包，不需要提前在另一个终端中运行。
+
+上面的 npm 命令解析已发布版本。复现本版本时请固定 `agentic-sdlc-mcp@1.11.0`、核验对应 Release 与包元数据，并在升级后重启已有 MCP 连接。
 
 ## 让编码智能体帮你安装
 
@@ -197,6 +234,8 @@ npx -y agentic-sdlc-mcp configure
 <summary>工作项写入细节</summary>
 
 - **`create_issue_set`**：可以直接接收 `plan_from_context.issueDrafts`。`dryRun` 默认为 `true`，不会调用 GitHub 写接口。真实批次必须显式设置 `dryRun: false`，会保留成功创建的 Issue URL，并返回安全化的逐项失败信息，不隐藏部分完成状态。
+
+高级预览匹配与有界恢复使用请求级 `params._meta["io.github.SakuraCianna/agentic-sdlc-mcp/issue-recovery"]`，其中可包含 `idempotencyKey` 和/或 `previewDigest`。它们不是工具 arguments；原参数 schema 保持不变，把同名额外字段放进 arguments 不会启用恢复。不能附加请求 metadata 的客户端应使用默认预览和基础报告，不能假设自动幂等重试。[JSON-RPC 示例与恢复限制](docs/pr-workflows.md#issue-preview-and-recovery-through-mcp)说明具体位置；metadata 和匹配的 digest 都不代表写入授权。
 
 </details>
 
@@ -383,6 +422,9 @@ CI 会在 Node 22 和 Node 24 上执行完整产品检查与当前契约比较�
 
 - [路线图](docs/ROADMAP.md)
 - [仓库策略指南](docs/repository-policy.md)
+- [客户端配方与 portable review skill](docs/client-recipes.md)
+- [证据连续性与验收追溯](docs/evidence-continuity.md)
+- [用户试点方案](docs/user-pilot.md)
 - [测试策略](docs/testing-strategy.md)
 - [远程部署重新立项准入条件](docs/remote-deployment-considerations.md)
 - [v1.10.0 发布说明](docs/releases/v1.10.0.md)

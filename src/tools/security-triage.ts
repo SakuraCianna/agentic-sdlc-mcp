@@ -112,6 +112,28 @@ export function normalizeSeverity(raw: string | null | undefined): Severity {
   return "info";
 }
 
+function codeScanningSeverity(
+  rule: { severity?: unknown; security_severity_level?: unknown } | null | undefined
+): { severity: Severity; verified: boolean } {
+  const securitySeverity = rule?.security_severity_level;
+  // GitHub security severity takes precedence over the ordinary SARIF alert level.
+  if (
+    typeof securitySeverity === "string" &&
+    ["critical", "high", "medium", "low"].includes(securitySeverity)
+  ) {
+    return { severity: securitySeverity as Severity, verified: true };
+  }
+  const ordinarySeverity = typeof rule?.severity === "string"
+    ? rule.severity.toLowerCase()
+    : "";
+  return {
+    severity: normalizeSeverity(ordinarySeverity),
+    verified: securitySeverity == null && [
+      "critical", "high", "medium", "low", "info", "error", "warning", "note", "none",
+    ].includes(ordinarySeverity),
+  };
+}
+
 export function computeSeverityCounts(alerts: SecurityAlert[]): Record<Severity, number> {
   const counts = { critical: 0, high: 0, medium: 0, low: 0, info: 0 } as Record<Severity, number>;
   for (const a of alerts) {
@@ -152,14 +174,22 @@ export async function handleSecurityTriage(
         MAX_SECURITY_ALERTS_PER_SOURCE
       );
       if (collection.truncated) truncatedSources.push("code_scanning");
+      let unverifiedSeverityCount = 0;
       for (const alert of collection.items) {
+        const severity = codeScanningSeverity(alert.rule);
+        if (!severity.verified) unverifiedSeverityCount += 1;
         allAlerts.push({
           id: alert.number,
-          severity: normalizeSeverity(alert.rule?.severity),
+          severity: severity.severity,
           summary: `[Code Scanning] ${alert.rule?.description ?? alert.rule?.id ?? "Unknown rule"}`,
           state: alert.state ?? "open",
           url: alert.html_url ?? null,
         });
+      }
+      if (unverifiedSeverityCount > 0) {
+        errors.push(
+          `Code Scanning: security severity could not be verified for ${unverifiedSeverityCount} alert(s); fallback alert levels cannot rule out high-severity security alerts.`
+        );
       }
     } catch (err) {
       errors.push(
@@ -267,7 +297,7 @@ export async function handleSecurityTriage(
   ];
 
   if (errors.length > 0) {
-    lines.push("## Permission Errors", "");
+    lines.push("## Evidence Errors", "");
     errors.forEach((e) => lines.push(`- ${e}`));
     lines.push("");
   }

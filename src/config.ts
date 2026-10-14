@@ -124,8 +124,18 @@ async function runInteractiveConfig(): Promise<string> {
 
 /** Initializes the configuration. Exits early if required keys are missing and TTY is false. */
 export async function initializeConfig(): Promise<void> {
+  const configurationMode = process.env["SDLC_CONFIG_MODE"] ?? "default";
+  if (!["default", "envonly"].includes(configurationMode)) {
+    console.error("ERROR: SDLC_CONFIG_MODE must be default or envonly.");
+    process.exit(1);
+  }
+  const environmentOnly = configurationMode === "envonly";
   // 1. If explicit config command, run configuration and exit
   if (process.argv.includes("configure") || process.argv.includes("--configure")) {
+    if (environmentOnly) {
+      console.error("ERROR: Interactive configuration and persisted credentials are disabled in envonly mode.");
+      process.exit(1);
+    }
     await runInteractiveConfig();
     process.exit(0);
   }
@@ -143,17 +153,17 @@ export async function initializeConfig(): Promise<void> {
   }
 
   // 3. Try to load from configuration file
-  await loadConfigFile();
+  if (!environmentOnly) await loadConfigFile();
 
   // 4. Validate GITHUB_TOKEN or ask for it
   if (!process.env["GITHUB_TOKEN"]) {
-    if (process.stdout.isTTY && process.stdin.isTTY) {
+    if (!environmentOnly && process.stdout.isTTY && process.stdin.isTTY) {
       await runInteractiveConfig();
     } else {
       console.error(`ERROR: Required environment variable "GITHUB_TOKEN" is not set.`);
       console.error(`  You can configure it in one of the following ways:`);
       console.error(`  1. Set GITHUB_TOKEN in your env or command line.`);
-      console.error(`  2. Run 'npx agentic-sdlc-mcp configure' in a terminal to setup globally.`);
+      if (!environmentOnly) console.error(`  2. Run 'npx agentic-sdlc-mcp configure' in a terminal to setup globally.`);
       console.error(`  3. Set it in your MCP Client (e.g. Claude Desktop) configuration.`);
       process.exit(1);
     }

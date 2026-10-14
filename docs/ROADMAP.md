@@ -1,5 +1,20 @@
 # Agentic SDLC MCP Roadmap
 
+## 当前交付校准（2026-10-15）
+
+当前工作围绕 **1.11.0 的可使用交付**：保留 13 个 MCP 工具，增加独立的 `agentic-sdlc` CLI、PR evidence assessment、证据连续性、保守验收追溯、客户端薄配方和受控用户试点方案。原 v1.10 已完成但未公开分发的契约与 evaluation 改进纳入 1.11.0；实际分发状态以[发布记录](https://github.com/SakuraCianna/agentic-sdlc-mcp/releases/tag/v1.11.0)及精确 npm/Registry 版本为准。
+
+| 状态层次 | 本文能确认的范围 | 完成所需的独立证据 |
+|---|---|---|
+| 代码完成 | 候选源码及回归持续集成；按实际文件核对 | 需求覆盖、审查结论与具体 commit |
+| 本机验证 | 仅以当前交付记录的实际命令为准；历史测试数量不是现状承诺 | 环境、命令、结果与限制 |
+| 远端 CI | 历史 run 不证明本候选通过 | 精确 commit 的 required checks/run URL |
+| 公开分发 | 通过 Release 触发 npm/Registry OIDC 发布，按精确版本核验实际结果 | Release、精确包版本、metadata 与包内容核验 |
+| 真实客户端 | [配方](client-recipes.md)核验官方文档，尚未据此宣称端到端兼容 | 客户端/版本、server discovery 和只读调用记录 |
+| 用户收益 | [试点方案](user-pilot.md)尚未执行 | 已授权样本、匿名汇总、人工判定和失败个案 |
+
+源码事实已校准：当前 `.github/workflows/*.yml` 中第三方 Actions 已固定完整 commit SHA；`vitest.config.ts` 已强制全局 coverage 门槛 statements 94%、branches 89%、functions 94%、lines 95%。早期“多数 Actions 仍用 major tag”“coverage 没有门槛”的缺口描述已经过时。测试数量与覆盖率实测随版本变化，不能把历史 1526 等数字当作本候选最新验证。
+
 ## 定位
 
 `agentic-sdlc-mcp` 不应该只是 GitHub API 的 MCP 包装层，而应该发展成 AI coding agent 的 SDLC 治理层和安全控制平面。
@@ -34,7 +49,7 @@
 ## 产品原则
 
 1. **客户端无关**
-   MCP server 只关心标准工具输入输出，不假设调用方是某一个具体软件。文档和测试场景应该写成 "AI coding agent 应该如何使用"，而不是 "某客户端应该如何使用"。
+   核心能力不依赖特定客户端。各客户端只保留薄配置和调用配方，复用同一 assessment/evidence 逻辑；CLI 与 MCP 共享证据语义，不能各自维护冲突判断。
 
 2. **上下文优先**
    Agent 在计划或执行前必须先了解仓库，而不是只凭用户一句话开始操作。
@@ -1531,12 +1546,12 @@ interface ToolDependencies {
 本版本非目标：
 
 - 不提供托管 SaaS、多租户计费或用户管理后台。
-- 不实现 MCP evaluation 平台、SBOM 或 telemetry；这些属于当前路线图的 v1.10/v1.11。
+- 远程 HTTP 条件设计不增加托管 evaluation 平台或 telemetry。契约、本地 evaluation 和本地 tarball/SBOM/manifest 准备已纳入 v1.11 候选；签名 attestation、发布流水线集成与运行可观测性按后续独立需求推进。
 - 不实现组织级策略中心或 evidence 数据库。
 
 ### v1.10: MCP 契约、Inspector 与 Agent Evaluation
 
-> **状态：已完成（2026-08-13）。** T0–T12 已全部落地；#43/#44 的范围已经交接并关闭。稳定 MCP SDK 2.0.0、本地 2025/2026 双 era、不可变 v1.9.0 契约基线、Inspector/Conformance、12 场景评测、13 项预算、11 项故障矩阵和 required Node 24 发布门禁均已完成。最终全量基线为 65 files / 1526 tests，覆盖率 96.66/91.64/97.46/97.36。required CI 不运行 live-model，也没有引入远程 OAuth、多租户、共享 session store 或公网监听。详细证据见 [v1.10.0 实施计划](superpowers/plans/2026-07-29-v1.10.0-contract-evaluation.md)和[发布说明](releases/v1.10.0.md)。
+> **状态：历史实现基线完成（记录于 2026-08-13），未公开分发内容纳入 1.11.0 候选。** T0–T12 的稳定 MCP SDK 2.0.0、本地 2025/2026 双 era、不可变 v1.9.0 契约基线、Inspector/Conformance、12 场景评测、13 项预算、11 项故障矩阵和 Node 24 门禁均已有实现。65 files / 1526 tests 与覆盖率 96.66/91.64/97.46/97.36 是当时的归档基线，不是本候选最新运行结果。以下逐阶段 CI/使用记录保留其历史语境，不能替代当前 commit 的本机、远端或公开分发核验。required CI 不运行 live-model，也没有引入远程 OAuth、多租户、共享 session store 或公网监听。历史资料见 [v1.10.0 实施计划](superpowers/plans/2026-07-29-v1.10.0-contract-evaluation.md)和[原发布说明文档](releases/v1.10.0.md)。
 
 > **T3 进展（2026-08-01）：** 本地 stdio 与 loopback HTTP 已显式提供 2025/2026 双 era，保留 legacy fallback、Host/Origin/100 KiB body limit、无状态 JSON 响应和 local-only 边界；modern wire metadata 由官方 SDK 生成。本地 Node 24 已通过 51 files/1177 tests、47 条 integration、13 tools/5 resources contract check 与 95.22/91.16/95.57/95.88 coverage，Node 22/24 CI 均通过。2025 stateless HTTP 无 session/client identity，不能把独立取消 POST 安全关联到原请求；跨时代 header/body 冲突会明确拒绝，factory/serving 异常只返回有界 JSON-RPC 500。两个 era 的 async factory pre-abort 与 handler shutdown 即使 factory 不释放也会立即 499，迟到 server 会关闭；modern handoff 同 tick 竞态、启动真实 `dist/index.js` 的隔离 stdio child 和 watch 排除均已有显式测试与文档。
 
@@ -1622,58 +1637,40 @@ interface ToolDependencies {
 - 不增加远程 OAuth、多租户、共享 session store 或非 loopback 默认监听。
 - 不在本版本同时做 Actions/SBOM/telemetry 改造。
 
-### v1.11: 软件供应链、Coverage 门槛与可观测性
+### v1.11: 从证据能力到可使用的交付
 
-目标：加固项目自身的构建/发布链，并让 degraded、timeout、rate limit、stale evidence 等运行状态可观测，同时坚持最小化和隐私默认值。
+目标：让用户无需编排一串 MCP 调用就能取得可审阅的 PR 结论，并能解释证据变化、验收缺口、写入恢复与接入成本。状态为候选源码集成与验证，不宣称已发布或完成用户试点。
 
-当前代码缺口：
+#### 1. 交付范围
 
-- CI 中多数第三方 actions 使用可变 major tag；只有 secret-scan workflow 固定完整 SHA。
-- coverage 只上传 artifact，没有门槛；config/resources/brief/handoff 等模块明显低于 gate/review 核心模块。
-- npm 发布已有 OIDC，但缺少统一 SBOM、artifact attestation 与包内容/tag/commit 一致性验证。
-- 没有结构化 metrics、correlation、degraded/stale/截断比例和隐私数据字典。
+- 保留 `agentic-sdlc-mcp`，新增第二 bin `agentic-sdlc`；提供 `doctor`、`assess-pr`、`evidence`、`diff`、`trace`，共用既有门禁、评审和 evidence 模块。
+- PR assessment 绑定 head/base SHA、base policy digest 和 producer version，输出 blockers、证据警告及下一步；默认 advisory，显式 `--enforce` 才按 blocked/needs_evidence 影响退出码。
+- 证据差量只展示有界安全摘要；目标、策略、schema、版本或时效变化要求重验，不能从上一份 verified 继承证明。
+- 验收追溯从显式 Markdown 条件生成稳定 ID，将关联与满足分开；默认没有可信业务验收 producer，checkbox、自述和普通 CI 绿灯不自动成为 verified。
+- MCP 新增显式 `SDLC_CONFIG_MODE=envonly` 与只读运行 profile；CLI 天然只读环境变量。Issue 写入继续默认 preview，并为部分成功和重试保留安全恢复边界。
+- 提供 Claude Code、Codex、Cursor、Copilot 的薄配方和 portable review skill；只记录实际进行的文档核验、客户端操作或 SDK/package smoke。
+- 形成 3–5 个已授权仓库、合计 20–30 个 PR 的探索试点方案；尚未执行前，不声明已经节省时间或提高评审正确率。
 
-#### 1. CI/CD 与软件供应链
+#### 2. 必测边界与完成门槛
 
-- 所有第三方 GitHub Actions 固定完整 commit SHA，并由 Dependabot 或受控流程更新。
-- 增加 dependency review、CodeQL（适用时）、OpenSSF Scorecard 基线与许可证/恶意包风险检查。
-- npm OIDC 发布继续最小权限；Registry 与 npm 发布分别验证 provenance 和目标版本。
-- 生成 SBOM，并对发布制品使用 GitHub artifact attestation 或等价 SLSA provenance；验证包内容与 tag/commit 一致。
-- 对 lockfile、install scripts、新依赖、GitHub Actions、容器/二进制下载建立 review gate。
-- 设置分层 coverage threshold，优先提升 config、resources、prepare、handoff、PR summary 等低覆盖模块；不能通过排除文件伪造提升。
+- CLI unknown/duplicate 参数、输出新建不覆盖、输入输出路径冲突、1 MiB 文件预算、超时/取消、无 token 与权限失败保持可行动且不泄露秘密。
+- 同名但不同来源的 CI、PR head/base 采集中变化、策略不一致、自身 assessment check 与其他必需检查必须分开处理，不能通过按名称排除放行。
+- 跨 repo/PR 的 packet 不可比较；失效、截断和重复 evidence ID 不能保持未经解释的通过状态。
+- acceptance mapping 不能自证，普通 CI 与关联不能证明业务验收；缺可信 producer、来源不匹配和未知条件明确降级。
+- Issue 创建在默认 preview/read-only 下零写入；部分成功重试不能隐式重复创建，超时和并发要保留可审阅的恢复状态。
+- 现有 13 tools/5 resources 契约、Node 22/24、coverage 门槛与安全 defaults 不回退；打包验证第二 bin 和文档/skill 的实际包内容。
+- 完成报告分别列出代码、本机验证、当前 commit 远端 CI、公开分发与真实用户收益。只达到前两项时继续称候选；试点结果缺失时明确保留缺口。
 
-> 2026-07-13 基础进展：已建立首轮全局 coverage regression floor（statements 92%、branches 87%、functions/lines 93%）、机器可读 JSON summary、配置生命周期测试和基于 SDK 内存 transport 的真实 MCP 协议测试；对抗矩阵与测试资产维护规则见 `docs/testing-strategy.md`。这只是 v1.11 的测试基础，不代表本版本供应链与可观测性目标已经完成。
+#### 3. 本地制品准备与后续发布、可观测性
 
-#### 2. 可观测性与隐私
+第三方 Actions 完整 SHA 固定和全局 coverage 门槛已经具备；后续工作应以实际缺口为起点，不能重复计为尚未开始。
 
-- 记录结构化、低基数 metrics：工具调用量、延迟、GitHub API 次数、rate-limit、degraded/unverified 比例、截断和错误类别。
-- 使用 correlation ID 串联一次 MCP request 内的子调用，但不把 token、Issue 正文、私有 repo 内容作为 label。
-- 日志级别和 telemetry 默认关闭/最小化；远程 telemetry 必须显式 opt-in 并有数据字典和保留策略。
-- 为 timeout、rate-limit、provenance failure、evidence stale 和 policy parse failure 定义可行动告警。
+`npm run release:prepare` 已提供本地 prepare-only 路径：生成 npm tarball、基于 lockfile 且省略开发依赖的 CycloneDX SBOM，以及 `manifest.sha256.json`。脚本检查实际 tar 成员和 binary entry、包/Registry/runtime 版本、SBOM 元数据，并将 tar/SBOM/包内文件 digest 与当前 HEAD、dirty 状态和源码内容快照绑定；新建输出目录，不覆盖已有制品，也不发布。源码完成不等于该候选本机已运行成功，实际命令与产物仍需在交付记录中单列。该 SBOM 不是已部署依赖盘点，manifest 也不是签名、可复现构建证明或 tag/publish attestation。
 
-#### 3. v1.11 必测特殊场景
-
-- action SHA 更新与注释版本不一致、Dependabot PR 修改 workflow 权限、第三方 action 仓库转移/删除。
-- tag、package version、Registry version、artifact digest、SBOM 和 attestation 指向不同 commit。
-- install script、新 transitive dependency、lockfile-only 变更、许可证变化和 npm provenance 缺失。
-- telemetry label 高基数、Issue/PR 私有正文泄露、错误含 token、用户未 opt-in 却发送远程数据。
-- metrics backend 不可用不能阻塞 MCP 工具主路径；本地 buffer 也必须有上限和丢弃策略。
-- coverage 提升不能通过排除低覆盖文件、删除测试目标或只测生成代码实现。
-
-#### 4. v1.11 完成定义与非目标
-
-完成定义：
-
-- 发布包有 SBOM/provenance，CI actions 固定且供应链检查通过。
-- config、resources、prepare、handoff、PR summary 等低覆盖模块达到分层门槛，且阈值进入 CI。
-- metrics/logs 有数据字典、redaction、高基数限制、retention 和 opt-in 策略。
-- telemetry/metrics 后端失败不会改变工具结论，只产生有界、可观察的降级。
-
-本版本非目标：
-
-- 不为了 telemetry 收集仓库源码、Issue/PR 正文或 secret。
-- 不自建完整 SIEM、APM 或 package registry。
-- 不把 coverage 百分比当作代码正确性的替代品。
+- 根据需要增加 dependency review、CodeQL、许可证与依赖风险检查；对 lockfile/install scripts/二进制下载保留人工 review。
+- npm/Registry 继续最小权限 OIDC；本地 tarball/SBOM/manifest 的内容与版本绑定已经实现。签名 artifact attestation、把这组制品纳入发布流水线，以及发布 tag/commit/最终公开包的端到端一致性核验仍属于后续独立交付。
+- 如确有运维需求，再设计低基数 metrics、correlation、redaction、retention 和本地有界 buffer；远程 telemetry 必须显式 opt-in，后端失败不改变工具结论。
+- 不把 token、私有源码、Issue/PR 正文或私有路径写入日志、label、共享 artifact 或试点汇总；不以 coverage 百分比替代正确性与用户收益。
 
 ### v2.0: 组织级治理、签名证据与可演进契约
 
@@ -1772,8 +1769,10 @@ interface ToolDependencies {
 | P0 | MCP Registry 发布与 `.agentic-sdlc.yml` 基础 | 先建立可发现、可配置、可解释的统一策略入口 | ✅ v1.7.1 |
 | P0 | 风险感知 `prepare_work_item` | 把高风险任务的防御性编程、负向测试、回滚、可观测性与有来源的上下文前移到开工阶段 | ✅ v1.8.0 |
 | P1 | `sdlc_evidence_packet` 与可信 handoff | 统一 verified/unverified/stale/partial 证据语义 | ✅ v1.9.0 |
-| P1 | MCP 契约与 Agent evaluation | 用 Inspector、稳定评测、性能预算和故障注入验证 agent 真正会用 | ✅ v1.10.0 |
-| P1 | CI/CD 供应链与可观测性 | 固定 Actions、SBOM/provenance、coverage 门槛和隐私安全 metrics | v1.11 待开始 |
+| P1 | MCP 契约与 Agent evaluation | 保留可重复的兼容、预算与故障验证，区别 replay 与 live-model | 历史实现基线，未公开内容纳入 v1.11 候选 |
+| P0 | 用户可使用的 PR 证据交付 | CLI、assessment、continuity、验收追溯、客户端配方和安全恢复 | v1.11 候选集成/验证 |
+| P1 | 授权用户试点 | 以真实任务的失败样本与匿名收益记录决定下一步 | 方案完成；尚未执行 |
+| P2 | 供应链制品与运行可观测性 | Actions SHA/coverage、本地 tarball/SBOM/manifest 已实现；签名、发布集成与 metrics 待推进 | 本地准备纳入 v1.11 候选；其余后续独立范围 |
 | P2 | 组织策略与签名 evidence | 只有出现真实 breaking/persistence 需求时进入主版本 | v2.0 条件触发 |
 
 ## 成功指标
@@ -1787,7 +1786,7 @@ interface ToolDependencies {
 | 让 AI“长脑子” | 简报/计划中有来源的风险与约束覆盖率、verified 与 caller assertion 正确分离率、handoff 后不重复已验证步骤的成功率 |
 | 让组织“敢用” | 高风险结论 provenance 完整率、degraded/stale 正确暴露率、最小权限与人类 gate 覆盖率、敏感信息泄露与越权写入为零 |
 
-指标采集必须遵守 v1.11 的隐私原则：优先用本地/CI fixture 与聚合低基数数据，不收集私有源码、Issue/PR 正文或 secret；没有真实 telemetry 前，使用可重复 evaluation 和 contract tests 作为代理指标。
+指标采集必须遵守隐私原则：优先用本地/CI fixture 与聚合低基数数据，不收集私有源码、Issue/PR 正文或 secret；没有真实 telemetry 前，使用可重复 evaluation 和 contract tests 作为代理指标。用户收益另按[试点方案](user-pilot.md)观察，不用代理测试成绩替代。
 
 版本验收使用固定 fixture 的代理阈值（首次实现时把 fixture 与计算脚本一并纳入仓库，后续只能通过评审调整，不能为过 CI 临时降低）：
 
@@ -1795,7 +1794,9 @@ interface ToolDependencies {
 - v1.8：高风险 fixture 的 `riskProfile`、来源、防御性要求、negative scenarios、rollback、observability 必备字段覆盖率 100%；低风险 docs fixture 不相关高风险清单误加率 0%。
 - v1.9：`state`/`freshness`/`completeness` schema 契约匹配率 100%，`state: verified` claim 的 provenance 完整率 100%，caller assertion 被标成 verified 的数量为 0。
 - v1.10：固定工具选择与多工具组合 evaluation 总正确率至少 90%，其中涉及写操作、security gate、release gate 的安全关键题必须 100%；schema/structuredContent drift 为 0%。
-- v1.11：仓库内第三方 Actions 完整 SHA 固定率 100%，发布版本/tag/artifact/SBOM/attestation commit 一致率 100%，敏感内容作为 metric label 或远程 telemetry payload 的 fixture 泄露数为 0。
+- v1.11 候选：CLI/MCP 共用证据结论，非法输入与缺证据不静默放行；跨目标比较、旧 verification 继承、mapping 自证和默认 live write 的回归数为 0。实际命令、打包内容和当前 commit CI 分别验证，不把测试阈值描述成用户收益。
+- 探索试点：3–5 个已授权仓库、合计 20–30 个 PR；严重边界事件为 0，至少 80% 已记录缺口有经人工确认的下一步，至少两个仓库认为值得继续。此为后续扩样判断，尚未取得实测结果，不作统计总体承诺。
+- 本地供应链准备：核验实际 tarball、SBOM、manifest 的内容与版本/digest 绑定，保留 HEAD 与 dirty 源码快照；按实际运行记录判断候选产物。后续发布/可观测性交付另行核验 tag、发布 commit、公开包和签名 attestation 的端到端一致性，以及敏感内容作为 metric label 或远程 telemetry payload 的 fixture 泄露数为 0。
 - 远程部署条件触发指标：若未来重新立项，至少 100 组交错并发双租户 fixture 中 credential/repo/client/cache/AbortSignal 串线必须为 0；无效 auth、Host/Origin 与超预算请求拒绝率必须为 100%。
 
 这些阈值是发布 gate 的最低代理指标，不代表真实用户体验已经充分；每版仍需记录失败样本、人工可用性反馈和未覆盖场景。
@@ -1825,7 +1826,7 @@ interface ToolDependencies {
 
 - MCP Inspector 与稳定 evaluation 能验证 agent 是否会正确选择并组合工具，而不只是 handler 单测通过（v1.10）
 - 远程 HTTP/OAuth/多租户只在条件触发重新立项后评估，不属于当前版本路线
-- 发布制品具备 SBOM/provenance，所有第三方 Actions 固定且供应链 gate 可解释（v1.11）
+- PR 证据可通过 CLI 或 MCP 使用，差量与验收缺口可解释，客户端与试点状态不夸大（v1.11 候选）；本地 tarball/SBOM/manifest 准备已有实现，签名 attestation、发布集成与运行 metrics 后续独立交付
 - 一个 PR 或 release 可以生成完整、版本化、来源可追溯的 evidence packet
 - 人类 reviewer 可以直接根据 evidence packet 判断 agent 工作是否可信，同时看见证据缺口和时效性
 - 下一个 agent 可以根据 handoff packet 无缝接续工作，不重复已验证步骤，也不继承未经验证的假设

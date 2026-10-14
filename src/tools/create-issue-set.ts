@@ -16,6 +16,13 @@ import { resolveRepo, getOctokit, handleGitHubError } from "../github/client.js"
 import { safeMarkdownInline } from "../rendering/markdown.js";
 import type { RepoRef } from "../types.js";
 import type { Octokit } from "@octokit/rest";
+import {
+  createIssuesRecoverably,
+  issueSetPreviewDigest,
+  type IssueWriteItem,
+  type IssueWriteOptions,
+  type IssueWriteRecovery,
+} from "../operations/issue-creation.js";
 
 // ---------------------------------------------------------------------------
 // Schemas
@@ -53,12 +60,24 @@ export const CreateIssueSetInputSchema = z.object({
     .describe("If true (default), preview issues without creating them."),
 });
 
-export type CreateIssueSetInput = z.infer<typeof CreateIssueSetInputSchema>;
+export const ISSUE_RECOVERY_META_KEY = "io.github.SakuraCianna/agentic-sdlc-mcp/issue-recovery";
+
+export const IssueRecoveryMetadataSchema = z.strictObject({
+  idempotencyKey: z.string().min(1).max(128).regex(/^[A-Za-z0-9._:-]+$/).optional()
+    .describe("Optional operation key for bounded recovery of the same complete batch. Reuse the exact payload and key when resuming; this is not a cross-process exactly-once guarantee."),
+  previewDigest: z.string().regex(/^[a-f0-9]{64}$/).optional()
+    .describe("Digest returned by a reviewed preview. A live call with a different repository or complete payload is rejected before writing."),
+});
+
+/** Internal operation input; recovery fields arrive through MCP request metadata. */
+export const CreateIssueSetOperationInputSchema = CreateIssueSetInputSchema.extend(IssueRecoveryMetadataSchema.shape);
+export type CreateIssueSetInput = z.infer<typeof CreateIssueSetOperationInputSchema>;
+type CreateIssueSetArguments = z.infer<typeof CreateIssueSetInputSchema>;
 
 export const CreateIssueSetOutputSchema = {
   trustBoundary: StructuredContentTrustBoundarySchema.optional(),
   dryRun: z.boolean().describe("Whether this was a preview-only run."),
-  count: z.number().int().describe("Number of issues previewed or successfully created."),
+  count: z.number().int().describe("Number of issues previewed or known successful issue references, including previously confirmed issues during recovery."),
   targetRepo: z.string().describe("Repository targeted by the preview or live batch."),
   issues: z
     .array(
@@ -69,7 +88,7 @@ export const CreateIssueSetOutputSchema = {
         labels: z.array(z.string()),
       })
     )
-    .describe("Created issues (empty in dry run)."),
+    .describe("Known successful issue references (empty in dry run). Inspect items for newly created, reused, or no longer verified references."),
   failures: z
     .array(
       z.object({
@@ -78,7 +97,7 @@ export const CreateIssueSetOutputSchema = {
         reason: z.string(),
       })
     )
-    .describe("Issues that could not be created. Empty in dry run and on full success."),
+    .describe("Rejected or unconfirmed writes. Inspect items to distinguish failed from unknown commit status. Empty in dry run and on full success."),
   previewTitles: z.array(z.string()).describe("Final titles (with prefix applied)."),
   preview: z
     .array(
@@ -92,6 +111,19 @@ export const CreateIssueSetOutputSchema = {
   warnings: z
     .array(z.string())
     .describe("Human-review flags, e.g. missing labels, overlong title, missing/short body."),
+  previewDigest: z.string().optional().describe("Digest binding the complete ordered issue payload, target repository and optional request-metadata idempotencyKey. Return it as previewDigest inside request params._meta['io.github.SakuraCianna/agentic-sdlc-mcp/issue-recovery'], never tool arguments."),
+  items: z.array(z.object({
+    inputIndex: z.number().int().nonnegative(),
+    title: z.string(),
+    status: z.enum(["created", "reused", "failed", "unknown", "pending"]),
+    issue: z.object({ number: z.number().int(), title: z.string(), url: z.string(), labels: z.array(z.string()) }).optional(),
+    reason: z.string().optional(),
+  })).optional().describe("Per-input live results. Unknown means the write may have committed; pending means no request started."),
+  recovery: z.object({
+    status: z.enum(["completed", "partial", "cancelled", "timed_out", "unknown", "blocked"]),
+    retrySafe: z.boolean(),
+    message: z.string(),
+  }).optional().describe("Recovery guidance. Even with a key, cross-process races and server restarts cannot guarantee exactly-once creation."),
 };
 
 // ---------------------------------------------------------------------------
@@ -127,6 +159,9 @@ export interface CreateIssueSetResult {
   previewTitles: string[];
   preview: IssuePreview[];
   warnings: string[];
+  previewDigest?: string;
+  items?: IssueWriteItem[];
+  recovery?: IssueWriteRecovery;
 }
 
 // ---------------------------------------------------------------------------
@@ -178,38 +213,6 @@ export function generateIssueWarnings(
   return warnings;
 }
 
-/**
- * Convert a per-issue failure into an actionable, response-safe reason.
- * GitHub response bodies and arbitrary exception messages are deliberately
- * excluded because they can contain private repository data or credentials.
- */
-function describeIssueCreationFailure(error: unknown): string {
-  const status =
-    typeof error === "object" &&
-    error !== null &&
-    "status" in error &&
-    typeof (error as { status?: unknown }).status === "number"
-      ? (error as { status: number }).status
-      : undefined;
-
-  switch (status) {
-    case 401:
-      return "GitHub authentication failed (401); check that GITHUB_TOKEN is valid.";
-    case 403:
-      return "GitHub permission denied (403); check token and repository issue permissions.";
-    case 404:
-      return "GitHub repository or issue endpoint was not found (404); verify the target repository.";
-    case 422:
-      return "GitHub validation failed (422); check the title, body, labels, and assignees.";
-    case 429:
-      return "GitHub rate limit exceeded (429); retry after the limit resets.";
-    default:
-      return status
-        ? `GitHub API error (${status}) while creating this issue.`
-        : "Unexpected error while creating this issue; retry or inspect the server logs.";
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Core handler (exported for testing)
 // ---------------------------------------------------------------------------
@@ -217,9 +220,14 @@ function describeIssueCreationFailure(error: unknown): string {
 export async function handleCreateIssueSet(
   params: CreateIssueSetInput,
   ref: RepoRef,
-  octokit: Octokit
+  octokit: Octokit,
+  options: IssueWriteOptions = {}
 ): Promise<{ text: string; structured: CreateIssueSetResult }> {
+  // Snapshot caller-owned arrays before asynchronous reads or writes.
+  params = CreateIssueSetOperationInputSchema.parse(params);
   const prefix = params.titlePrefix ? `${params.titlePrefix} ` : "";
+  const payload = params.issues.map((issue) => ({ ...issue, title: `${prefix}${issue.title}` }));
+  const previewDigest = issueSetPreviewDigest(ref, payload, params.idempotencyKey);
   const targetRepo = `${ref.owner}/${ref.repo}`;
   const inline = (value: string, maxLength = 500): string =>
     safeMarkdownInline(value, { maxLength });
@@ -242,6 +250,7 @@ export async function handleCreateIssueSet(
       previewTitles,
       preview,
       warnings,
+      previewDigest,
     };
 
     const lines = [
@@ -250,6 +259,7 @@ export async function handleCreateIssueSet(
       `> **Preview only -- no GitHub issues were created.** No write call was made to the GitHub API. Set \`dryRun: false\` to create them for real.`,
       "",
       `**Target repo (confirm before a live write):** \`${inline(targetRepo, 200)}\``,
+      `**Preview digest:** \`${previewDigest}\` (send as \`previewDigest\` in request \`params._meta["${ISSUE_RECOVERY_META_KEY}"]\`; use the same metadata key and complete payload for preview and live calls).`,
       "",
     ];
 
@@ -277,36 +287,13 @@ export async function handleCreateIssueSet(
     return { text: lines.filter((l) => l !== "").join("\n"), structured };
   }
 
-  // Live mode - create issues sequentially
-  const created: CreatedIssue[] = [];
-  const failures: IssueCreationFailure[] = [];
-  for (const [inputIndex, issue] of params.issues.entries()) {
-    const finalTitle = `${prefix}${issue.title}`;
-    try {
-      const { data } = await octokit.issues.create({
-        owner: ref.owner,
-        repo: ref.repo,
-        title: finalTitle,
-        body: issue.body,
-        labels: issue.labels,
-        assignees: issue.assignees,
-      });
-      created.push({
-        number: data.number,
-        title: data.title,
-        url: data.html_url,
-        labels: (data.labels ?? [])
-          .map((label) => (typeof label === "string" ? label : label.name ?? ""))
-          .filter((label) => label.length > 0),
-      });
-    } catch (error) {
-      failures.push({
-        inputIndex,
-        title: finalTitle,
-        reason: describeIssueCreationFailure(error),
-      });
-    }
-  }
+  const { items, recovery } = await createIssuesRecoverably(
+    payload, ref, octokit, previewDigest, params.idempotencyKey, params.previewDigest, options
+  );
+  const created: CreatedIssue[] = items.flatMap((item) => item.issue ? [item.issue] : []);
+  const failures: IssueCreationFailure[] = items
+    .filter((item) => item.status === "failed" || item.status === "unknown")
+    .map((item) => ({ inputIndex: item.inputIndex, title: item.title, reason: item.reason! }));
 
   const structured: CreateIssueSetResult = {
     dryRun: false,
@@ -317,13 +304,17 @@ export async function handleCreateIssueSet(
     previewTitles: params.issues.map((issue) => `${prefix}${issue.title}`),
     preview: [],
     warnings: [],
+    previewDigest,
+    items,
+    recovery,
   };
   const lines = [
-    `# Issue Set Creation Result - ${created.length} created, ${failures.length} failed`,
+    `# Issue Set Creation Result - ${items.filter((item) => item.status === "created").length} created, ${items.filter((item) => item.status === "reused").length} reused, ${items.filter((item) => item.status === "failed").length} failed, ${items.filter((item) => item.status === "unknown").length} unknown`,
     "",
     `Repo: ${inline(targetRepo, 200)}`,
+    `Recovery status: ${recovery.status}. ${recovery.message}`,
     "",
-    "## Created",
+    "## Known issue references",
     created.length > 0
       ? created
           .map(
@@ -333,7 +324,7 @@ export async function handleCreateIssueSet(
           .join("\n")
       : "(none)",
     "",
-    "## Failed",
+    "## Failed or unknown writes",
     failures.length > 0
       ? failures
           .map(
@@ -342,6 +333,10 @@ export async function handleCreateIssueSet(
           )
           .join("\n")
       : "(none)",
+    "",
+    "## Pending (no write started)",
+    items.filter((item) => item.status === "pending")
+      .map((item) => `- Issue ${item.inputIndex + 1}: ${inline(item.title, 300)}`).join("\n") || "(none)",
   ];
   return { text: lines.join("\n"), structured };
 }
@@ -369,7 +364,12 @@ Args:
   - issues (array): 1-50 issues, each with title, body, labels?, assignees?. Accepts plan_from_context's issueDrafts directly.
   - dryRun (boolean): Default true - preview mode only.
 
-Returns: Created issue numbers + URLs + labels (live) or a preview + warnings (dry run).`,
+Optional recovery controls belong in request params._meta["${ISSUE_RECOVERY_META_KEY}"], never tool arguments:
+  - idempotencyKey: 1-128 ASCII characters matching [A-Za-z0-9._:-]+. Use the same key in preview and live metadata and reuse the complete payload when resuming.
+  - previewDigest: The 64-character lowercase hex digest from the reviewed preview. Mismatches cause zero writes.
+The metadata value is a strict object with only those optional fields. Invalid recovery metadata is rejected before GitHub access. Other tool arguments retain their legacy ignored-extra-field behavior.
+
+Returns: Confirmed created/reused issue numbers, per-input created/reused/failed/unknown/pending status and recovery guidance, or a preview + digest. Cancellation stops new writes but cannot establish whether an in-flight write committed. Idempotency recovery checks at most 300 issues including closed ones and fails closed for missing inputs when evidence is incomplete. Markers are correlation data, not authorization; concurrent processes and restarts cannot guarantee exactly-once writes. SDLC_READ_ONLY=true rejects live writes.`,
       inputSchema: CreateIssueSetInputSchema,
       outputSchema: z.object(CreateIssueSetOutputSchema),
       annotations: {
@@ -379,11 +379,28 @@ Returns: Created issue numbers + URLs + labels (live) or a preview + warnings (d
         openWorldHint: true,
       },
     },
-    async (params: CreateIssueSetInput) => {
+    async (params: CreateIssueSetArguments, context) => {
       try {
+        if (!params.dryRun && process.env.SDLC_READ_ONLY === "true") {
+          return {
+            isError: true,
+            content: [{ type: "text", text: "Live issue creation is disabled by SDLC_READ_ONLY=true; preview remains available." }],
+          };
+        }
+        const metadataValue = context.mcpReq._meta?.[ISSUE_RECOVERY_META_KEY];
+        const metadata = IssueRecoveryMetadataSchema.safeParse(metadataValue === undefined ? {} : metadataValue);
+        if (!metadata.success) {
+          return {
+            isError: true,
+            content: [{ type: "text", text: "Invalid issue recovery metadata. Provide only a valid idempotencyKey and/or previewDigest in the documented request metadata namespace." }],
+          };
+        }
+        const operation = { ...CreateIssueSetInputSchema.parse(params), ...metadata.data };
         const ref = resolveRepo(params.owner, params.repo);
         const octokit = getOctokit();
-        const { text, structured } = await handleCreateIssueSet(params, ref, octokit);
+        const { text, structured } = await handleCreateIssueSet(operation, ref, octokit, {
+          signal: context.mcpReq.signal,
+        });
         return {
           content: [{ type: "text", text }],
           structuredContent: withStructuredContentTrustBoundary(structured),

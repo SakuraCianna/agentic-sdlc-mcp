@@ -36,6 +36,7 @@ import {
   type PullRequestPolicyDecision,
 } from "../policy/pull-request-policy.js";
 import type { AppliedPolicyRule, PolicySource } from "../policy/repository-policy.js";
+import { inferWorkType } from "../review/pull-request-review.js";
 
 // ---------------------------------------------------------------------------
 // Schema
@@ -1072,6 +1073,7 @@ export async function handleQualityGateStatus(
         paths: evidence.changedFiles.flatMap((file) =>
           file.previousFilename ? [file.filename, file.previousFilename] : [file.filename]
         ),
+        workType: inferWorkType(evidence.pullRequest, evidence.changedFiles).workType,
         changedFilesComplete: !evidence.unverifiedSignals.includes("changed_files"),
         linkedIssues: evidence.linkedIssues,
         approvedUsers: evidence.reviews.approvedUsers,

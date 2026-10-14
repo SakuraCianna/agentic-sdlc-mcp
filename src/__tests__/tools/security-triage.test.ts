@@ -36,8 +36,12 @@ const {
 
 import type { SecurityTriageInput } from "../../tools/security-triage.js";
 import type { RepoRef } from "../../types.js";
+import { adaptSecurityTriageEvidence } from "../../evidence/adapters.js";
 
 const REF: RepoRef = { owner: "test-org", repo: "test-repo" };
+type CodeScanningRule = Awaited<ReturnType<
+  Parameters<typeof handleSecurityTriage>[2]["codeScanning"]["listAlertsForRepo"]
+>>["data"][number]["rule"];
 
 // ---------------------------------------------------------------------------
 // normalizeSeverity
@@ -108,6 +112,108 @@ describe("severityIcon", () => {
 // ---------------------------------------------------------------------------
 
 describe("handleSecurityTriage — permission errors", () => {
+  it("prioritizes GitHub security severity and preserves blocking downstream evidence", async () => {
+    const rules: CodeScanningRule[] = [
+      { id: "critical-rule", severity: "warning", security_severity_level: "critical" },
+      { id: "high-rule", severity: "note", security_severity_level: "high" },
+      { id: "medium-rule", severity: "error", security_severity_level: "medium" },
+      { id: "low-rule", severity: "error", security_severity_level: "low" },
+    ];
+    const octokit = {
+      codeScanning: {
+        listAlertsForRepo: vi.fn().mockResolvedValue({
+          data: rules.map((rule, index) => ({ number: index + 1, state: "open", rule })),
+        }),
+      },
+    } as unknown as Parameters<typeof handleSecurityTriage>[2];
+
+    const { structured, text } = await handleSecurityTriage(
+      { includeCodeScanning: true, includeDependabot: false, includeSecretScanning: false },
+      REF,
+      octokit
+    );
+    const evidence = adaptSecurityTriageEvidence(
+      structured, "2026-10-14T00:00:00.000Z", "test-org/test-repo", "1.10.0"
+    );
+
+    expect(structured.alerts.map((alert) => alert.severity)).toEqual([
+      "critical", "high", "medium", "low",
+    ]);
+    expect(structured.severityCounts).toEqual({ critical: 1, high: 1, medium: 1, low: 1, info: 0 });
+    expect(structured.errors).toEqual([]);
+    expect(text).toContain("[SECURITY CRITICAL] Fix 1 critical alert(s)");
+    expect(evidence).toMatchObject({ state: "failed", completeness: "complete" });
+    expect(evidence.reason).toContain("2 open critical or high");
+  });
+
+  it.each(["critical", "high"] as const)("keeps a warning-level %s security alert release-blocking", async (securitySeverity) => {
+    const rule: CodeScanningRule = { severity: "warning", security_severity_level: securitySeverity };
+    const octokit = {
+      codeScanning: { listAlertsForRepo: vi.fn().mockResolvedValue({ data: [{ number: 1, rule }] }) },
+    } as unknown as Parameters<typeof handleSecurityTriage>[2];
+
+    const { structured } = await handleSecurityTriage(
+      { includeCodeScanning: true, includeDependabot: false, includeSecretScanning: false },
+      REF,
+      octokit
+    );
+    const evidence = adaptSecurityTriageEvidence(
+      structured, "2026-10-14T00:00:00.000Z", "test-org/test-repo", "1.10.0"
+    );
+
+    expect(structured.alerts[0].severity).toBe(securitySeverity);
+    expect(evidence.state).toBe("failed");
+    expect(evidence.reason).toContain("1 open critical or high");
+    expect(evidence.reason).not.toContain("No open");
+  });
+
+  it.each([
+    { rule: { severity: "error" } satisfies CodeScanningRule, expected: "high" },
+    { rule: { severity: "warning", security_severity_level: null } satisfies CodeScanningRule, expected: "medium" },
+    { rule: { severity: "note" } satisfies CodeScanningRule, expected: "low" },
+    { rule: { severity: "none" } satisfies CodeScanningRule, expected: "info" },
+  ])("uses ordinary severity when security severity is absent: $expected", async ({ rule, expected }) => {
+    const octokit = {
+      codeScanning: { listAlertsForRepo: vi.fn().mockResolvedValue({ data: [{ number: 1, rule }] }) },
+    } as unknown as Parameters<typeof handleSecurityTriage>[2];
+
+    const { structured } = await handleSecurityTriage(
+      { includeCodeScanning: true, includeDependabot: false, includeSecretScanning: false },
+      REF,
+      octokit
+    );
+
+    expect(structured.alerts[0].severity).toBe(expected);
+    expect(structured.errors).toEqual([]);
+  });
+
+  it.each([
+    { severity: "warning", security_severity_level: "unrecognized" },
+    { severity: "note", security_severity_level: 7 },
+    { severity: "unrecognized" },
+    { severity: null, security_severity_level: null },
+    {},
+  ])("keeps unsupported severity evidence unverified: %j", async (rule) => {
+    const octokit = {
+      codeScanning: { listAlertsForRepo: vi.fn().mockResolvedValue({ data: [{ number: 1, rule }] }) },
+    } as unknown as Parameters<typeof handleSecurityTriage>[2];
+
+    const { structured } = await handleSecurityTriage(
+      { includeCodeScanning: true, includeDependabot: false, includeSecretScanning: false },
+      REF,
+      octokit
+    );
+    const evidence = adaptSecurityTriageEvidence(
+      structured, "2026-10-14T00:00:00.000Z", "test-org/test-repo", "1.10.0"
+    );
+
+    expect(structured.alerts).toHaveLength(1);
+    expect(structured.errors.join(" ")).toContain("Code Scanning");
+    expect(structured.errors.join(" ")).toContain("severity");
+    expect(evidence).toMatchObject({ state: "unverified", completeness: "partial" });
+    expect(evidence.reason).toContain("incomplete security evidence");
+  });
+
   it("includes error message when code scanning permission is denied", async () => {
     const mockOctokit = {
       codeScanning: {
@@ -131,7 +237,7 @@ describe("handleSecurityTriage — permission errors", () => {
 
     expect(structured.errors.length).toBeGreaterThan(0);
     expect(structured.errors[0]).toContain("Code Scanning");
-    expect(text).toContain("Permission Errors");
+    expect(text).toContain("Evidence Errors");
   });
 
   it("collects alerts from all three sources when all succeed", async () => {
@@ -305,7 +411,7 @@ describe("handleSecurityTriage — permission errors", () => {
         dismissedAt: "2026-07-02T00:00:00Z",
       }),
     ]);
-    expect(text).toContain("Permission Errors");
+    expect(text).toContain("Evidence Errors");
     expect(text).toContain("2");
   });
 

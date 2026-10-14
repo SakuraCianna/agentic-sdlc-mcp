@@ -29,6 +29,8 @@
 
 `agentic-sdlc-mcp` is a software development lifecycle (SDLC) governance layer for teams that already let AI coding agents change production repositories. It turns GitHub context, policy, checks, reviews, security alerts, and release signals into 13 workflow-level MCP tools. Twelve tools are read-only. The only GitHub write tool previews changes by default.
 
+Version **1.11.0** also provides `agentic-sdlc`, a read-only CLI for PR assessment, portable evidence, snapshot comparisons, and acceptance traceability. `agentic-sdlc-mcp` remains the MCP server entry point. Verify the exact package and [release metadata](https://github.com/SakuraCianna/agentic-sdlc-mcp/releases/tag/v1.11.0) when installing this version.
+
 ## What changes with this MCP
 
 AI coding agents can create code and pull requests without understanding every repository rule. This server gives the agent bounded context and gives reviewers explicit evidence gaps instead of another free-form summary.
@@ -77,6 +79,39 @@ Use the tools as decision support at the points where an autonomous agent would 
 | Transfer work to another agent | `agent_handoff_packet` | Bounded continuation packet that labels caller assertions and evidence warnings |
 | Archive a decision snapshot | `sdlc_evidence_packet` | Versioned Issue, PR, or release evidence with provenance, freshness, completeness, and a stable content digest |
 
+## Review a PR without an agent
+
+Collect a human-readable decision and a JSON snapshot with one command. The assessment combines existing gate and rule-based review evidence, binds it to the PR head/base and policy digest, and preserves blockers, missing evidence, request counts, and collection duration.
+
+Build from a reviewed checkout with Node.js 22 or newer:
+
+```powershell
+npm ci
+npm run build
+node dist/cli.js doctor --repo acme/widget
+node dist/cli.js assess-pr --repo acme/widget --pr 42 --output artifacts/pr-42-first.json --summary artifacts/pr-42-first.md
+```
+
+Inject `GITHUB_TOKEN` through your process or secret manager before online collection. The CLI reads environment variables only; it does not load a home configuration or `.env`. `doctor` is offline unless `--online` is supplied, and missing configuration returns exit code 2. Once the package is installed, `agentic-sdlc` runs the same CLI as `node dist/cli.js`.
+
+| Command | Result |
+|---|---|
+| `doctor --repo acme/widget --online --json` | Read-only endpoint diagnostics; no credential values in the report |
+| `assess-pr --repo acme/widget --pr 42 --standard strict --json` | `ready_for_review`, `blocked`, or `needs_evidence`, with a versioned packet |
+| `evidence --repo acme/widget --subject pr --number 42 --output artifacts/pr-42-evidence.json` | Existing Issue, PR, or release evidence packet; use `--subject issue --number N` or `--subject release --ref REF` for other subjects |
+| `diff --previous artifacts/pr-42-first.json --current artifacts/pr-42-next.json --json` | Added, removed, changed, unchanged, and invalidated evidence; both files must already exist |
+| `trace --packet artifacts/pr-42-evidence.json --acceptance acceptance.md --source openspec --json` | Explicit checklist/numbered conditions linked to supplied evidence |
+
+`assess-pr` and `evidence` also accept `--previous`, `--acceptance`, and optional `--mappings` for one collection plus local analysis. Mapping files use the strict array schema described in [evidence continuity](docs/evidence-continuity.md). `--json` changes stdout; `--output` always creates a JSON file. Existing files are never overwritten. `--summary` creates a new Markdown file, or appends when it points to GitHub Actions' exact `GITHUB_STEP_SUMMARY` path.
+
+Assessments are advisory by default: a completed report returns 0 even when its decision is blocked or needs evidence. `assess-pr --enforce` returns 1 for `blocked`, 2 for `needs_evidence`, and 0 for `ready_for_review`. Configuration/input/unavailable-source errors return 2; cancellation returns 130. A successful `diff` or `trace` command means the analysis completed, not that the evidence or acceptance conditions passed.
+
+Online collection defaults to a 30-second timeout and 120-request budget; supported overrides are `--timeout-ms` from 1 to 120000 and `--max-requests` from 2 to 500. `doctor` has its own bounded probes and accepts the timeout option. File inputs and serialized outputs are limited to 1 MiB.
+
+An unchanged snapshot never inherits an earlier verification. Head/base, policy, producer version, freshness, and completeness changes can require recollection. Checked boxes, agent claims, and ordinary green CI do not prove business acceptance; the CLI has no trusted acceptance producer configured by default. Neither a ready report nor `--enforce` approves, merges, or deploys a PR.
+
+For MCP review sessions, set `SDLC_CONFIG_MODE=envonly` to avoid home/`.env` configuration and `SDLC_READ_ONLY=true` to reject live Issue creation while retaining previews. Use a token restricted to the intended repositories and read permissions. Client configuration and the portable review skill are in [client recipes](docs/client-recipes.md); the unexecuted small-sample validation plan is in [user pilot](docs/user-pilot.md).
+
 ## Install from npm
 
 You need Node.js 22 or newer. Node 22 and 24 are tested in GitHub Actions. Run the published package directly from npm:
@@ -93,6 +128,8 @@ agentic-sdlc-mcp
 ```
 
 The default transport is stdio. Most MCP clients should start the package for you instead of running it in a separate terminal.
+
+These npm commands resolve published releases. Pin `agentic-sdlc-mcp@1.11.0` to reproduce this version, verify its release/package metadata, and restart any existing MCP connection after an upgrade.
 
 ## Let a coding agent set it up
 
@@ -197,6 +234,8 @@ The server registers 13 workflow-level tools. MCP clients receive the full input
 <summary>Work tracking details</summary>
 
 - **`create_issue_set`**: Accepts `plan_from_context.issueDrafts` directly. `dryRun` defaults to `true` and does not call a GitHub write API. A live batch requires `dryRun: false`, preserves successful Issue URLs, and returns safe per-item failures instead of hiding partial completion.
+
+Advanced preview matching and bounded recovery use optional request metadata at `params._meta["io.github.SakuraCianna/agentic-sdlc-mcp/issue-recovery"]`, with `idempotencyKey` and/or `previewDigest`. They are not tool arguments; the existing argument schema is unchanged and same-named extra argument fields do not enable recovery. Clients that cannot attach request metadata should use the default preview and basic reports, and must not assume automatic idempotent retries. See the [JSON-RPC example and recovery limits](docs/pr-workflows.md#issue-preview-and-recovery-through-mcp). Metadata and a matching digest do not authorize a write.
 
 </details>
 
@@ -383,6 +422,9 @@ Keep tokens, credentials, private repository content, and generated local config
 
 - [Roadmap](docs/ROADMAP.md)
 - [Repository policy guide](docs/repository-policy.md)
+- [Client recipes and portable review skill](docs/client-recipes.md)
+- [Evidence continuity and acceptance traceability](docs/evidence-continuity.md)
+- [User pilot plan](docs/user-pilot.md)
 - [Testing strategy](docs/testing-strategy.md)
 - [Remote deployment re-entry criteria](docs/remote-deployment-considerations.md)
 - [v1.10.0 release notes](docs/releases/v1.10.0.md)

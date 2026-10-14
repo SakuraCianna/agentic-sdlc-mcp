@@ -3,6 +3,14 @@ import { describe, expect, it } from "vitest";
 import { buildEvidencePacket } from "../../evidence/model.js";
 
 describe("buildEvidencePacket", () => {
+  it("binds an explicit validated runtime budget into the packet digest", () => {
+    const input = { generatorVersion: "1.11.0", subject: { type: "issue" as const, repo: "example/project", number: 1 }, evidence: [] };
+    const first = buildEvidencePacket(input);
+    const second = buildEvidencePacket({ ...input, budget: { maxGithubRequests: 120, collectionTimeoutMs: 45_000 } });
+    expect(second.budget).toMatchObject({ maxGithubRequests: 120, collectionTimeoutMs: 45_000 });
+    expect(first.contentDigest).not.toBe(second.contentDigest);
+    expect(() => buildEvidencePacket({ ...input, budget: { collectionTimeoutMs: NaN } })).toThrow();
+  });
   it("never treats a caller assertion as verified evidence", () => {
     const packet = buildEvidencePacket({
       generatorVersion: "1.9.0",
