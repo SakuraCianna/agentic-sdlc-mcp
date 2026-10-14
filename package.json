@@ -87,7 +87,7 @@
   "homepage": "https://github.com/SakuraCianna/agentic-sdlc-mcp#readme",
   "dependencies": {
     "@modelcontextprotocol/express": "2.0.0",
-    "@modelcontextprotocol/node": "2.0.0",
+    "@modelcontextprotocol/node": "2.1.1",
     "@modelcontextprotocol/server": "2.0.0",
     "@octokit/rest": "^22.0.1",
     "dotenv": "^17.4.2",
